@@ -17,7 +17,8 @@ enum Prefs {
     static let defaults: [String: Any] = ["hotkeyCode": 49, "hotkeyMods": controlKey | optionKey, "hotkeyLabel": "⌃⌥Space", "login": true, "paused": false, "corner": "top-left", "linger": "normal",
         "soundStart": "Pop", "soundDone": "Glass", "soundStop": "Tink", "volume": 0.16, "model": "haiku", "instant": true,
         "ahead": true, "aheadDelay": 0.7, "screen": "auto", "openOn": "here",
-        "speak": false, "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true]
+        "speak": false, "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
+        "learn": true, "pointer": false]
     static var d: [String: Any] = defaults.merging(
         (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path)))) as? [String: Any] ?? [:]) { $1 }
     static func set(_ k: String, _ v: Any) {
@@ -429,6 +430,7 @@ final class App: NSObject, WKScriptMessageHandler {
                 while let r = buffer.range(of: "\n") {
                     let line = String(buffer[..<r.lowerBound]); buffer.removeSubrange(..<r.upperBound)
                     if line == "! setup" { onboarding.open(); continue }   // Claude not installed, signed out or no plan
+                    if line.hasPrefix("@ ") { pointAt(line); continue }   // experimental "show me where"
                     if line.hasPrefix("✓") { self?.answer = line; self?.deliver(String(line.dropFirst(2))) }
                     self?.js("line", line)
                 }
@@ -624,6 +626,29 @@ if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--look" {
     }
     done.wait()
     exit(FileManager.default.fileExists(atPath: a[3]) ? 0 : 1)
+}
+
+// "Show me where": a soft pulsing ring at a spot on screen for a few seconds. "@ x y" in top-left screen points.
+var ring: NSPanel?
+func pointAt(_ line: String) {
+    let p = line.split(separator: " ").dropFirst().compactMap { Double($0) }
+    guard p.count == 2, let main = NSScreen.screens.first else { return }
+    let size: CGFloat = 64, c = NSPoint(x: p[0], y: main.frame.height - p[1])   // flip to Cocoa's bottom-left origin
+    ring?.orderOut(nil)
+    let w = NSPanel(contentRect: NSRect(x: c.x - size / 2, y: c.y - size / 2, width: size, height: size),
+                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+    w.level = .screenSaver; w.isOpaque = false; w.backgroundColor = .clear; w.ignoresMouseEvents = true; w.hasShadow = false
+    w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+    let v = NSView(frame: NSRect(x: 0, y: 0, width: size, height: size)); v.wantsLayer = true
+    let l = CAShapeLayer()
+    l.path = CGPath(ellipseIn: CGRect(x: 8, y: 8, width: size - 16, height: size - 16), transform: nil)
+    l.fillColor = NSColor.systemBlue.withAlphaComponent(0.18).cgColor; l.strokeColor = NSColor.systemBlue.cgColor; l.lineWidth = 3
+    l.frame = v.bounds; v.layer?.addSublayer(l)
+    let pulse = CABasicAnimation(keyPath: "transform.scale"); pulse.fromValue = 0.7; pulse.toValue = 1.1
+    pulse.duration = 0.6; pulse.autoreverses = true; pulse.repeatCount = 6
+    l.anchorPoint = CGPoint(x: 0.5, y: 0.5); l.position = CGPoint(x: size / 2, y: size / 2); l.bounds = v.bounds; l.add(pulse, forKey: "pulse")
+    w.contentView = v; w.orderFrontRegardless(); ring = w
+    DispatchQueue.main.asyncAfter(deadline: .now() + 6) { if ring === w { w.orderOut(nil); ring = nil } }
 }
 
 func jsonString(_ s: String) -> String { String(data: try! JSONSerialization.data(withJSONObject: [s]), encoding: .utf8)!.dropFirst().dropLast().description }
@@ -838,6 +863,9 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
                 p.arguments = [v as? Bool == true ? "enable" : "disable", "gui/\(getuid())/com.atticus.app"]; try? p.run()
             }
         case "record": record()
+        case "unlearn":
+            guard let say = b["say"] as? String else { return }
+            DispatchQueue.global().async { [weak self] in self?.helper(["--unlearn", say]); DispatchQueue.main.async { self?.refresh() } }
         case "checkUpdate": Updater.check { [weak self] in self?.push() }
         case "github": NSWorkspace.shared.open(URL(string: "https://github.com/SaarthurR/atticus-mac")!)
         case "resetHotkey":

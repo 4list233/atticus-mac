@@ -127,6 +127,7 @@
   <button data-s="memory"><i class="ni" style="background:#ff9f0a"><svg viewBox="0 0 24 24"><path d="M6 4h12v16l-6-4-6 4z"/></svg></i>Memory</button>
   <button data-s="usage"><i class="ni" style="background:#30d158"><svg viewBox="0 0 24 24"><path d="M5 19V11M12 19V5M19 19v-6"/></svg></i>Usage</button>
   <button data-s="account"><i class="ni" style="background:#0a84ff"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg></i>Account &amp; Access</button>
+  <button data-s="lab"><i class="ni" style="background:#64d2ff"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3M7.5 15h9"/></svg></i>Experimental</button>
   <button data-s="about"><i class="ni" style="background:#5e5ce6"><svg viewBox="0 0 24 24"><path d="M12 4v10M8 10l4 4 4-4M5 19h14"/></svg></i>About &amp; Updates</button>
   <div class="spacer"></div>
   <div class="ver" id="ver"></div>
@@ -181,6 +182,7 @@
     <h3>Speed</h3>
     <div class="group">
       <div class="row"><div class="t"><b>Instant commands</b><span>Opening apps, moving windows, searches and music run with no AI, in under a second.</span></div><label class="sw"><input type="checkbox" data-k="instant"></label></div>
+      <div class="row"><div class="t"><b>Learn shortcuts</b><span>When the AI does something new and it works, Atticus saves the steps. Say the same thing again: instant, and free.</span></div><label class="sw"><input type="checkbox" data-k="learn"></label></div>
       <div class="row"><div class="t"><b>Start while I’m talking</b><span>When you pause, Atticus starts on what you said. Often done the moment you let go.</span></div><label class="sw"><input type="checkbox" data-k="ahead"></label></div>
       <div class="row"><div class="t"><b>Pause before starting</b><span>Shorter is faster. Longer waits more if you pause mid-sentence.</span></div><input type="range" min="0.4" max="1.5" step="0.1" data-k="aheadDelay"><span class="val" id="delayv"></span></div>
     </div>
@@ -198,8 +200,10 @@
 
   <section id="memory">
     <h1>Memory</h1>
-    <p class="lede">Rules Atticus follows every time. Say “remember…” or “from now on…”, or add one here.</p>
+    <p class="lede">Rules Atticus follows. Say “remember…” or “from now on…”, or add one here. Only rules that match what you ask are sent, so more rules don’t cost more.</p>
     <div class="group" id="rules"></div>
+    <h3>Learned shortcuts</h3>
+    <div class="group" id="skills"></div>
   </section>
 
   <section id="usage">
@@ -223,6 +227,14 @@
     <h3>Atticus</h3>
     <div class="group">
       <div class="row"><div class="t"><b>Quit Atticus</b><span>Open it again from Spotlight or Applications.</span></div><button class="btn red" data-do="quit">Quit</button></div>
+    </div>
+  </section>
+
+  <section id="lab">
+    <h1>Experimental</h1>
+    <p class="lede">New ideas, still rough. Turn them on and see what you think.</p>
+    <div class="group">
+      <div class="row"><div class="t"><b>Show me where</b><span>Ask “where’s the dark mode setting?” or “how do I share this?” and a ring lights up the spot on your screen.</span></div><label class="sw"><input type="checkbox" data-k="pointer"></label></div>
     </div>
   </section>
 
@@ -303,6 +315,10 @@
     document.querySelectorAll('.x').forEach(b => b.onclick = () => post({ do: 'forget', line: s.rules[+b.dataset.i] }));
     const add = () => { const v = $('newrule').value.trim(); if (v) post({ do: 'remember', line: v }); };
     $('addrule').onclick = add; $('newrule').onkeydown = e => { if (e.key === 'Enter') add(); };
+    $('skills').innerHTML = (s.skills || []).length ? s.skills.map((k, i) =>
+      `<div class="row rule"><div class="t"><b>“${esc(k.say)}”</b><span>${esc(k.reply)}</span></div><button class="x" data-u="${i}" aria-label="Forget this shortcut">×</button></div>`).join('')
+      : '<div class="empty">None yet. Ask Atticus to do something; if it works, it lands here.</div>';
+    document.querySelectorAll('[data-u]').forEach(b => b.onclick = () => post({ do: 'unlearn', say: s.skills[+b.dataset.u].say }));
     $('ptext').textContent = s.plan.text; $('pdot').classList.toggle('bad', !s.plan.ok);
     $('pbtn').style.display = s.plan.ok ? 'none' : '';
   }

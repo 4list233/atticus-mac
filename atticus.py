@@ -53,8 +53,13 @@ Tools:
 - Clipboard: pbpaste. Music: osascript -e 'tell application "Music" to playpause'.
 Earlier: the last few questions from the past 5 minutes, if any; use them for follow-ups ("open the second one", "and tomorrow?").
 Memory: the user's saved rules come under "Memory:" in the request; follow them. When the user says remember / from now on / when I say X do Y, save ONE short line with {REMEMBER} "<rule>". When the user says forget, run {FORGET} "<words from that line>".
+Corrections: when the user says "no, I meant…", fix it, then save ONE short rule with {REMEMBER} so it won't happen again.
 Rules: "this", "it", "here" mean the front app/window in Context. Process names can differ from app names (VS Code is "Code").
 Never delete, move files, send, post or buy anything. If a command fails, try one other way, then say what failed."""
+
+POINTER = """
+Show me where (on): when the user asks where something is or how to do something on screen, answer in one line, then end with
+[point N X Y]: N = the screen number of the labeled picture, X Y = the pixel spot in that picture. A ring appears there."""
 
 # Full access: everything runs without asking, except these, which a misheard word must never trigger.
 DENY = [f'Bash({c}:*)' for c in ('rm', 'rmdir', 'sudo', 'dd', 'diskutil', 'shutdown', 'reboot', 'halt', 'git push', 'srm', 'trash')]
@@ -246,14 +251,65 @@ def proc_of(app):
     return osa(f'tell application "System Events" to get name of first process whose bundle identifier is "{bid}"') or app
 
 
-def fast(text):
-    """Simple commands with no AI: open <app/site>, snap/move <it/app> left/right/full/center, to laptop/monitor.
-    Returns a reply, or None to hand the request to Haiku."""
-    t = re.sub(r"^(hey |ok |okay )?(atticus,? )?(please |can you |could you )?", '', text.lower().strip(' .!?'))
+def plain(text):
+    """Spoken request -> its core words: "Hey Atticus, can you open Spotify please?" -> "open spotify"."""
+    t = re.sub(r"^(hey |ok |okay )?(atticus,? )?(please |can you |could you |would you )?", '', text.lower().strip(' .!?'))
     t = re.sub(r'\s+please$', '', t)
-    t = re.sub(r'[,;:]', '', t)   # the speech model adds punctuation
+    return re.sub(r'[,;:.!?]', '', t)   # the speech model adds punctuation
+
+
+# Learned shortcuts: an action the AI got right is saved as the exact commands it ran; the same words later replay
+# them with no AI (free, under a second). Kept in a file, never sent to the AI, so they cost nothing as they grow.
+SKILLS = os.path.join(DIR, 'skills.json')
+DEICTIC = re.compile(r'\b(this|that|these|those|it|here|there|them|him|her)\b')   # "close this" depends on the moment: never learned
+
+
+def skills():
+    try:
+        return json.load(open(SKILLS))
+    except (OSError, ValueError):
+        return {}
+
+
+def learn(task, cmds, reply):
+    """Save the commands if every one is a replayable action (no reading, searching, clicking by element ID)."""
+    k = plain(task)
+    cmds = [c for c in cmds if not c.startswith((REMEMBER, FORGET))]   # saving a rule is not part of the action
+    act = (SHOW, PLACE, PLAY, TYPE, 'open ', 'osascript ')
+    if not cmds or DEICTIC.search(k) or not all(c.startswith(act) and 'peekaboo' not in c for c in cmds):
+        return
+    sk = skills()
+    sk[k] = {'cmds': cmds, 'reply': reply, 'at': time.strftime('%Y-%m-%d')}
+    os.makedirs(DIR, exist_ok=True)
+    json.dump(sk, open(SKILLS, 'w'), indent=1)
+
+
+def unlearn(task):
+    sk = skills()
+    if sk.pop(plain(task), None) is not None:
+        json.dump(sk, open(SKILLS, 'w'), indent=1)
+
+
+def replay(k):
+    s = skills().get(k)
+    if not s:
+        return None
+    for c in s['cmds']:   # any failure: hand it to the AI instead
+        if subprocess.run(['/bin/zsh', '-c', c], capture_output=True, timeout=20).returncode:
+            return None
+    return s['reply']
+
+
+def fast(text):
+    """Simple commands with no AI: learned shortcuts, open <app/site>, snap/move <it/app> left/right/full/center, to laptop/monitor.
+    Returns a reply, or None to hand the request to Haiku."""
+    t = plain(text)
     if t in ('no', 'yes', 'ok', 'okay', 'nevermind', 'never mind', 'cancel', 'nothing', 'thanks', 'thank you'):
         return 'Okay.'   # stray word after a turn: no AI call
+    if pref('learn', True) and t in skills():
+        r = replay(t)
+        if r:
+            return r
     m = re.fullmatch(r'(?:search(?: up)?|google|look up)(?: for)? (.+?)(?: (?:on|in) (google|chrome|safari|youtube|spotify|amazon|the web))?', t)
     if m and not re.search(r'\b(this|that|it|these|my)\b', m[1]):   # "search this" needs the screen: AI
         q = urllib.parse.quote(m[1])
@@ -390,7 +446,7 @@ def label(name, inp):
                 'hotkey': 'Pressing keys', 'scroll': 'Scrolling'}.get(verb, f'Working in {app}')
     m = re.match(r'^open -a (?:"([^"]+)"|(\S+))', c)
     if m:
-        return 'Opening ' + (m[1] or m[2])
+        return 'Opening ' + (m[1] or m[2]).rstrip(';')
     for pat, fmt in ((r'^open "?https?://(?:www\.)?([^/"]+)', 'Opening {}'),
                      (r'^mdfind', 'Searching your files'), (r'arxiv', 'Searching papers'), (r'^pbpaste', 'Reading the clipboard'),
                      (r'tell application "(?!System Events)([^"]+)"', 'Using {}'), (r'process "([^"]+)"', 'Checking {} windows')):
@@ -429,7 +485,8 @@ def start_claude():
     """`claude -p` started ahead, waiting for the request on stdin: its ~1 s startup happens while the user is still talking."""
     if not shutil.which('claude'):
         return None
-    p = subprocess.Popen(['claude', '-p', '--input-format', 'stream-json', '--model', pref('model', 'haiku'), '--effort', 'low', '--system-prompt', SYSTEM,
+    system = SYSTEM + (POINTER if pref('pointer', False) else '')
+    p = subprocess.Popen(['claude', '-p', '--input-format', 'stream-json', '--model', pref('model', 'haiku'), '--effort', 'low', '--system-prompt', system,
                           '--tools', 'Bash,Read,WebSearch,WebFetch', '--permission-mode', 'bypassPermissions', '--disallowedTools', *DENY,
                           '--setting-sources', '', '--no-session-persistence', '--strict-mcp-config', '--disable-slash-commands', '--output-format', 'stream-json', '--verbose'],
                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=tempfile.gettempdir())
@@ -439,6 +496,7 @@ def start_claude():
 
 def run(task, p=None, shots=()):
     """One request through `claude -p --model haiku` (the user's plan), streaming notes and steps. shots: [(path, label)] sent with it."""
+    run.cmds = []
     p = p or start_claude()
     if not p:
         say('!', 'setup')   # Atticus.app opens its setup window
@@ -447,7 +505,7 @@ def run(task, p=None, shots=()):
         'type': 'base64', 'media_type': 'image/jpeg', 'data': base64.b64encode(open(path, 'rb').read()).decode()}})] + [{'type': 'text', 'text': task}]
     p.stdin.write(json.dumps({'type': 'user', 'message': {'role': 'user', 'content': content}}) + '\n')
     p.stdin.close()
-    reply, cost, steps = '', 0, []
+    reply, cost, steps, cmds, failed = '', 0, [], [], False
     for line in p.stdout:
         try:
             j = json.loads(line)
@@ -462,6 +520,9 @@ def run(task, p=None, shots=()):
                     elif b.get('type') == 'tool_use':
                         steps.append(label(b['name'], b.get('input', {})))
                         say('▸', steps[-1])
+                        cmds.append(b.get('input', {}).get('command') or f"<{b['name']}>")   # non-Bash tools block learning
+        elif j.get('type') == 'user':   # tool results
+            failed |= any(isinstance(b, dict) and b.get('is_error') for b in j.get('message', {}).get('content', []))
         elif j.get('type') == 'result':
             reply, cost = (j.get('result') or '').strip(), j.get('total_cost_usd', 0)
     p.wait()
@@ -470,15 +531,46 @@ def run(task, p=None, shots=()):
         if not c['ok']:
             say('!', 'setup')
         reply = c['text'] + ' Atticus setup is open to fix it.' if not c['ok'] else f'Claude failed: {p.stderr.read()[:200]}'
+    run.cmds = [] if failed or p.returncode else cmds   # what learn() may save
     return reply or 'Done.', cost, steps
 
 
-def screen_for(task, snap):   # snap.shots: what look() returned
+def screen_for(task, snap, fx=None):   # snap.shots: what look() returned; fx: x of the front window
     """The key-down screenshot, if the request points at the screen ("what does this say", "articles on what I'm reading")."""
-    if pref('screen', 'auto') == 'never' or not re.search(r"\b(screen|this|these|that|here|it|reading|looking|see|says?|shown?|page|tab|window|error|question|problem)\b", task.lower()):
+    if pref('screen', 'auto') == 'never' or not re.search(r"\b(screen|this|these|that|here|it|reading|looking|see|says?|shown?|page|tab|window|error|question|problem|where|how do i|button|click)\b", task.lower()):
         return None
     snap.join(5)
-    return snap.shots
+    if len(snap.shots) < 2 or fx is None or re.search(r"\b(monitor|laptop|other|second|both|all|external|built.in|screens)\b", task.lower()):
+        return snap.shots
+    on = next((i for i, s in enumerate(screens()) if s[1] <= fx < s[1] + s[3]), 0)   # just the one the user is on: half the cost
+    return [snap.shots[on]] if on < len(snap.shots) else snap.shots
+
+
+STOP = set('a an the to of in on and or for my me i you it is be do can could would please with at this that what how'.split())
+
+
+def relevant_rules(task, most=5):
+    """Saved rules that share a word with the request. All of them while there are few; never more than `most`."""
+    rules = [l.strip() for l in open(MEMORY)] if os.path.exists(MEMORY) else []
+    rules = [r for r in rules if r]
+    if sum(map(len, rules)) < 400:
+        return '\n'.join(rules)
+    words = set(re.findall(r'[a-z0-9]+', task.lower())) - STOP
+    hits = [r for r in rules if words & set(re.findall(r'[a-z0-9]+', r.lower()))]
+    return '\n'.join(hits[:most])
+
+
+def point(reply):
+    """Experimental "show me where": the AI ends with [point N X Y] (screen N's picture, 1280 px wide).
+    The overlay gets "@ <x> <y>" in screen points; the user sees the reply without the tag."""
+    m = re.search(r'\[point (\d+) (\d+) (\d+)\]', reply)
+    if not m:
+        return reply
+    scr = screens()
+    n = min(max(int(m[1]), 1), len(scr)) - 1
+    k = scr[n][3] / 1280
+    say('@', f'{round(scr[n][1] + int(m[2]) * k)} {round(scr[n][2] + int(m[3]) * k)}')
+    return (reply[:m.start()] + reply[m.end():]).strip()
 
 
 def remember_turn(q, a):
@@ -540,7 +632,10 @@ def main():
         week = time.strftime('%Y-%m-%d', time.localtime(time.time() - 6 * 86400))
         rules = [l[2:].strip() for l in open(MEMORY)] if os.path.exists(MEMORY) else []
         return print(json.dumps({'today': use(time.strftime('%Y-%m-%d')), 'week': use(week), 'all': use(''),
-                                 'rules': [r for r in rules if r], 'plan': plan()}))
+                                 'rules': [r for r in rules if r], 'plan': plan(),
+                                 'skills': [{'say': k, 'reply': v['reply']} for k, v in sorted(skills().items())]}))
+    if args[:1] == ['--unlearn']:
+        return unlearn(' '.join(args[1:]))
     if args == ['--check']:   # the setup window asks this
         return print(json.dumps(plan()))
     if args[:1] == ['--search']:
@@ -578,12 +673,20 @@ def main():
             warm.kill()
         remember_turn(task, quick)
         return say('✓', quick)
-    mem = open(MEMORY).read().strip() if os.path.exists(MEMORY) else ''
+    mem = relevant_rules(task)
     turns = [json.loads(l) for l in open(RECENT)] if os.path.exists(RECENT) else []
     turns = [r for r in turns if time.time() - r['t'] < 600][-3:]   # this chat only (Atticus.app clears it for a new one); 10 min cap for typed asks
     earlier = ''.join(f'Q: {r["q"]}\nA: {r["a"][:300]}\n' for r in turns)
     reply, cost, steps = run(f'Context: {ctx}\n' + (f'Earlier:\n{earlier}' if earlier else '') +
-                      (f'Memory:\n{mem}\n' if mem else '') + f'Request: {task}', warm, screen_for(task, snap) or ())
+                      (f'Memory:\n{mem}\n' if mem else '') + f'Request: {task}', warm, screen_for(task, snap, fx) or ())
+    reply = point(reply)
+    fix = turns and re.match(r"(no|nope|not that|wrong|that's wrong|i meant|i said)\b", plain(task))
+    if fix:
+        unlearn(turns[-1]['q'])   # a learned shortcut that did the wrong thing goes
+    if pref('learn', True):
+        learn(task, run.cmds, reply)
+        if fix:
+            learn(turns[-1]['q'], run.cmds, reply)   # and the fix becomes the shortcut for the original words
     remember_turn(task, reply)
     with open(os.path.join(DIR, 'log.jsonl'), 'a') as f:
         f.write(json.dumps({'at': time.strftime('%Y-%m-%d %H:%M:%S'), 'task': task, 'reply': reply,
@@ -612,6 +715,17 @@ if __name__ == '__main__':
         assert label('Bash', {'command': "osascript -e 'tell application \"Music\" to playpause'"}) == 'Using Music'
         assert app_named('the trading view application') == 'TradingView'
         assert screen_for('open spotify', None) is None   # no screen words: no picture, no wait
+        assert plain('Hey Atticus, can you open Spotify please?') == 'open spotify'
+        SKILLS = os.path.join(tempfile.mkdtemp(), 'skills.json')
+        learn('Can you put Notes on the left?', [f'{PLACE} "Notes" left current'], 'Notes is on the left.')
+        learn('close this', ['osascript -e x'], 'x')                       # "this": never learned
+        learn('weather today', [f'{SEARCH} "weather"'], 'Sunny.')          # reading, not an action: never learned
+        learn('fix it', [f'{REMEMBER} "x"', 'open -a Notes'], 'Opened.')   # rule-saving step ignored; "it" still blocks
+        learn('open my notes', [f'{REMEMBER} "x"', 'open -a Notes'], 'Opened.')
+        assert set(skills()) == {'put notes on the left', 'open my notes'} and skills()['open my notes']['cmds'] == ['open -a Notes']
+        unlearn('Put notes on the left.')
+        assert set(skills()) == {'open my notes'}
+        assert point('Top right. [point 9 0 0]') == 'Top right.'
         assert norm('One M') == norm('1m') == '1m'
         assert label('Bash', {'command': f'{PLAY} "1m"'}) == 'Playing 1m on Spotify'
         sys.exit(print('selftest ok'))
