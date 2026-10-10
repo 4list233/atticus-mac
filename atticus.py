@@ -90,7 +90,12 @@ Shortcuts: "when I say X, open/do Y" or "make X a command" where Y is fixed acti
 Atticus Settings (the user's rules, shortcuts, apps, permissions): open -a Atticus
 Corrections: when the user says "no, I meant…", fix it, then save ONE short rule with {REMEMBER} so it won't happen again.
 Rules: "this", "it", "here" mean the front app/window in Context. Process names can differ from app names (VS Code is "Code").
-Never delete, move files, send, post or buy anything. If a command fails, try one other way, then say what failed."""
+NEVER_RISKY
+If a command fails, try one other way, then say what failed."""
+NEVER = 'Never delete, move files, send, post or buy anything.'
+# safe mode: the user gets an Allow card first, so the AI may do what was clearly asked
+ASK_FIRST = ('Delete, send, post or buy only when the user clearly asks; the user sees an Allow / Don\'t Allow card first, so just run it, '
+             'never ask in words. Files: trash "<path>" (to the Trash), never rm. If the user says no, stop and say it was not done.')
 
 LEARN_ME = f"""
 About the user: if they state a lasting fact about themselves that helps day to day (their name, city, school or job,
@@ -101,7 +106,7 @@ Show me where (on): when the user asks where something is or how to do something
 [point N X Y]: N = the screen number of the labeled picture, X Y = the pixel spot in that picture. A ring appears there."""
 
 # Full access: everything runs without asking, except these, which a misheard word must never trigger.
-DENY = [f'Bash({c}:*)' for c in ('rm', 'rmdir', 'sudo', 'dd', 'diskutil', 'shutdown', 'reboot', 'halt', 'git push', 'srm', 'trash')]
+DENY = [f'Bash({c}:*)' for c in ('rm', 'rmdir', 'sudo', 'dd', 'diskutil', 'shutdown', 'reboot', 'halt', 'git push', 'srm')]
 
 # Safe mode (Settings, on by default): Claude Code's sandbox lets the AI's commands write only in a throwaway folder.
 # App control can't work inside it (Apple Events, opening apps), so those run outside, and the gate below checks every command.
@@ -129,9 +134,11 @@ def risky(cmd):
 
 
 def gate():
-    """Claude Code's PreToolUse hook in safe mode: a risky command waits for the user's Allow (60 s, then no)."""
-    cmd = json.load(sys.stdin).get('tool_input', {}).get('command', '')
-    q, d = risky(cmd), os.environ.get('ATTICUS_ASK', '')
+    """Claude Code's PreToolUse hook in safe mode: a risky command waits for the user's Allow (60 s, then no).
+    Allowed = it runs for real, outside the sandbox. The AI asking to leave the sandbox by itself asks too."""
+    inp = json.load(sys.stdin).get('tool_input', {})
+    cmd, d = inp.get('command', ''), os.environ.get('ATTICUS_ASK', '')
+    q = risky(cmd) or ('Run outside the safe folder?' if inp.get('dangerouslyDisableSandbox') else '')
     if not q or not d:
         return
     a, parent = os.path.join(d, 'a'), os.getppid()
@@ -145,9 +152,9 @@ def gate():
     ok = os.path.exists(a) and open(a).read().strip() == 'y'
     if os.path.exists(a):
         os.remove(a)
-    if not ok:
-        print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
-                                                 'permissionDecisionReason': 'The user said no. Do not try another way; say it was not done.'}}))
+    print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow', 'updatedInput': {**inp, 'dangerouslyDisableSandbox': True}}} if ok else
+                     {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
+                                             'permissionDecisionReason': 'The user said no. Do not try another way; say it was not done.'}}))
 
 
 def osa(script, *args):
@@ -581,16 +588,16 @@ def start_claude():
     """`claude -p` started ahead, waiting for the request on stdin: its ~1 s startup happens while the user is still talking."""
     if not shutil.which('claude'):
         return None
-    system = SYSTEM + (POINTER if pref('pointer', False) else '') + (LEARN_ME if pref('learnMe', True) else '')
+    system = SYSTEM.replace('NEVER_RISKY', ASK_FIRST if pref('safe', True) else NEVER) + (POINTER if pref('pointer', False) else '') + (LEARN_ME if pref('learnMe', True) else '')
     safe, ask = [], ''
     if pref('safe', True):
         ask = tempfile.mkdtemp(prefix='atticus-ask-')
         atexit.register(shutil.rmtree, ask, True)   # however this run ends
         safe = ['--settings', json.dumps({
-            'sandbox': {'enabled': True, 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': False, 'excludedCommands': SAFE_OUT},
+            'sandbox': {'enabled': True, 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': True, 'excludedCommands': SAFE_OUT},
             'hooks': {'PreToolUse': [{'matcher': 'Bash', 'hooks': [{'type': 'command', 'command': f'"{sys.executable}" "{ME}" --gate', 'timeout': 70}]}]}})]
     p = subprocess.Popen(['claude', '-p', '--input-format', 'stream-json', '--model', pref('model', 'haiku'), '--effort', 'low', '--system-prompt', system,
-                          '--tools', 'Bash,Read,WebSearch,WebFetch', '--permission-mode', 'bypassPermissions', '--disallowedTools', *DENY, *safe,
+                          '--tools', 'Bash,Read,WebSearch,WebFetch', '--permission-mode', 'bypassPermissions', '--disallowedTools', *DENY, *([] if safe else ['Bash(trash:*)']), *safe,
                           '--setting-sources', '', '--no-session-persistence', '--strict-mcp-config', '--disable-slash-commands', '--output-format', 'stream-json', '--verbose'],
                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=tempfile.gettempdir(),
                          env={**os.environ, 'ATTICUS_ASK': ask})

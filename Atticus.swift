@@ -257,7 +257,7 @@ final class App: NSObject, WKScriptMessageHandler {
             if b["mic"] != nil { fresh = false }
             if b["mic"] != nil && !busy && !engine.isRunning { clickTalk = true; start(); if !engine.isRunning { clickTalk = false } }
             if b["ready"] != nil { js("size", Prefs.num("boxH")) }
-            if b["safe"] != nil { Prefs.set("safe", true); js("mode", true) }
+            if b["safe"] != nil { Prefs.set("safe", true); js("mode", true); Atticus.settings.push() }
             if let ok = b["allow"] as? Bool, !askFile.isEmpty { try? (ok ? "y" : "n").write(toFile: askFile, atomically: true, encoding: .utf8); askFile = "" }
             return
         }
@@ -1058,6 +1058,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
             if k == "hideWhenSharing" { app.panel.sharingType = v as? Bool == true ? .none : .readOnly }
             if k == "menuIcon" { bar.item.isVisible = v as? Bool == true }
             if k == "paused" { bar.paint() }
+            if k == "safe" { app.js("mode", v as? Bool == true) }
             if k == "login" {   // the LaunchAgent build.sh installed: enabled = starts at login
                 let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
                 p.arguments = [v as? Bool == true ? "enable" : "disable", "gui/\(getuid())/com.atticus.app"]; try? p.run()
