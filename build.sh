@@ -8,6 +8,7 @@ APP=~/Applications/Atticus.app   # in Applications so System Settings can list i
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/ui"
 cp atticus.py "$APP/Contents/Resources/"
 cp ui/*.html ui/*.js "$APP/Contents/Resources/ui/"
+cp ui/AppIcon.icns "$APP/Contents/Resources/"
 cat > "$APP/Contents/Info.plist" <<P
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -18,6 +19,7 @@ cat > "$APP/Contents/Info.plist" <<P
 <key>CFBundleVersion</key><string>1</string>
 <key>CFBundleShortVersionString</key><string>1.0</string>
 <key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
 <key>LSUIElement</key><true/>
 <key>NSMicrophoneUsageDescription</key><string>Atticus listens while you hold Control+Option+Space.</string>
 <key>NSAppleEventsUsageDescription</key><string>Atticus controls apps like Finder, Chrome and Music when you ask it to.</string>
@@ -31,7 +33,7 @@ ID=$(security find-identity -p codesigning | awk '/Atticus Local Signing/{print 
 codesign -s "${ID:--}" --force "$APP"
 # register with macOS, or System Settings can't list it for permissions
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"
-AGENT=~/Library/LaunchAgents/com.atticus.app.plist   # starts at login, restarts if it quits
+AGENT=~/Library/LaunchAgents/com.atticus.app.plist   # starts at login, restarts if it crashes (Quit stays quit)
 mkdir -p ~/Library/LaunchAgents ~/.config/atticus
 cat > "$AGENT" <<P
 <?xml version="1.0" encoding="UTF-8"?>
@@ -39,7 +41,8 @@ cat > "$AGENT" <<P
 <plist version="1.0"><dict>
 <key>Label</key><string>com.atticus.app</string>
 <key>ProgramArguments</key><array><string>$APP/Contents/MacOS/Atticus</string></array>
-<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
 <key>StandardErrorPath</key><string>$HOME/.config/atticus/app.err</string>
 </dict></plist>
 P

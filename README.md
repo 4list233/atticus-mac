@@ -70,6 +70,7 @@ cd atticus-mac
 `build.sh` builds `~/Applications/Atticus.app`, starts it now and at every login. Run it again after any change.
 
 The first launch opens a setup window. It checks your Claude plan, then asks for each macOS permission.
+After that, Atticus lives in the menu bar. Open it from Spotlight (⌘Space, "Atticus") for Settings: hotkey, sounds, model, speed, screen, memory and usage.
 If you sign out of Claude later, the setup window comes back by itself.
 To see it again: `defaults delete com.atticus.app onboarded`, then restart the app.
 
@@ -79,5 +80,6 @@ Test: `python3 atticus.py --selftest`. Remove: `launchctl bootout gui/$(id -u)/c
 
 - `Atticus.swift`: the app (hotkey, speech, overlay, onboarding window)
 - `atticus.py`: the brain (fast commands, system prompt, helpers for windows, web and screen)
-- `ui/ui.html`, `ui/onboarding.html`: the overlay and the welcome flow
+- `ui/ui.html`, `ui/onboarding.html`, `ui/settings.html`: the overlay, the welcome flow, and Settings
+- `ui/AppIcon.icns`: the app icon
 - `ui/orbs.js`: the [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) engine (MIT, Jakub Antalik)

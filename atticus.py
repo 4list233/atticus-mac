@@ -19,7 +19,15 @@ HOME = os.path.expanduser('~')
 DIR = os.path.join(HOME, '.config/atticus')
 ME = os.path.abspath(__file__)   # inside Atticus.app once built, so the AI's helper commands point here
 PLACE, LOOK, SEARCH, READ, SHOW, REMEMBER, FORGET, TYPE, PLAY = (ME + f' --{c}' for c in ('place', 'look', 'search', 'read', 'show', 'remember', 'forget', 'type', 'play'))
-MEMORY, RECENT = os.path.join(DIR, 'memory.md'), os.path.join(DIR, 'recent.jsonl')   # recent: Atticus.app deletes it on ✕
+MEMORY, RECENT = os.path.join(DIR, 'memory.md'), os.path.join(DIR, 'recent.jsonl')
+PREFS = os.path.join(DIR, 'settings.json')   # written by the Settings window
+
+
+def pref(key, default):
+    try:
+        return json.load(open(PREFS)).get(key, default)
+    except (OSError, ValueError):
+        return default   # recent: Atticus.app deletes it on ✕
 SHOT = '/tmp/atticus-screen'   # + -<n>.jpg, one per display
 os.environ['PATH'] = f"/opt/homebrew/bin:/usr/local/bin:{HOME}/.local/bin:{HOME}/.claude/local:/usr/bin:/bin:/usr/sbin:" + os.environ.get('PATH', '')
 APP = os.environ.get('ATTICUS_APP') or os.path.join(HOME, 'Applications/Atticus.app/Contents/MacOS/Atticus')   # set by Atticus.app
@@ -274,7 +282,10 @@ def fast(text):
         app = app_named(target)
         if not app:
             return None
-        subprocess.run(['open', '-a', app])   # plain open, ~0.1 s: here and in front (show()'s other-screen dance took 3-6 s)
+        if pref('openOn', 'here') == 'other':
+            show(app)   # Settings: open on the other screen and keep focus (slower, ~1-3 s)
+        else:
+            subprocess.run(['open', '-a', app])   # plain open, ~0.1 s: here and in front
         open(LAST, 'w').write(app)
         return f'Opened {app}.'
     m = re.fullmatch(r'(?:snap|move|put|throw|send|make)\s+(.+?)\s+(?:to\s+|on\s+|onto\s+)?(?:the\s+|my\s+)?'
@@ -418,7 +429,7 @@ def start_claude():
     """`claude -p` started ahead, waiting for the request on stdin: its ~1 s startup happens while the user is still talking."""
     if not shutil.which('claude'):
         return None
-    p = subprocess.Popen(['claude', '-p', '--input-format', 'stream-json', '--model', 'haiku', '--effort', 'low', '--system-prompt', SYSTEM,
+    p = subprocess.Popen(['claude', '-p', '--input-format', 'stream-json', '--model', pref('model', 'haiku'), '--effort', 'low', '--system-prompt', SYSTEM,
                           '--tools', 'Bash,Read,WebSearch,WebFetch', '--permission-mode', 'bypassPermissions', '--disallowedTools', *DENY,
                           '--setting-sources', '', '--no-session-persistence', '--strict-mcp-config', '--disable-slash-commands', '--output-format', 'stream-json', '--verbose'],
                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=tempfile.gettempdir())
@@ -464,7 +475,7 @@ def run(task, p=None, shots=()):
 
 def screen_for(task, snap):   # snap.shots: what look() returned
     """The key-down screenshot, if the request points at the screen ("what does this say", "articles on what I'm reading")."""
-    if not re.search(r"\b(screen|this|these|that|here|it|reading|looking|see|says?|shown?|page|tab|window|error|question|problem)\b", task.lower()):
+    if pref('screen', 'auto') == 'never' or not re.search(r"\b(screen|this|these|that|here|it|reading|looking|see|says?|shown?|page|tab|window|error|question|problem)\b", task.lower()):
         return None
     snap.join(5)
     return snap.shots
@@ -520,6 +531,16 @@ def main():
         return print('✓ ' + r, flush=True)
     if args[:1] == ['--play']:
         return print(play(' '.join(args[1:])) or 'nothing found on Spotify by that name')
+    if args == ['--state']:   # the Settings window: usage, saved rules, Claude plan
+        rows = [json.loads(l) for l in open(os.path.join(DIR, 'log.jsonl'))] if os.path.exists(os.path.join(DIR, 'log.jsonl')) else []
+        def use(since):
+            r = [x for x in rows if x['at'] >= since]
+            return {'asks': len(r), 'usd': round(sum(x.get('usd', 0) for x in r), 4),
+                    'secs': round(sum(x.get('secs', 0) for x in r) / len(r), 1) if r else 0}
+        week = time.strftime('%Y-%m-%d', time.localtime(time.time() - 6 * 86400))
+        rules = [l[2:].strip() for l in open(MEMORY)] if os.path.exists(MEMORY) else []
+        return print(json.dumps({'today': use(time.strftime('%Y-%m-%d')), 'week': use(week), 'all': use(''),
+                                 'rules': [r for r in rules if r], 'plan': plan()}))
     if args == ['--check']:   # the setup window asks this
         return print(json.dumps(plan()))
     if args[:1] == ['--search']:
@@ -551,7 +572,7 @@ def main():
     if not task:
         return warm and warm.kill()
     t = time.time()
-    quick = fast(task)
+    quick = pref('instant', True) and fast(task)
     if quick:
         if warm:
             warm.kill()

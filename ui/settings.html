@@ -1,0 +1,276 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<!-- Atticus settings. Atticus.swift calls st.load({prefs, state}) and gets {do:'set', k, v} and other actions back. -->
+<style>
+  :root {
+    --fg: #1d1d1f; --fg2: #6e6e73; --fg3: #8e8e93; --card: rgba(255,255,255,.66); --line: rgba(0,0,0,.08);
+    --side: rgba(255,255,255,.28); --sel: rgba(0,0,0,.06); --accent: #0a84ff; --green: #34c759; --track: rgba(120,120,128,.24);
+    --ease: cubic-bezier(.4,0,.2,1); --out: cubic-bezier(.16,1,.3,1);
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --fg: #f5f5f7; --fg2: #a1a1a6; --fg3: #8e8e93; --card: rgba(255,255,255,.055); --line: rgba(255,255,255,.08);
+    --side: rgba(0,0,0,.12); --sel: rgba(255,255,255,.08); --track: rgba(120,120,128,.36);
+  } }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; -webkit-user-select: none; cursor: default;
+    font: 13px -apple-system, system-ui, sans-serif; color: var(--fg); -webkit-font-smoothing: antialiased; }
+  body { display: flex; }
+
+  /* sidebar */
+  nav { width: 208px; flex: none; padding: 46px 10px 14px; box-sizing: border-box; background: var(--side);
+    box-shadow: inset -.5px 0 0 var(--line); display: flex; flex-direction: column; gap: 2px; }
+  .me { display: flex; align-items: center; gap: 10px; padding: 4px 8px 16px; }
+  .me img { width: 38px; height: 38px; }
+  .me b { display: block; font: 600 14px system-ui; } .me span { color: var(--fg3); font-size: 11px; }
+  nav button { all: unset; display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px;
+    font-size: 13px; color: var(--fg); transition: background .15s; }
+  nav button:hover { background: var(--sel); }
+  nav button.on { background: var(--accent); color: #fff; }
+  nav button:focus-visible { outline: 2px solid rgba(10,132,255,.5); }
+  .ni { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; flex: none; }
+  .ni svg { width: 14px; height: 14px; fill: none; stroke: #fff; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  nav .spacer { flex: 1; }
+  nav .ver { color: var(--fg3); font-size: 11px; padding: 0 8px; }
+
+  /* content */
+  main { flex: 1; overflow-y: auto; padding: 40px 34px 34px; box-sizing: border-box; }
+  section { display: none; max-width: 520px; margin: 0 auto; }
+  section.on { display: block; animation: rise .35s var(--out); }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+  h1 { font: 700 24px/1.15 system-ui; letter-spacing: -.02em; margin: 0 0 4px; }
+  p.lede { color: var(--fg2); margin: 0 0 20px; line-height: 1.45; }
+  h3 { font: 600 11px system-ui; text-transform: uppercase; letter-spacing: .04em; color: var(--fg3); margin: 22px 4px 7px; }
+
+  .group { background: var(--card); border-radius: 11px; box-shadow: inset 0 0 0 .5px var(--line), 0 1px 2px rgba(0,0,0,.03); }
+  .row { display: flex; align-items: center; gap: 14px; min-height: 44px; padding: 8px 14px; box-sizing: border-box; }
+  .row + .row { box-shadow: inset 0 .5px 0 var(--line); }
+  .row .t { flex: 1; min-width: 0; } .row .t b { display: block; font-weight: 500; }
+  .row .t span { display: block; color: var(--fg3); font-size: 11.5px; margin-top: 2px; line-height: 1.35; }
+
+  /* switch */
+  .sw { position: relative; width: 38px; height: 22px; flex: none; }
+  .sw input { appearance: none; margin: 0; width: 100%; height: 100%; border-radius: 11px; background: var(--track);
+    transition: background .2s var(--ease); cursor: pointer; }
+  .sw input:checked { background: var(--green); }
+  .sw input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .22s var(--out); }
+  .sw input:checked::after { transform: translateX(16px); }
+  .sw input:focus-visible { outline: 3px solid rgba(10,132,255,.45); outline-offset: 2px; }
+
+  /* segmented */
+  .seg { display: inline-flex; padding: 2px; border-radius: 8px; background: var(--track); flex: none; }
+  .seg button { all: unset; padding: 4px 11px; border-radius: 6px; font-size: 12px; color: var(--fg); transition: background .2s, box-shadow .2s; }
+  .seg button.on { background: var(--card); box-shadow: 0 1px 3px rgba(0,0,0,.15), inset 0 0 0 .5px var(--line); }
+  @media (prefers-color-scheme: dark) { .seg button.on { background: #636366; } }
+  .seg button:focus-visible { outline: 2px solid rgba(10,132,255,.5); }
+
+  select { font: 13px system-ui; color: var(--fg); background: var(--card); border: 0; border-radius: 6px; padding: 3px 6px;
+    box-shadow: inset 0 0 0 .5px var(--line), 0 1px 1px rgba(0,0,0,.05); }
+  input[type=range] { width: 150px; accent-color: var(--accent); }
+  .val { width: 44px; text-align: right; color: var(--fg2); font-variant-numeric: tabular-nums; }
+
+  /* hotkey cards */
+  .keys { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .hk { all: unset; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px 8px 12px; border-radius: 11px;
+    background: var(--card); box-shadow: inset 0 0 0 .5px var(--line); transition: box-shadow .2s, transform .12s; }
+  .hk:active { transform: scale(.98); }
+  .hk.on { box-shadow: inset 0 0 0 2px var(--accent); }
+  .hk:focus-visible { outline: 2px solid rgba(10,132,255,.5); }
+  .hk .caps { display: flex; gap: 5px; } .hk small { color: var(--fg3); font-size: 11px; }
+  .cap { min-width: 26px; height: 26px; padding: 0 7px; box-sizing: border-box; border-radius: 6px; display: grid; place-items: center;
+    font: 500 12px system-ui; background: linear-gradient(#fdfdfd, #e8e8ed); color: #1d1d1f;
+    box-shadow: 0 0 0 .5px rgba(0,0,0,.16), 0 1.5px 0 rgba(0,0,0,.16); }
+  @media (prefers-color-scheme: dark) { .cap { background: linear-gradient(#48484a, #3a3a3c); color: #f5f5f7;
+    box-shadow: 0 0 0 .5px rgba(0,0,0,.6), 0 1.5px 0 rgba(0,0,0,.6); } }
+
+  /* buttons */
+  .btn { all: unset; height: 26px; padding: 0 12px; border-radius: 7px; font-size: 12.5px; font-weight: 500; flex: none;
+    background: var(--card); box-shadow: inset 0 0 0 .5px var(--line), 0 1px 1px rgba(0,0,0,.05); transition: filter .15s, transform .1s; }
+  .btn:hover { filter: brightness(1.06); } .btn:active { transform: scale(.97); }
+  .btn.blue { background: var(--accent); color: #fff; box-shadow: none; }
+  .btn.red { color: #ff453a; }
+  .btn:focus-visible { outline: 2px solid rgba(10,132,255,.5); }
+
+  /* usage */
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .stat { background: var(--card); border-radius: 11px; padding: 14px; box-shadow: inset 0 0 0 .5px var(--line); }
+  .stat small { color: var(--fg3); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+  .stat b { display: block; font: 600 24px system-ui; letter-spacing: -.02em; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--fg2); font-size: 12px; }
+
+  /* memory */
+  .rule { display: flex; align-items: center; gap: 10px; }
+  .rule .t { color: var(--fg); }
+  .x { all: unset; width: 22px; height: 22px; border-radius: 11px; display: grid; place-items: center; color: var(--fg3); font-size: 15px; }
+  .x:hover { background: var(--sel); color: #ff453a; }
+  .add { display: flex; gap: 8px; padding: 10px 14px; box-shadow: inset 0 .5px 0 var(--line); }
+  .add input { flex: 1; font: 13px system-ui; color: var(--fg); background: transparent; border: 0; outline: 0; }
+  .empty { padding: 14px; color: var(--fg3); }
+
+  .status { display: flex; align-items: center; gap: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 4px; background: var(--green); flex: none; }
+  .dot.bad { background: #ff9f0a; }
+</style></head><body>
+
+<nav>
+  <div class="me"><img id="icon" alt=""><div><b>Atticus</b><span>Just ask.</span></div></div>
+  <button data-s="general" class="on"><i class="ni" style="background:#8e8e93"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></i>General</button>
+  <button data-s="sound"><i class="ni" style="background:#ff375f"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5v14l-4.5-4.5H4zM16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></svg></i>Sound</button>
+  <button data-s="brain"><i class="ni" style="background:#d97757"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg></i>Intelligence</button>
+  <button data-s="screen"><i class="ni" style="background:#bf5af2"><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/></svg></i>Screen &amp; Windows</button>
+  <button data-s="memory"><i class="ni" style="background:#ff9f0a"><svg viewBox="0 0 24 24"><path d="M6 4h12v16l-6-4-6 4z"/></svg></i>Memory</button>
+  <button data-s="usage"><i class="ni" style="background:#30d158"><svg viewBox="0 0 24 24"><path d="M5 19V11M12 19V5M19 19v-6"/></svg></i>Usage</button>
+  <button data-s="account"><i class="ni" style="background:#0a84ff"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg></i>Account &amp; Access</button>
+  <div class="spacer"></div>
+  <div class="ver">Atticus 1.0</div>
+</nav>
+
+<main>
+  <section id="general" class="on">
+    <h1>General</h1>
+    <p class="lede">Hold the keys, say what you need, let go.</p>
+    <h3>Talk to Atticus with</h3>
+    <div class="keys" id="hotkeys"></div>
+    <h3>Atticus</h3>
+    <div class="group">
+      <div class="row"><div class="t"><b>Open at login</b><span>Ready the moment your Mac is.</span></div><label class="sw"><input type="checkbox" data-k="login"></label></div>
+      <div class="row"><div class="t"><b>Pause Atticus</b><span>The keys do nothing until you turn this off.</span></div><label class="sw"><input type="checkbox" data-k="paused"></label></div>
+    </div>
+    <h3>The answer box</h3>
+    <div class="group">
+      <div class="row"><div class="t"><b>Position</b></div><div class="seg" data-k="corner"><button data-v="top-left">Top left</button><button data-v="top-right">Top right</button></div></div>
+      <div class="row"><div class="t"><b>Keep answers on screen</b><span>How long an answer stays before the box fades.</span></div><div class="seg" data-k="linger"><button data-v="short">Short</button><button data-v="normal">Normal</button><button data-v="long">Long</button></div></div>
+    </div>
+  </section>
+
+  <section id="sound">
+    <h1>Sound</h1>
+    <p class="lede">Small cues so you know Atticus heard you, without looking.</p>
+    <div class="group">
+      <div class="row"><div class="t"><b>When it starts listening</b></div><select data-k="soundStart"></select></div>
+      <div class="row"><div class="t"><b>When an answer is ready</b></div><select data-k="soundDone"></select></div>
+      <div class="row"><div class="t"><b>When you stop it</b><span>Esc, or the keys again.</span></div><select data-k="soundStop"></select></div>
+      <div class="row"><div class="t"><b>Volume</b></div><input type="range" min="0" max="0.6" step="0.02" data-k="volume"><span class="val" id="volv"></span></div>
+    </div>
+  </section>
+
+  <section id="brain">
+    <h1>Intelligence</h1>
+    <p class="lede">Atticus thinks with Claude, on your Claude plan.</p>
+    <h3>Model</h3>
+    <div class="group">
+      <div class="row"><div class="t"><b>Claude model</b><span id="modelwhy"></span></div><div class="seg" data-k="model"><button data-v="haiku">Haiku</button><button data-v="sonnet">Sonnet</button><button data-v="opus">Opus</button></div></div>
+    </div>
+    <h3>Speed</h3>
+    <div class="group">
+      <div class="row"><div class="t"><b>Instant commands</b><span>Opening apps, moving windows, searches and music run with no AI, in under a second.</span></div><label class="sw"><input type="checkbox" data-k="instant"></label></div>
+      <div class="row"><div class="t"><b>Start while I’m talking</b><span>When you pause, Atticus starts on what you said. Often done the moment you let go.</span></div><label class="sw"><input type="checkbox" data-k="ahead"></label></div>
+      <div class="row"><div class="t"><b>Pause before starting</b><span>Shorter is faster. Longer waits more if you pause mid-sentence.</span></div><input type="range" min="0.4" max="1.5" step="0.1" data-k="aheadDelay"><span class="val" id="delayv"></span></div>
+    </div>
+  </section>
+
+  <section id="screen">
+    <h1>Screen &amp; Windows</h1>
+    <p class="lede">What Atticus can see, and where things open.</p>
+    <div class="group">
+      <div class="row"><div class="t"><b>Look at my screen</b><span>Automatic: only when you say “this”, “my screen”, “this page” and the like. Pictures stay on your Mac until sent with that one ask.</span></div><div class="seg" data-k="screen"><button data-v="auto">Automatic</button><button data-v="never">Never</button></div></div>
+      <div class="row"><div class="t"><b>Open apps on</b><span>The other screen keeps you where you are, but takes a second or two longer.</span></div><div class="seg" data-k="openOn"><button data-v="here">This screen</button><button data-v="other">Other screen</button></div></div>
+    </div>
+  </section>
+
+  <section id="memory">
+    <h1>Memory</h1>
+    <p class="lede">Rules Atticus follows every time. Say “remember…” or “from now on…”, or add one here.</p>
+    <div class="group" id="rules"></div>
+  </section>
+
+  <section id="usage">
+    <h1>Usage</h1>
+    <p class="lede">What Atticus has cost, priced at Claude API list rates. On a Claude plan it comes out of your plan’s usage, not your wallet.</p>
+    <div class="stats" id="stats"></div>
+    <h3>History</h3>
+    <div class="group">
+      <div class="row"><div class="t"><b>Ask log</b><span>Every ask, its answer, steps and cost.</span></div><button class="btn" data-do="openLog">Open</button></div>
+      <div class="row"><div class="t"><b>Forget this conversation</b><span>Follow-ups like “open the second one” start fresh.</span></div><button class="btn red" data-do="clearRecent">Forget</button></div>
+    </div>
+  </section>
+
+  <section id="account">
+    <h1>Account &amp; Access</h1>
+    <p class="lede">What Atticus needs to work.</p>
+    <div class="group">
+      <div class="row"><div class="t"><b>Claude</b><span class="status"><i class="dot" id="pdot"></i><span id="ptext">Checking…</span></span></div><button class="btn" data-do="setup" id="pbtn">Set Up</button></div>
+      <div class="row"><div class="t"><b>Permissions</b><span>Microphone, speech, accessibility, screen and automation.</span></div><button class="btn" data-do="setup">Review</button></div>
+    </div>
+    <h3>Atticus</h3>
+    <div class="group">
+      <div class="row"><div class="t"><b>Quit Atticus</b><span>Open it again from Spotlight or Applications.</span></div><button class="btn red" data-do="quit">Quit</button></div>
+    </div>
+  </section>
+</main>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const post = m => window.webkit?.messageHandlers.st.postMessage(m);
+  let P = {};
+  const set = (k, v) => { P[k] = v; post({ do: 'set', k, v }); paint(); };
+
+  document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+    document.querySelectorAll('nav button, section').forEach(e => e.classList.remove('on'));
+    b.classList.add('on'); $(b.dataset.s).classList.add('on');
+  });
+  document.querySelectorAll('[data-do]').forEach(b => b.onclick = () => post({ do: b.dataset.do }));
+
+  const HOTKEYS = [['ctrl-opt-space', ['⌃', '⌥', 'Space'], 'Control Option Space'], ['opt-space', ['⌥', 'Space'], 'Option Space'],
+                   ['ctrl-space', ['⌃', 'Space'], 'Control Space'], ['cmd-shift-space', ['⌘', '⇧', 'Space'], 'Command Shift Space']];
+  $('hotkeys').innerHTML = HOTKEYS.map(([v, caps, name]) =>
+    `<button class="hk" data-v="${v}" aria-label="${name}"><span class="caps">${caps.map(c => `<i class="cap">${c}</i>`).join('')}</span><small>Hold, talk, let go</small></button>`).join('');
+  document.querySelectorAll('.hk').forEach(b => b.onclick = () => set('hotkey', b.dataset.v));
+
+  const SOUNDS = ['None', 'Pop', 'Tink', 'Glass', 'Ping', 'Purr', 'Bottle', 'Blow', 'Hero', 'Funk', 'Morse', 'Submarine', 'Frog', 'Sosumi', 'Basso'];
+  document.querySelectorAll('select').forEach(s => {
+    s.innerHTML = SOUNDS.map(n => `<option>${n}</option>`).join('');
+    s.onchange = () => { set(s.dataset.k, s.value); if (s.value !== 'None') post({ do: 'preview', sound: s.value }); };
+  });
+  document.querySelectorAll('.seg').forEach(g => g.querySelectorAll('button').forEach(b => b.onclick = () => set(g.dataset.k, b.dataset.v)));
+  document.querySelectorAll('.sw input').forEach(i => i.onchange = () => set(i.dataset.k, i.checked));
+  document.querySelectorAll('input[type=range]').forEach(r => {
+    r.oninput = () => { P[r.dataset.k] = +r.value; paint(); };
+    r.onchange = () => { set(r.dataset.k, +r.value); if (r.dataset.k === 'volume') post({ do: 'preview', sound: P.soundDone === 'None' ? 'Glass' : P.soundDone }); };
+  });
+
+  const WHY = { haiku: 'Fastest, about 2 s an ask. Right for almost everything.', sonnet: 'Smarter for tricky asks. A few seconds slower; uses more of your plan.',
+                opus: 'Most capable. Slowest; uses your plan fastest.' };
+  function paint() {
+    document.querySelectorAll('.hk').forEach(b => b.classList.toggle('on', b.dataset.v === P.hotkey));
+    document.querySelectorAll('.seg').forEach(g => g.querySelectorAll('button').forEach(b => b.classList.toggle('on', P[g.dataset.k] === b.dataset.v)));
+    document.querySelectorAll('.sw input').forEach(i => i.checked = !!P[i.dataset.k]);
+    document.querySelectorAll('select').forEach(s => s.value = P[s.dataset.k]);
+    document.querySelectorAll('input[type=range]').forEach(r => r.value = P[r.dataset.k]);
+    $('volv').textContent = Math.round(P.volume / .6 * 100) + '%';
+    $('delayv').textContent = (+P.aheadDelay).toFixed(1) + ' s';
+    $('modelwhy').textContent = WHY[P.model] || '';
+    document.querySelector('[data-k=aheadDelay]').closest('.row').style.opacity = P.ahead ? 1 : .45;
+  }
+
+  const money = u => u < 1 ? (u * 100).toFixed(u < .1 ? 2 : 1) + '¢' : '$' + u.toFixed(2);
+  function state(s) {
+    $('stats').innerHTML = [['Today', s.today], ['7 days', s.week], ['All time', s.all]].map(([n, u]) =>
+      `<div class="stat"><small>${n}</small><b>${u.asks}</b><span>asks · ${money(u.usd)}${u.asks ? ' · ' + u.secs + ' s avg' : ''}</span></div>`).join('');
+    const esc = t => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    $('rules').innerHTML = (s.rules.length ? s.rules.map((r, i) =>
+      `<div class="row rule"><div class="t">${esc(r)}</div><button class="x" data-i="${i}" aria-label="Forget this rule">×</button></div>`).join('')
+      : '<div class="empty">No rules yet.</div>') +
+      '<div class="add"><input id="newrule" placeholder="When I say focus mode, close Slack and open Notes" aria-label="New rule"><button class="btn blue" id="addrule">Add</button></div>';
+    document.querySelectorAll('.x').forEach(b => b.onclick = () => post({ do: 'forget', line: s.rules[+b.dataset.i] }));
+    const add = () => { const v = $('newrule').value.trim(); if (v) post({ do: 'remember', line: v }); };
+    $('addrule').onclick = add; $('newrule').onkeydown = e => { if (e.key === 'Enter') add(); };
+    $('ptext').textContent = s.plan.text; $('pdot').classList.toggle('bad', !s.plan.ok);
+    $('pbtn').style.display = s.plan.ok ? 'none' : '';
+  }
+
+  window.st = {
+    load(d) { P = d.prefs; if (d.icon) $('icon').src = d.icon; paint(); if (d.state) state(d.state); },
+    state,
+  };
+</script>
+</body></html>

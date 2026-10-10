@@ -11,6 +11,30 @@ import ScreenCaptureKit
 
 let dir = Bundle.main.resourcePath!   // build.sh copies atticus.py and ui/ in here
 
+// Settings, shared with atticus.py (model, screen, openOn, instant): ~/.config/atticus/settings.json
+enum Prefs {
+    static let path = NSString(string: "~/.config/atticus/settings.json").expandingTildeInPath
+    static let defaults: [String: Any] = ["hotkey": "ctrl-opt-space", "login": true, "paused": false, "corner": "top-left", "linger": "normal",
+        "soundStart": "Pop", "soundDone": "Glass", "soundStop": "Tink", "volume": 0.16, "model": "haiku", "instant": true,
+        "ahead": true, "aheadDelay": 0.7, "screen": "auto", "openOn": "here"]
+    static var d: [String: Any] = defaults.merging(
+        (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path)))) as? [String: Any] ?? [:]) { $1 }
+    static func set(_ k: String, _ v: Any) {
+        d[k] = v
+        try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        if let j = try? JSONSerialization.data(withJSONObject: d, options: [.prettyPrinted, .sortedKeys]) { try? j.write(to: URL(fileURLWithPath: path)) }
+    }
+    static func bool(_ k: String) -> Bool { d[k] as? Bool ?? false }
+    static func str(_ k: String) -> String { d[k] as? String ?? "" }
+    static func num(_ k: String) -> Double { (d[k] as? NSNumber)?.doubleValue ?? 0 }
+}
+
+// Hotkey choices: Carbon modifiers to register, and the keys whose release ends listening.
+let HOTKEYS: [String: (mods: Int, flags: NSEvent.ModifierFlags)] = [
+    "ctrl-opt-space": (controlKey | optionKey, [.control, .option]), "opt-space": (optionKey, [.option]),
+    "ctrl-space": (controlKey, [.control]), "cmd-shift-space": (cmdKey | shiftKey, [.command, .shift])]
+func hotkey() -> (mods: Int, flags: NSEvent.ModifierFlags) { HOTKEYS[Prefs.str("hotkey")] ?? HOTKEYS["ctrl-opt-space"]! }
+
 // atticus.py with whatever python3 this Mac has (Homebrew's first, else Apple's).
 func py(_ args: [String], _ extra: [String: String] = [:]) -> Process {
     let p = Process()
@@ -62,6 +86,8 @@ final class App: NSObject, WKScriptMessageHandler {
             ((try? FileManager.default.contentsOfDirectory(atPath: $0)) ?? []).filter { $0.hasSuffix(".app") }.map { String($0.dropLast(4)) }
         }).prefix(100))
     func sound(_ name: String, _ v: Float) { let s = NSSound(named: name); s?.volume = v; s?.play() }
+    func cue(_ k: String) { let n = Prefs.str(k); if n != "None" { sound(n, Float(Prefs.num("volume"))) } }   // soundStart / soundDone / soundStop
+    func linger(_ s: Double) -> Double { s * (["short": 0.5, "long": 2][Prefs.str("linger")] ?? 1) }
 
     override init() {
         let cfg = WKWebViewConfiguration()
@@ -159,7 +185,8 @@ final class App: NSObject, WKScriptMessageHandler {
             return
         }
         let vf = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
-        panel.setFrameOrigin(NSPoint(x: vf.minX + 14, y: vf.maxY - panel.frame.height - 10))
+        let x = Prefs.str("corner") == "top-right" ? vf.maxX - panel.frame.width - 14 : vf.minX + 14
+        panel.setFrameOrigin(NSPoint(x: x, y: vf.maxY - panel.frame.height - 10))
         panel.alphaValue = 0
         panel.orderFrontRegardless()
         if escRef == nil {
@@ -188,7 +215,7 @@ final class App: NSObject, WKScriptMessageHandler {
             engine.stop(); engine.inputNode.removeTap(onBus: 0); feed?.finish(); reading?.cancel(); pause?.cancel(); unwarm()
             aheadItem?.cancel(); dropAhead()
             let an = analyzer; Task { await an?.cancelAndFinishNow() }
-            sound("Tink", 0.12); js("stopped", "Stopped listening"); hide(after: 1.5)
+            cue("soundStop"); js("stopped", "Stopped listening"); hide(after: 1.5)
         } else if busy {
             cancel()
         } else if panel.isVisible && !stuck {
@@ -198,7 +225,7 @@ final class App: NSObject, WKScriptMessageHandler {
 
     func cancel() {
         proc?.terminate(); proc = nil; busy = false
-        sound("Tink", 0.12); js("stopped", "Answer stopped"); hide(after: 1.5)
+        cue("soundStop"); js("stopped", "Answer stopped"); hide(after: 1.5)
     }
 
     // ✕ also ends the conversation; clicking away or timing out keeps it for 5 minutes.
@@ -211,13 +238,14 @@ final class App: NSObject, WKScriptMessageHandler {
     }
 
     func start() {
+        guard !Prefs.bool("paused") else { return }
         if busy {   // pressed again while it works = cancel
             return cancel()
         }
         guard !engine.isRunning else { return }
         text = ""; consumed = 0; did = []; ahead = ""
         if !panel.isVisible && Date().timeIntervalSince(lastDone) > 30 { js("reset"); try? FileManager.default.removeItem(atPath: recent) }
-        sound("Pop", 0.18)
+        cue("soundStart")
         unwarm(); warm = spawn()
         onboarding.tried()
         js("listen")
@@ -267,7 +295,7 @@ final class App: NSObject, WKScriptMessageHandler {
         let began = Date()
         Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] t in
             guard let self, engine.isRunning else { return t.invalidate() }
-            if NSEvent.modifierFlags.isDisjoint(with: [.control, .option]) || Date().timeIntervalSince(began) > 60 { t.invalidate(); stop() }
+            if NSEvent.modifierFlags.isDisjoint(with: hotkey().flags) || Date().timeIntervalSince(began) > 60 { t.invalidate(); stop() }
         }
     }
 
@@ -282,9 +310,10 @@ final class App: NSObject, WKScriptMessageHandler {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: item)
         if !ahead.isEmpty && key(rest()) != key(ahead) { dropAhead() }   // the user kept talking: that start was for half a sentence
         aheadItem?.cancel()   // a longer pause = the user is probably done: start the AI now, keys still held
+        guard Prefs.bool("ahead") else { return }
         let go = DispatchWorkItem { [weak self] in self?.startAhead() }
         aheadItem = go
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: go)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Prefs.num("aheadDelay"), execute: go)
     }
 
     func rest() -> String { let w = words(); return w.count > consumed ? w[consumed...].joined(separator: " ") : "" }
@@ -326,12 +355,17 @@ final class App: NSObject, WKScriptMessageHandler {
         }
     }
 
+    func typed(_ t: String) {   // "Ask Atticus…" from the menu bar: same box, no mic
+        guard !busy, !engine.isRunning else { return }
+        js("listen"); show(); js("words", t); run(t)
+    }
+
     func words() -> [Substring] { text.split(separator: " ") }
 
     // Runs `atticus.py --fast` on the words not yet used; exit 0 means it was a simple command and it is done.
     func tryFast() {
         let w = words()
-        guard engine.isRunning, !fastBusy, w.count > consumed else { return }
+        guard Prefs.bool("instant"), engine.isRunning, !fastBusy, w.count > consumed else { return }
         let seg = w[consumed...].joined(separator: " "), n = w.count, front = mine
         fastBusy = true
         DispatchQueue.global().async { [weak self] in
@@ -358,7 +392,7 @@ final class App: NSObject, WKScriptMessageHandler {
         let rest = rest()
         if !rest.isEmpty && key(rest) == key(ahead) {   // already started on exactly this while the user talked
             ahead = ""; unwarm()
-            if proc == nil { busy = false; hide(after: max(6, min(30, Double(answer.count) / 12))) }   // and already done
+            if proc == nil { busy = false; hide(after: linger(max(6, min(30, Double(answer.count) / 12)))) }   // and already done
             return
         }
         dropAhead()
@@ -366,7 +400,7 @@ final class App: NSObject, WKScriptMessageHandler {
         busy = false; unwarm()   // nothing left for the AI
         if did.isEmpty { js("msg", "Didn't catch that."); return hide(after: 1.2) }
         answer = "✓ " + did.joined(separator: " ")
-        js("line", answer); lastDone = Date(); sound("Glass", 0.12); hide(after: 5)
+        js("line", answer); lastDone = Date(); cue("soundDone"); hide(after: linger(5))
     }
 
     // atticus.py --wait, started at key-down so Claude is up by the time the user lets go; run() hands it the words.
@@ -391,8 +425,8 @@ final class App: NSObject, WKScriptMessageHandler {
             DispatchQueue.main.async {
                 guard let self, self.proc === p else { return }   // a cancelled run ending late must not touch the next one
                 self.busy = false; self.proc = nil
-                if !self.answer.isEmpty { self.lastDone = Date(); self.sound("Glass", 0.12) }
-                self.hide(after: max(6, min(30, Double(self.answer.count) / 12)))   // longer answers stay longer
+                if !self.answer.isEmpty { self.lastDone = Date(); self.cue("soundDone") }
+                self.hide(after: self.linger(max(6, min(30, Double(self.answer.count) / 12))))   // longer answers stay longer
             }
         }
         do { try p.run() } catch { return nil }
@@ -545,7 +579,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
         UserDefaults.standard.set(true, forKey: "onboarded")
         let relaunch = !CGPreflightScreenCaptureAccess()
         win?.close()
-        if relaunch { DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { exit(0) } }
+        if relaunch { relaunchSoon() }
     }
 
     func windowWillClose(_ n: Notification) {
@@ -575,6 +609,149 @@ if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--look" {
     exit(FileManager.default.fileExists(atPath: a[3]) ? 0 : 1)
 }
 
+// Restart Atticus (Screen Recording only takes effect in a new process); works under launchd or when opened by hand.
+func relaunchSoon() {
+    let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/sh")
+    p.arguments = ["-c", "sleep 1; open \"$0\"", Bundle.main.bundlePath]
+    try? p.run()
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { exit(0) }
+}
+
+// Opening Atticus again (Spotlight, Finder, Dock) while it runs: setup the first time, Settings after.
+final class Delegate: NSObject, NSApplicationDelegate {
+    func applicationShouldHandleReopen(_ s: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        UserDefaults.standard.bool(forKey: "onboarded") ? settings.open() : onboarding.open()
+        return false
+    }
+}
+
+// The menu bar icon: quick actions, today's usage.
+final class MenuBar: NSObject, NSMenuDelegate {
+    let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    override init() {
+        super.init()
+        item.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Atticus")
+        let m = NSMenu(); m.delegate = self; item.menu = m
+        paint()
+    }
+    func paint() { item.button?.appearsDisabled = Prefs.bool("paused") }
+    func menuNeedsUpdate(_ m: NSMenu) {
+        m.removeAllItems()
+        let k = hotkey().flags
+        let keys = (k.contains(.command) ? "⌘" : "") + (k.contains(.shift) ? "⇧" : "") + (k.contains(.control) ? "⌃" : "") + (k.contains(.option) ? "⌥" : "") + "Space"
+        let head = NSMenuItem(title: Prefs.bool("paused") ? "Atticus is paused" : "Hold \(keys) and talk", action: nil, keyEquivalent: "")
+        head.isEnabled = false; m.addItem(head)
+        m.addItem(.separator())
+        add(m, "Ask Atticus…", #selector(ask), "")
+        add(m, Prefs.bool("paused") ? "Resume Atticus" : "Pause Atticus", #selector(pause), "")
+        m.addItem(.separator())
+        let u = NSMenuItem(title: today(), action: nil, keyEquivalent: ""); u.isEnabled = false; m.addItem(u)
+        m.addItem(.separator())
+        add(m, "Settings…", #selector(openSettings), ",")
+        add(m, "Setup & Permissions…", #selector(openSetup), "")
+        m.addItem(.separator())
+        add(m, "Quit Atticus", #selector(quit), "q")
+    }
+    func add(_ m: NSMenu, _ t: String, _ a: Selector, _ k: String) { let i = NSMenuItem(title: t, action: a, keyEquivalent: k); i.target = self; m.addItem(i) }
+    func today() -> String {
+        let day = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f.string(from: Date()) }()
+        let log = (try? String(contentsOfFile: NSString(string: "~/.config/atticus/log.jsonl").expandingTildeInPath, encoding: .utf8)) ?? ""
+        let rows = log.split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+            .filter { ($0["at"] as? String ?? "").hasPrefix(day) }
+        let usd = rows.reduce(0.0) { $0 + (($1["usd"] as? NSNumber)?.doubleValue ?? 0) }
+        return "Today: \(rows.count) ask\(rows.count == 1 ? "" : "s") · " + (usd < 1 ? String(format: "%.2f¢", usd * 100) : String(format: "$%.2f", usd))
+    }
+    @objc func ask() {
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert(); a.messageText = "Ask Atticus"; a.informativeText = "Type what you would say."
+        let f = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24)); f.placeholderString = "What’s the weather tomorrow?"
+        a.accessoryView = f; a.addButton(withTitle: "Ask"); a.addButton(withTitle: "Cancel")
+        a.window.initialFirstResponder = f
+        if a.runModal() == .alertFirstButtonReturn, !f.stringValue.trimmingCharacters(in: .whitespaces).isEmpty { app.typed(f.stringValue) }
+    }
+    @objc func pause() { Prefs.set("paused", !Prefs.bool("paused")); paint(); settings.push() }
+    @objc func openSettings() { settings.open() }
+    @objc func openSetup() { onboarding.open() }
+    @objc func quit() { NSApp.terminate(nil) }
+}
+
+// Settings window (ui/settings.html): every setting lives in Prefs; atticus.py reads the same file.
+final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSWindowDelegate {
+    var win: NSWindow?, web: WKWebView?
+
+    func open() {
+        NSApp.activate(ignoringOtherApps: true)
+        if let w = win { w.makeKeyAndOrderFront(nil); refresh(); return }
+        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 560),
+                         styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
+        w.titlebarAppearsTransparent = true; w.titleVisibility = .hidden; w.title = "Atticus Settings"
+        w.isReleasedWhenClosed = false; w.delegate = self
+        let bg = NSVisualEffectView(frame: w.contentRect(forFrameRect: w.frame))
+        bg.material = .underWindowBackground; bg.blendingMode = .behindWindow; bg.state = .active
+        let cfg = WKWebViewConfiguration()
+        cfg.userContentController.add(self, name: "st")
+        let v = WKWebView(frame: bg.bounds, configuration: cfg)
+        v.autoresizingMask = [.width, .height]; v.setValue(false, forKey: "drawsBackground"); v.navigationDelegate = self
+        v.loadHTMLString((try? String(contentsOfFile: dir + "/ui/settings.html", encoding: .utf8)) ?? "missing settings.html", baseURL: nil)
+        bg.addSubview(v); w.contentView = bg
+        win = w; web = v
+        w.center(); w.makeKeyAndOrderFront(nil)
+    }
+
+    func webView(_ v: WKWebView, didFinish n: WKNavigation!) { push(); refresh() }
+
+    func push() {   // the settings, and the app icon for the sidebar
+        var d: [String: Any] = ["prefs": Prefs.d]
+        if let t = NSApp.applicationIconImage?.tiffRepresentation, let png = NSBitmapImageRep(data: t)?.representation(using: .png, properties: [:]) {
+            d["icon"] = "data:image/png;base64," + png.base64EncodedString()
+        }
+        guard let j = try? JSONSerialization.data(withJSONObject: d), let s = String(data: j, encoding: .utf8) else { return }
+        web?.evaluateJavaScript("st.load(\(s))")
+    }
+
+    func refresh() {   // usage, saved rules, Claude plan: atticus.py --state (it runs Claude Code, so off the main thread)
+        DispatchQueue.global().async { [weak self] in
+            let p = py(["--state"]), out = Pipe(); p.standardOutput = out
+            try? p.run(); p.waitUntilExit()
+            let s = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            guard s.hasPrefix("{") else { return }
+            DispatchQueue.main.async { self?.web?.evaluateJavaScript("st.state(\(s))") }
+        }
+    }
+
+    func helper(_ args: [String]) { let p = py(args); try? p.run(); p.waitUntilExit() }
+
+    func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
+        guard let b = m.body as? [String: Any], let what = b["do"] as? String else { return }
+        switch what {
+        case "set":
+            guard let k = b["k"] as? String, let v = b["v"] else { return }
+            Prefs.set(k, v)
+            if k == "hotkey" { registerHotkey() }
+            if k == "paused" { bar.paint() }
+            if k == "login" {   // the LaunchAgent build.sh installed: enabled = starts at login
+                let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+                p.arguments = [v as? Bool == true ? "enable" : "disable", "gui/\(getuid())/com.atticus.app"]; try? p.run()
+            }
+        case "preview":
+            if let n = b["sound"] as? String { app.sound(n, Float(Prefs.num("volume"))) }
+        case "setup": onboarding.open()
+        case "openLog": NSWorkspace.shared.open(URL(fileURLWithPath: NSString(string: "~/.config/atticus/log.jsonl").expandingTildeInPath))
+        case "clearRecent": try? FileManager.default.removeItem(atPath: app.recent); app.lastDone = .distantPast
+        case "forget", "remember":
+            guard let line = b["line"] as? String else { return }
+            DispatchQueue.global().async { [weak self] in self?.helper(["--" + what, line]); DispatchQueue.main.async { self?.refresh() } }
+        case "quit": NSApp.terminate(nil)
+        default: break
+        }
+    }
+
+    func windowWillClose(_ n: Notification) {
+        web?.configuration.userContentController.removeScriptMessageHandler(forName: "st")
+        web = nil; win = nil
+    }
+}
+
 let app = App()
 let onboarding = Onboarding()
 if !UserDefaults.standard.bool(forKey: "onboarded") { DispatchQueue.main.async { onboarding.open() } }
@@ -589,8 +766,15 @@ InstallEventHandler(GetApplicationEventTarget(), { _, ev, _ in
     return noErr
 }, 2, &specs, nil, nil)
 var ref: EventHotKeyRef?
-RegisterEventHotKey(UInt32(kVK_Space), UInt32(controlKey | optionKey),
-                    EventHotKeyID(signature: 0x41545443, id: 1), GetApplicationEventTarget(), 0, &ref)
+func registerHotkey() {
+    if let r = ref { UnregisterEventHotKey(r); ref = nil }
+    RegisterEventHotKey(UInt32(kVK_Space), UInt32(hotkey().mods), EventHotKeyID(signature: 0x41545443, id: 1), GetApplicationEventTarget(), 0, &ref)
+}
+registerHotkey()
+let settings = SettingsWindow()
+let bar = MenuBar()
+let delegate = Delegate()
+NSApplication.shared.delegate = delegate
 
 // Test hook: `defaults write com.atticus.app demo -string "<request>"` then restart runs it once without the mic.
 if let demo = UserDefaults.standard.string(forKey: "demo") {
