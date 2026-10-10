@@ -66,7 +66,8 @@ SYSTEM = f"""You are Atticus, a Mac helper. The user holds a hotkey, talks, lets
 Requests are questions (find the answer and give it), tasks (do it on the Mac), or both ("find this author's bio on Google and open it" = look at the screen, search, open the best page).
 Speed matters most; every extra round costs the user a second. Answer without a tool when you can. Do the whole task in ONE Bash call when you can (chain with ;). Need several things? Ask for them all in the same turn, not one after another. Answer from the first good source; don't double-check.
 Before EACH tool call write a 3-8 word note of what you are doing; it shows live. Plain words only, never tool or command names (no peekaboo, screenshot, osascript): "Looking at your screen", "Clicking Play".
-Final reply: plain text, no markdown, at most 3 short sentences, answer first. For a done task, one sentence.
+Do, don't describe: "make a list / add / remind me / note this" means create it in the app, never only list it back or offer to.
+Final reply: plain text, no markdown, at most 3 short sentences, answer first. For a done task, one sentence saying it's done; no "but I didn't check".
 Be cheap: fewest tool calls. Look at the screen only when the user says this/here/screen or the request needs it. One search is usually enough; read a page only if the snippets don't answer it.
 Tools:
 - See the user's screen: when the request is about it, a labeled picture of each of the user's screens comes with the request: use the one the user means ("my monitor" = the external one; "my screen" with no hint = the one the user's front window is on), don't take another. Otherwise run {LOOK} (prints an image path), then Read that path.
@@ -80,6 +81,7 @@ Tools:
 - Type text into the box the user is in (search bar, chat box, doc): {TYPE} "<text>". It goes back to the user's app and pastes; one call, done. Never use peekaboo for typing.
 - Last resort, only when nothing above works (it moves the user's real mouse and pulls the app forward) — click or read buttons/menus inside an app: peekaboo see --app "<App>" --json --no-remote | head -c 3000 (always cut it; lists elements with IDs), then peekaboo click --on <ID> --no-remote, peekaboo type "text" --no-remote, peekaboo menu click --app "<App>" --path "File > New" --no-remote. Run peekaboo <cmd> --help if unsure.
 - Spotify: play any song, album, artist or the user's own playlist: {PLAY} "<name, plus artist if known>" (no clicks, the user's focus stays). Music requests mean Spotify unless the user names another app. Pause/skip: osascript -e 'tell application "Spotify" to playpause' (or next track). Never click in Spotify unless those fail.
+- Task list, to-do, "remind me": Reminders, all items in one call: osascript -e 'tell application "Reminders"' -e 'repeat with t in {{"A", "B"}}' -e 'make new reminder with properties {{name:t}}' -e 'end repeat' -e 'end tell' (for a time add due date:(current date) + <seconds>). "Note this": osascript -e 'tell application "Notes" to make new note with properties {{body:"<h1>Title</h1>A<br>B"}}'. "Where is my list/note" = {SHOW} "Reminders" (or "Notes").
 - Clipboard: pbpaste. Music: osascript -e 'tell application "Music" to playpause'.
 Earlier: the last few questions from the past 5 minutes, if any; use them for follow-ups ("open the second one", "and tomorrow?").
 Memory: the user's saved rules come under "Memory:" in the request; follow them. When the user says remember / from now on / when I say X do Y, save ONE short line with {REMEMBER} "<rule>". When the user says forget, run {FORGET} "<words from that line>".
@@ -288,7 +290,7 @@ def proc_of(app):
 def plain(text):
     """Spoken request -> its core words: "Hey Atticus, can you open Spotify please?" -> "open spotify"."""
     t = re.sub(r"^(hey |ok |okay )?(atticus,? )?(please |can you |could you |would you )?", '', text.lower().strip(' .!?'))
-    t = re.sub(r'\s+please$', '', t)
+    t = re.sub(r'^(also |and |now |then )+', '', re.sub(r'\s+please$', '', t))
     return re.sub(r'[,;:.!?]', '', t)   # the speech model adds punctuation
 
 
@@ -310,7 +312,8 @@ def learn(task, cmds, reply):
     k = plain(task)
     cmds = [c for c in cmds if not c.startswith((REMEMBER, FORGET, ABOUT))]   # saving a rule or a fact is not part of the action
     act = (SHOW, PLACE, PLAY, TYPE, 'open ', 'osascript ')
-    if not cmds or DEICTIC.search(k) or not all(c.startswith(act) and 'peekaboo' not in c for c in cmds):
+    # 'make new': a reminder or note holds this moment's words ("make the task list" must not re-add old items)
+    if not cmds or DEICTIC.search(k) or not all(c.startswith(act) and 'peekaboo' not in c and 'make new' not in c for c in cmds):
         return
     sk = skills()
     sk[k] = {'cmds': cmds, 'reply': reply, 'at': time.strftime('%Y-%m-%d')}
@@ -754,13 +757,14 @@ if __name__ == '__main__':
         assert label('Bash', {'command': "osascript -e 'tell application \"Music\" to playpause'"}) == 'Using Music'
         assert app_named('the trading view application') == 'TradingView'
         assert screen_for('open spotify', None) is None   # no screen words: no picture, no wait
-        assert plain('Hey Atticus, can you open Spotify please?') == 'open spotify'
+        assert plain('Hey Atticus, can you open Spotify please?') == plain('Can you also open Spotify?') == 'open spotify'
         SKILLS = os.path.join(tempfile.mkdtemp(), 'skills.json')
         learn('Can you put Notes on the left?', [f'{PLACE} "Notes" left current'], 'Notes is on the left.')
         learn('close this', ['osascript -e x'], 'x')                       # "this": never learned
         learn('weather today', [f'{SEARCH} "weather"'], 'Sunny.')          # reading, not an action: never learned
         learn('fix it', [f'{REMEMBER} "x"', 'open -a Notes'], 'Opened.')   # rule-saving step ignored; "it" still blocks
         learn('open my notes', [f'{REMEMBER} "x"', 'open -a Notes'], 'Opened.')
+        learn('make the task list', ['osascript -e \'tell application "Reminders" to make new reminder\''], 'Added.')   # content: never learned
         assert set(skills()) == {'put notes on the left', 'open my notes'} and skills()['open my notes']['cmds'] == ['open -a Notes']
         unlearn('Put notes on the left.')
         assert set(skills()) == {'open my notes'}
