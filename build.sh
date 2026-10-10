@@ -20,6 +20,7 @@ cat > "$APP/Contents/Info.plist" <<P
 <key>CFBundleShortVersionString</key><string>1.0</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
+<key>AtticusSource</key><string>$(pwd)</string>
 <key>LSUIElement</key><true/>
 <key>NSMicrophoneUsageDescription</key><string>Atticus listens while you hold Control+Option+Space.</string>
 <key>NSAppleEventsUsageDescription</key><string>Atticus controls apps like Finder, Chrome and Music when you ask it to.</string>
@@ -46,5 +47,6 @@ cat > "$AGENT" <<P
 <key>StandardErrorPath</key><string>$HOME/.config/atticus/app.err</string>
 </dict></plist>
 P
+[ -n "$ATTICUS_NO_RESTART" ] && exit 0   # the app's own updater restarts it when idle
 launchctl kickstart -k gui/$(id -u)/com.atticus.app 2>/dev/null || launchctl bootstrap gui/$(id -u) "$AGENT"
 echo "Atticus is running. Hold Control+Option+Space and talk."

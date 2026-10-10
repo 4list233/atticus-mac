@@ -68,14 +68,17 @@
   input[type=range] { width: 150px; accent-color: var(--accent); }
   .val { width: 44px; text-align: right; color: var(--fg2); font-variant-numeric: tabular-nums; }
 
-  /* hotkey cards */
-  .keys { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .hk { all: unset; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px 8px 12px; border-radius: 11px;
-    background: var(--card); box-shadow: inset 0 0 0 .5px var(--line); transition: box-shadow .2s, transform .12s; }
-  .hk:active { transform: scale(.98); }
-  .hk.on { box-shadow: inset 0 0 0 2px var(--accent); }
-  .hk:focus-visible { outline: 2px solid rgba(10,132,255,.5); }
-  .hk .caps { display: flex; gap: 5px; } .hk small { color: var(--fg3); font-size: 11px; }
+  /* the shortcut: big keycaps, one button to record a new one */
+  .shortcut { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 26px 16px 18px; border-radius: 11px;
+    background: var(--card); box-shadow: inset 0 0 0 .5px var(--line); transition: box-shadow .25s; }
+  .shortcut.rec { box-shadow: inset 0 0 0 2px var(--accent), 0 0 0 4px rgba(10,132,255,.15); }
+  .caps { display: flex; gap: 7px; min-height: 40px; align-items: center; }
+  .caps .cap { min-width: 40px; height: 40px; font-size: 16px; border-radius: 9px; padding: 0 12px; }
+  .caps .cap.wide { min-width: 96px; font-size: 14px; }
+  .caps .hint { color: var(--fg2); font-size: 14px; animation: blink 1.4s ease-in-out infinite; }
+  @keyframes blink { 50% { opacity: .45; } }
+  .shortcut .acts { display: flex; gap: 8px; align-items: center; }
+  .shortcut small { color: var(--fg3); font-size: 11.5px; } .shortcut small.warn { color: #ff9f0a; }
   .cap { min-width: 26px; height: 26px; padding: 0 7px; box-sizing: border-box; border-radius: 6px; display: grid; place-items: center;
     font: 500 12px system-ui; background: linear-gradient(#fdfdfd, #e8e8ed); color: #1d1d1f;
     box-shadow: 0 0 0 .5px rgba(0,0,0,.16), 0 1.5px 0 rgba(0,0,0,.16); }
@@ -109,6 +112,10 @@
   .status { display: flex; align-items: center; gap: 8px; }
   .dot { width: 8px; height: 8px; border-radius: 4px; background: var(--green); flex: none; }
   .dot.bad { background: #ff9f0a; }
+
+  .about { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 10px 0 6px; }
+  .about img { width: 96px; height: 96px; margin-bottom: 8px; }
+  .about h1 { margin: 0; } .about p { color: var(--fg2); margin: 4px 0 0; }
 </style></head><body>
 
 <nav>
@@ -120,20 +127,31 @@
   <button data-s="memory"><i class="ni" style="background:#ff9f0a"><svg viewBox="0 0 24 24"><path d="M6 4h12v16l-6-4-6 4z"/></svg></i>Memory</button>
   <button data-s="usage"><i class="ni" style="background:#30d158"><svg viewBox="0 0 24 24"><path d="M5 19V11M12 19V5M19 19v-6"/></svg></i>Usage</button>
   <button data-s="account"><i class="ni" style="background:#0a84ff"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg></i>Account &amp; Access</button>
+  <button data-s="about"><i class="ni" style="background:#5e5ce6"><svg viewBox="0 0 24 24"><path d="M12 4v10M8 10l4 4 4-4M5 19h14"/></svg></i>About &amp; Updates</button>
   <div class="spacer"></div>
-  <div class="ver">Atticus 1.0</div>
+  <div class="ver" id="ver"></div>
 </nav>
 
 <main>
   <section id="general" class="on">
     <h1>General</h1>
     <p class="lede">Hold the keys, say what you need, let go.</p>
-    <h3>Talk to Atticus with</h3>
-    <div class="keys" id="hotkeys"></div>
+    <h3>Shortcut</h3>
+    <div class="shortcut" id="shortcut">
+      <div class="caps" id="caps" aria-live="polite"></div>
+      <small id="schint">Hold it, talk, let go.</small>
+      <div class="acts"><button class="btn blue" id="change">Change Shortcut</button><button class="btn" data-do="resetHotkey" id="reset">Use Default</button></div>
+    </div>
     <h3>Atticus</h3>
     <div class="group">
       <div class="row"><div class="t"><b>Open at login</b><span>Ready the moment your Mac is.</span></div><label class="sw"><input type="checkbox" data-k="login"></label></div>
-      <div class="row"><div class="t"><b>Pause Atticus</b><span>The keys do nothing until you turn this off.</span></div><label class="sw"><input type="checkbox" data-k="paused"></label></div>
+      <div class="row"><div class="t"><b>Pause Atticus</b><span>The shortcut does nothing until you turn this off.</span></div><label class="sw"><input type="checkbox" data-k="paused"></label></div>
+      <div class="row"><div class="t"><b>Show in menu bar</b><span>Hidden? Open Atticus from Spotlight to get back here.</span></div><label class="sw"><input type="checkbox" data-k="menuIcon"></label></div>
+    </div>
+    <h3>Answers</h3>
+    <div class="group">
+      <div class="row"><div class="t"><b>Read answers aloud</b><span>In your Mac’s system voice. Esc stops it.</span></div><label class="sw"><input type="checkbox" data-k="speak"></label></div>
+      <div class="row"><div class="t"><b>Copy answers automatically</b><span>Every answer lands on your clipboard, ready to paste.</span></div><label class="sw"><input type="checkbox" data-k="autoCopy"></label></div>
     </div>
     <h3>The answer box</h3>
     <div class="group">
@@ -173,6 +191,7 @@
     <p class="lede">What Atticus can see, and where things open.</p>
     <div class="group">
       <div class="row"><div class="t"><b>Look at my screen</b><span>Automatic: only when you say “this”, “my screen”, “this page” and the like. Pictures stay on your Mac until sent with that one ask.</span></div><div class="seg" data-k="screen"><button data-v="auto">Automatic</button><button data-v="never">Never</button></div></div>
+      <div class="row"><div class="t"><b>Hide from screen sharing</b><span>On Zoom, Meet or a recording, others see your screen but not the Atticus box.</span></div><label class="sw"><input type="checkbox" data-k="hideWhenSharing"></label></div>
       <div class="row"><div class="t"><b>Open apps on</b><span>The other screen keeps you where you are, but takes a second or two longer.</span></div><div class="seg" data-k="openOn"><button data-v="here">This screen</button><button data-v="other">Other screen</button></div></div>
     </div>
   </section>
@@ -206,6 +225,19 @@
       <div class="row"><div class="t"><b>Quit Atticus</b><span>Open it again from Spotlight or Applications.</span></div><button class="btn red" data-do="quit">Quit</button></div>
     </div>
   </section>
+
+  <section id="about">
+    <div class="about"><img id="bigicon" alt=""><h1>Atticus</h1><p id="aboutver"></p></div>
+    <h3>Updates</h3>
+    <div class="group">
+      <div class="row"><div class="t"><b>Update automatically</b><span>Checks every few hours. New versions install in the background and Atticus restarts when you’re not using it.</span></div><label class="sw"><input type="checkbox" data-k="autoUpdate"></label></div>
+      <div class="row"><div class="t"><b>Check for updates</b><span id="upstatus">Never checked this session.</span></div><button class="btn" data-do="checkUpdate">Check Now</button></div>
+    </div>
+    <h3>Atticus</h3>
+    <div class="group">
+      <div class="row"><div class="t"><b>Source code</b><span>Open source on GitHub.</span></div><button class="btn" data-do="github">Open</button></div>
+    </div>
+  </section>
 </main>
 
 <script>
@@ -220,11 +252,17 @@
   });
   document.querySelectorAll('[data-do]').forEach(b => b.onclick = () => post({ do: b.dataset.do }));
 
-  const HOTKEYS = [['ctrl-opt-space', ['⌃', '⌥', 'Space'], 'Control Option Space'], ['opt-space', ['⌥', 'Space'], 'Option Space'],
-                   ['ctrl-space', ['⌃', 'Space'], 'Control Space'], ['cmd-shift-space', ['⌘', '⇧', 'Space'], 'Command Shift Space']];
-  $('hotkeys').innerHTML = HOTKEYS.map(([v, caps, name]) =>
-    `<button class="hk" data-v="${v}" aria-label="${name}"><span class="caps">${caps.map(c => `<i class="cap">${c}</i>`).join('')}</span><small>Hold, talk, let go</small></button>`).join('');
-  document.querySelectorAll('.hk').forEach(b => b.onclick = () => set('hotkey', b.dataset.v));
+  // Shortcut: Atticus.swift records the keys; the label is like "⌃⌥Space" (modifier symbols, then the key)
+  const capsOf = label => { const m = label.match(/^([⌃⌥⇧⌘]*)(.*)$/); return [...m[1]].concat(m[2] ? [m[2]] : []); };
+  const showCaps = (label, hint) => $('caps').innerHTML = capsOf(label).map(c => `<i class="cap${c.length > 2 ? ' wide' : ''}">${c}</i>`).join('')
+    + (hint ? `<span class="hint">${hint}</span>` : '');
+  let recording = false;
+  $('change').onclick = () => {
+    if (recording) return;
+    recording = true; $('shortcut').classList.add('rec'); $('change').textContent = 'Recording…';
+    showCaps('', 'Press your shortcut'); $('schint').textContent = 'Use ⌃, ⌥, ⇧ or ⌘ with a key, or an F-key. Esc cancels.'; $('schint').className = '';
+    post({ do: 'record' });
+  };
 
   const SOUNDS = ['None', 'Pop', 'Tink', 'Glass', 'Ping', 'Purr', 'Bottle', 'Blow', 'Hero', 'Funk', 'Morse', 'Submarine', 'Frog', 'Sosumi', 'Basso'];
   document.querySelectorAll('select').forEach(s => {
@@ -241,7 +279,8 @@
   const WHY = { haiku: 'Fastest, about 2 s an ask. Right for almost everything.', sonnet: 'Smarter for tricky asks. A few seconds slower; uses more of your plan.',
                 opus: 'Most capable. Slowest; uses your plan fastest.' };
   function paint() {
-    document.querySelectorAll('.hk').forEach(b => b.classList.toggle('on', b.dataset.v === P.hotkey));
+    if (!recording) showCaps(P.hotkeyLabel);
+    $('reset').style.display = P.hotkeyLabel === '⌃⌥Space' ? 'none' : '';
     document.querySelectorAll('.seg').forEach(g => g.querySelectorAll('button').forEach(b => b.classList.toggle('on', P[g.dataset.k] === b.dataset.v)));
     document.querySelectorAll('.sw input').forEach(i => i.checked = !!P[i.dataset.k]);
     document.querySelectorAll('select').forEach(s => s.value = P[s.dataset.k]);
@@ -269,7 +308,18 @@
   }
 
   window.st = {
-    load(d) { P = d.prefs; if (d.icon) $('icon').src = d.icon; paint(); if (d.state) state(d.state); },
+    load(d) {
+      P = d.prefs; recording = false;
+      $('shortcut').classList.remove('rec'); $('change').textContent = 'Change Shortcut';
+      if ($('schint').className !== 'warn') $('schint').textContent = 'Hold it, talk, let go.';
+      if (d.icon) $('icon').src = $('bigicon').src = d.icon;
+      $('ver').textContent = $('aboutver').textContent = d.version ? 'Version ' + d.version : 'Atticus';
+      if (d.update) $('upstatus').textContent = d.update;
+      paint(); if (d.state) state(d.state);
+    },
+    rec(m) { if (recording) /^Add/.test(m) ? showCaps('', m) : showCaps(m, m ? '' : 'Press your shortcut'); },   // held modifiers, live
+    taken() { $('schint').textContent = 'Another app already uses that shortcut. Kept your old one.'; $('schint').className = 'warn';
+              setTimeout(() => { $('schint').className = ''; $('schint').textContent = 'Hold it, talk, let go.'; }, 4000); },
     state,
   };
 </script>

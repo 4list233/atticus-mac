@@ -14,9 +14,10 @@ let dir = Bundle.main.resourcePath!   // build.sh copies atticus.py and ui/ in h
 // Settings, shared with atticus.py (model, screen, openOn, instant): ~/.config/atticus/settings.json
 enum Prefs {
     static let path = NSString(string: "~/.config/atticus/settings.json").expandingTildeInPath
-    static let defaults: [String: Any] = ["hotkey": "ctrl-opt-space", "login": true, "paused": false, "corner": "top-left", "linger": "normal",
+    static let defaults: [String: Any] = ["hotkeyCode": 49, "hotkeyMods": controlKey | optionKey, "hotkeyLabel": "⌃⌥Space", "login": true, "paused": false, "corner": "top-left", "linger": "normal",
         "soundStart": "Pop", "soundDone": "Glass", "soundStop": "Tink", "volume": 0.16, "model": "haiku", "instant": true,
-        "ahead": true, "aheadDelay": 0.7, "screen": "auto", "openOn": "here"]
+        "ahead": true, "aheadDelay": 0.7, "screen": "auto", "openOn": "here",
+        "speak": false, "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true]
     static var d: [String: Any] = defaults.merging(
         (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path)))) as? [String: Any] ?? [:]) { $1 }
     static func set(_ k: String, _ v: Any) {
@@ -29,11 +30,15 @@ enum Prefs {
     static func num(_ k: String) -> Double { (d[k] as? NSNumber)?.doubleValue ?? 0 }
 }
 
-// Hotkey choices: Carbon modifiers to register, and the keys whose release ends listening.
-let HOTKEYS: [String: (mods: Int, flags: NSEvent.ModifierFlags)] = [
-    "ctrl-opt-space": (controlKey | optionKey, [.control, .option]), "opt-space": (optionKey, [.option]),
-    "ctrl-space": (controlKey, [.control]), "cmd-shift-space": (cmdKey | shiftKey, [.command, .shift])]
-func hotkey() -> (mods: Int, flags: NSEvent.ModifierFlags) { HOTKEYS[Prefs.str("hotkey")] ?? HOTKEYS["ctrl-opt-space"]! }
+// The talk shortcut, any key plus modifiers, recorded in Settings: Carbon modifiers to register, and the
+// modifier keys whose release ends listening (none for a lone F-key: its own key-up ends it).
+func hotkey() -> (code: Int, mods: Int, flags: NSEvent.ModifierFlags) {
+    let m = Int(Prefs.num("hotkeyMods"))
+    var f: NSEvent.ModifierFlags = []
+    if m & cmdKey != 0 { f.insert(.command) }; if m & shiftKey != 0 { f.insert(.shift) }
+    if m & optionKey != 0 { f.insert(.option) }; if m & controlKey != 0 { f.insert(.control) }
+    return (Int(Prefs.num("hotkeyCode")), m, f)
+}
 
 // atticus.py with whatever python3 this Mac has (Homebrew's first, else Apple's).
 func py(_ args: [String], _ extra: [String: String] = [:]) -> Process {
@@ -87,6 +92,11 @@ final class App: NSObject, WKScriptMessageHandler {
         }).prefix(100))
     func sound(_ name: String, _ v: Float) { let s = NSSound(named: name); s?.volume = v; s?.play() }
     func cue(_ k: String) { let n = Prefs.str(k); if n != "None" { sound(n, Float(Prefs.num("volume"))) } }   // soundStart / soundDone / soundStop
+    let voice = AVSpeechSynthesizer()
+    func deliver(_ a: String) {   // Settings: read answers aloud, copy them
+        if Prefs.bool("autoCopy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(a, forType: .string) }
+        if Prefs.bool("speak") { voice.stopSpeaking(at: .immediate); voice.speak(AVSpeechUtterance(string: a)) }
+    }
     func linger(_ s: Double) -> Double { s * (["short": 0.5, "long": 2][Prefs.str("linger")] ?? 1) }
 
     override init() {
@@ -118,6 +128,7 @@ final class App: NSObject, WKScriptMessageHandler {
         panel.contentView = bg
         panel.level = .statusBar; panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.sharingType = Prefs.bool("hideWhenSharing") ? .none : .readOnly   // Settings: others on a screen share don't see it
         let html = (try? String(contentsOfFile: dir + "/ui/ui.html", encoding: .utf8)) ?? "missing ui.html"
         let orbs = (try? String(contentsOfFile: dir + "/ui/orbs.js", encoding: .utf8)) ?? ""
         web.loadHTMLString(html.replacingOccurrences(of: "/*ORBS*/", with: orbs), baseURL: nil)
@@ -211,6 +222,7 @@ final class App: NSObject, WKScriptMessageHandler {
 
     // Esc: stop listening, stop the answer, or close the box.
     func escape() {
+        if voice.isSpeaking { voice.stopSpeaking(at: .immediate); return }
         if engine.isRunning {
             engine.stop(); engine.inputNode.removeTap(onBus: 0); feed?.finish(); reading?.cancel(); pause?.cancel(); unwarm()
             aheadItem?.cancel(); dropAhead()
@@ -239,6 +251,7 @@ final class App: NSObject, WKScriptMessageHandler {
 
     func start() {
         guard !Prefs.bool("paused") else { return }
+        voice.stopSpeaking(at: .immediate)
         if busy {   // pressed again while it works = cancel
             return cancel()
         }
@@ -295,7 +308,8 @@ final class App: NSObject, WKScriptMessageHandler {
         let began = Date()
         Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] t in
             guard let self, engine.isRunning else { return t.invalidate() }
-            if NSEvent.modifierFlags.isDisjoint(with: hotkey().flags) || Date().timeIntervalSince(began) > 60 { t.invalidate(); stop() }
+            let f = hotkey().flags
+            if (!f.isEmpty && NSEvent.modifierFlags.isDisjoint(with: f)) || Date().timeIntervalSince(began) > 60 { t.invalidate(); stop() }
         }
     }
 
@@ -415,7 +429,7 @@ final class App: NSObject, WKScriptMessageHandler {
                 while let r = buffer.range(of: "\n") {
                     let line = String(buffer[..<r.lowerBound]); buffer.removeSubrange(..<r.upperBound)
                     if line == "! setup" { onboarding.open(); continue }   // Claude not installed, signed out or no plan
-                    if line.hasPrefix("✓") { self?.answer = line }
+                    if line.hasPrefix("✓") { self?.answer = line; self?.deliver(String(line.dropFirst(2))) }
                     self?.js("line", line)
                 }
             }
@@ -612,12 +626,61 @@ if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--look" {
     exit(FileManager.default.fileExists(atPath: a[3]) ? 0 : 1)
 }
 
+func jsonString(_ s: String) -> String { String(data: try! JSONSerialization.data(withJSONObject: [s]), encoding: .utf8)!.dropFirst().dropLast().description }
+
 // Restart Atticus (Screen Recording only takes effect in a new process); works under launchd or when opened by hand.
 func relaunchSoon() {
     let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/sh")
     p.arguments = ["-c", "sleep 1; open \"$0\"", Bundle.main.bundlePath]
     try? p.run()
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { exit(0) }
+}
+
+// Updates: build.sh records the source folder (a git clone); Atticus pulls and rebuilds itself from it, then
+// restarts once idle. Local edits or a failed build leave the running version alone.
+enum Updater {
+    static let src = Bundle.main.object(forInfoDictionaryKey: "AtticusSource") as? String ?? ""
+    static var status = ""
+    static func sh(_ script: String) -> (code: Int32, out: String) {
+        let p = Process(), o = Pipe()
+        p.executableURL = URL(fileURLWithPath: "/bin/zsh"); p.arguments = ["-c", script, src]; p.standardOutput = o; p.standardError = o
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"; env["ATTICUS_NO_RESTART"] = "1"; p.environment = env
+        try? p.run(); p.waitUntilExit()
+        return (p.terminationStatus, String(data: o.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "")
+    }
+    static func version() -> String {
+        sh(#"cd "$0" 2>/dev/null && git log -1 --format='%h · %cd' --date=format:'%b %-d, %Y'"#).out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    static func check(_ done: @escaping () -> Void = {}) {
+        status = "Checking…"; done()
+        DispatchQueue.global().async {
+            let r = sh(#"""
+                cd "$0" 2>/dev/null || exit 3
+                git fetch -q 2>/dev/null || exit 4
+                [ "$(git rev-parse HEAD)" = "$(git rev-parse '@{u}')" ] && exit 0
+                git pull -q --ff-only 2>/dev/null || exit 5
+                ./build.sh >/dev/null 2>&1 || exit 6
+                exit 10
+                """#)
+            DispatchQueue.main.async {
+                status = [0: "Up to date", 3: "Source folder not found (reinstall with build.sh)", 4: "Couldn’t reach GitHub",
+                          5: "Skipped: the source folder has local changes", 6: "Update downloaded, but the build failed",
+                          10: "Updated. Restarting when you’re not using it…"][r.code] ?? "Update failed"
+                done()
+                if r.code == 10 { restartWhenIdle() }
+            }
+        }
+    }
+    static func restartWhenIdle() {
+        if app.busy || app.engine.isRunning || settings.win?.isKeyWindow == true {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30) { restartWhenIdle() }
+        } else { relaunchSoon() }
+    }
+    static func schedule() {   // a minute after launch, then every 6 hours
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60) { if Prefs.bool("autoUpdate") { check() } }
+        Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { _ in if Prefs.bool("autoUpdate") { check() } }
+    }
 }
 
 // Opening Atticus again (Spotlight, Finder, Dock) while it runs: setup the first time, Settings after.
@@ -635,13 +698,13 @@ final class MenuBar: NSObject, NSMenuDelegate {
         super.init()
         item.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Atticus")
         let m = NSMenu(); m.delegate = self; item.menu = m
+        item.isVisible = Prefs.bool("menuIcon")
         paint()
     }
     func paint() { item.button?.appearsDisabled = Prefs.bool("paused") }
     func menuNeedsUpdate(_ m: NSMenu) {
         m.removeAllItems()
-        let k = hotkey().flags
-        let keys = (k.contains(.command) ? "⌘" : "") + (k.contains(.shift) ? "⇧" : "") + (k.contains(.control) ? "⌃" : "") + (k.contains(.option) ? "⌥" : "") + "Space"
+        let keys = Prefs.str("hotkeyLabel")
         let head = NSMenuItem(title: Prefs.bool("paused") ? "Atticus is paused" : "Hold \(keys) and talk", action: nil, keyEquivalent: "")
         head.isEnabled = false; m.addItem(head)
         m.addItem(.separator())
@@ -704,7 +767,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
     func webView(_ v: WKWebView, didFinish n: WKNavigation!) { push(); refresh() }
 
     func push() {   // the settings, and the app icon for the sidebar
-        var d: [String: Any] = ["prefs": Prefs.d]
+        var d: [String: Any] = ["prefs": Prefs.d, "version": Updater.version(), "update": Updater.status]
         if let t = NSApp.applicationIconImage?.tiffRepresentation, let png = NSBitmapImageRep(data: t)?.representation(using: .png, properties: [:]) {
             d["icon"] = "data:image/png;base64," + png.base64EncodedString()
         }
@@ -722,6 +785,43 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         }
     }
 
+    // "Change shortcut": the next key pressed with modifiers (or a lone F-key) becomes the talk shortcut. Esc cancels.
+    var monitor: Any?
+    func record() {
+        if let r = ref { UnregisterEventHotKey(r); ref = nil }   // so pressing the old one doesn't start listening
+        let fkeys = [122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111, 105, 107, 113, 106, 64, 79, 80, 90]
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] e in
+            guard let self else { return e }
+            let f = e.modifierFlags.intersection([.command, .shift, .option, .control])
+            let mods = (f.contains(.control) ? "⌃" : "") + (f.contains(.option) ? "⌥" : "") + (f.contains(.shift) ? "⇧" : "") + (f.contains(.command) ? "⌘" : "")
+            if e.type == .flagsChanged { js("st.rec(\(jsonString(mods)))"); return nil }
+            if e.keyCode == 53 && f.isEmpty { done(nil); return nil }   // Esc
+            let fn = fkeys.firstIndex(of: Int(e.keyCode))
+            guard !f.isEmpty || fn != nil else { js("st.rec(\(jsonString("Add ⌃, ⌥, ⇧ or ⌘")))"); return nil }
+            let names: [UInt16: String] = [49: "Space", 36: "Return", 48: "Tab", 51: "Delete", 123: "←", 124: "→", 125: "↓", 126: "↑"]
+            let key = fn.map { "F\($0 + 1)" } ?? names[e.keyCode] ?? (e.charactersIgnoringModifiers ?? "?").uppercased()
+            var c = 0
+            if f.contains(.command) { c |= cmdKey }; if f.contains(.shift) { c |= shiftKey }
+            if f.contains(.option) { c |= optionKey }; if f.contains(.control) { c |= controlKey }
+            done((Int(e.keyCode), c, mods + key))
+            return nil
+        }
+    }
+
+    func done(_ new: (code: Int, mods: Int, label: String)?) {
+        if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
+        let old = (Prefs.d["hotkeyCode"], Prefs.d["hotkeyMods"], Prefs.d["hotkeyLabel"])
+        if let n = new { Prefs.set("hotkeyCode", n.code); Prefs.set("hotkeyMods", n.mods); Prefs.set("hotkeyLabel", n.label) }
+        if !registerHotkey() {   // taken by another app: keep the old one
+            Prefs.set("hotkeyCode", old.0!); Prefs.set("hotkeyMods", old.1!); Prefs.set("hotkeyLabel", old.2!)
+            registerHotkey()
+            js("st.taken()")
+        }
+        push()
+    }
+
+    func js(_ s: String) { web?.evaluateJavaScript(s) }
+
     func helper(_ args: [String]) { let p = py(args); try? p.run(); p.waitUntilExit() }
 
     func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
@@ -730,12 +830,19 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         case "set":
             guard let k = b["k"] as? String, let v = b["v"] else { return }
             Prefs.set(k, v)
-            if k == "hotkey" { registerHotkey() }
+            if k == "hideWhenSharing" { app.panel.sharingType = v as? Bool == true ? .none : .readOnly }
+            if k == "menuIcon" { bar.item.isVisible = v as? Bool == true }
             if k == "paused" { bar.paint() }
             if k == "login" {   // the LaunchAgent build.sh installed: enabled = starts at login
                 let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
                 p.arguments = [v as? Bool == true ? "enable" : "disable", "gui/\(getuid())/com.atticus.app"]; try? p.run()
             }
+        case "record": record()
+        case "checkUpdate": Updater.check { [weak self] in self?.push() }
+        case "github": NSWorkspace.shared.open(URL(string: "https://github.com/SaarthurR/atticus-mac")!)
+        case "resetHotkey":
+            Prefs.set("hotkeyCode", 49); Prefs.set("hotkeyMods", controlKey | optionKey); Prefs.set("hotkeyLabel", "⌃⌥Space")
+            registerHotkey(); push()
         case "preview":
             if let n = b["sound"] as? String { app.sound(n, Float(Prefs.num("volume"))) }
         case "setup": onboarding.open()
@@ -750,9 +857,17 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
     }
 
     func windowWillClose(_ n: Notification) {
+        if monitor != nil { done(nil) }   // closed mid-recording: keep the old shortcut
         web?.configuration.userContentController.removeScriptMessageHandler(forName: "st")
         web = nil; win = nil
     }
+}
+
+// One Atticus at a time: a lock the system drops when the process ends (opened by hand + started by launchd = two)
+let lockFD = open(NSString(string: "~/.config/atticus/app.lock").expandingTildeInPath, O_CREAT | O_RDWR, 0o644)
+if lockFD >= 0 && flock(lockFD, LOCK_EX | LOCK_NB) != 0 {
+    for _ in 0..<15 where flock(lockFD, LOCK_EX | LOCK_NB) != 0 { usleep(100_000) }   // a restart: the old one is exiting
+    if flock(lockFD, LOCK_EX | LOCK_NB) != 0 { exit(0) }
 }
 
 let app = App()
@@ -769,15 +884,17 @@ InstallEventHandler(GetApplicationEventTarget(), { _, ev, _ in
     return noErr
 }, 2, &specs, nil, nil)
 var ref: EventHotKeyRef?
-func registerHotkey() {
+@discardableResult func registerHotkey() -> Bool {   // false: another app already owns that shortcut
     if let r = ref { UnregisterEventHotKey(r); ref = nil }
-    RegisterEventHotKey(UInt32(kVK_Space), UInt32(hotkey().mods), EventHotKeyID(signature: 0x41545443, id: 1), GetApplicationEventTarget(), 0, &ref)
+    let h = hotkey()
+    return RegisterEventHotKey(UInt32(h.code), UInt32(h.mods), EventHotKeyID(signature: 0x41545443, id: 1), GetApplicationEventTarget(), 0, &ref) == noErr
 }
 registerHotkey()
 let settings = SettingsWindow()
 let bar = MenuBar()
 let delegate = Delegate()
 NSApplication.shared.delegate = delegate
+Updater.schedule()
 
 // Test hook: `defaults write com.atticus.app demo -string "<request>"` then restart runs it once without the mic.
 if let demo = UserDefaults.standard.string(forKey: "demo") {
