@@ -18,7 +18,7 @@ Every run goes to ~/.config/atticus/log.jsonl with its cost.
 import atexit, base64, html, json, shutil, threading, os, re, signal, subprocess, sys, tempfile, time, urllib.parse, urllib.request
 
 HOME = os.path.expanduser('~')
-DIR = os.path.join(HOME, '.config/atticus')
+DIR = os.environ.get('ATTICUS_DIR') or os.path.join(HOME, '.config/atticus')   # ATTICUS_DIR: tests keep off the user's chat and rules
 ME = os.path.abspath(__file__)   # inside Atticus.app once built, so the AI's helper commands point here
 PLACE, LOOK, SEARCH, READ, SHOW, REMEMBER, FORGET, TYPE, PLAY, ABOUT, SHORTCUT, FRONT = (ME + f' --{c}' for c in ('place', 'look', 'search', 'read', 'show', 'remember', 'forget', 'type', 'play', 'me add', 'shortcut', 'front'))
 MEMORY, RECENT = os.path.join(DIR, 'memory.md'), os.path.join(DIR, 'recent.jsonl')
@@ -630,7 +630,7 @@ TIPS = ['Say "remember …" and Atticus keeps it as a rule.',
         'Say "when I say study mode, open …" to make your own instant command.',
         'Ask "where do I click to …" and a ring marks the spot.',
         'Tap the shortcut to type instead of talk.']
-MISS = 'Not quite right? Say "no, …" and how to do it. Atticus remembers next time.'
+MISS = 'Saying the same thing more than once? Tell Atticus how you want it done. It remembers next time.'
 
 
 def tip(reply, taught=''):
@@ -965,7 +965,7 @@ def main():
         osa(f'tell application "{app}" to activate')
     say('✓', reply)
     learned = [r for c in run.ran for r in re.findall(r'--remember\s+["\']([^"\']+)', c)]   # it taught itself: say so, so the user sees it improve
-    tip(reply, f'Learned: {learned[-1]}. Say "forget" and a word from it to undo.' if learned else taught[1].strip() if taught else '')
+    tip(reply, f'Learned: {learned[-1]}' if learned else taught[1].strip() if taught else '')
     if os.environ.get('ATTICUS_UI') != '1':   # typed from the menu bar: no overlay, so a notification
         osa('on run argv\ndisplay notification (item 1 of argv) with title "Atticus"\nend run', reply)
 
