@@ -775,13 +775,26 @@ enum Apps {
         defer { AEDisposeDesc(&d) }
         return AEDeterminePermissionToAutomateTarget(&d, typeWildCard, typeWildCard, ask)
     }
-    @discardableResult static func status(_ id: String) -> String {
-        let r = check(id, ask: false)
-        if r == noErr { allowed.insert(id) } else if r == OSStatus(errAEEventNotPermitted) { allowed.remove(id); return "blocked" }
-        return allowed.contains(id) ? "allowed" : "new"
+    // "allowed" | "blocked" | "new" per app, asked all at once: a busy or frozen app can stall macOS's answer forever,
+    // so whatever isn't back in 1.5 s keeps what was saved before.
+    @discardableResult static func statuses(_ ids: [String]) -> [String: String] {
+        var codes = [String: OSStatus](); let lock = NSLock(), g = DispatchGroup()
+        for id in ids {
+            g.enter()
+            DispatchQueue.global().async { let r = check(id, ask: false); lock.lock(); codes[id] = r; lock.unlock(); g.leave() }
+        }
+        _ = g.wait(timeout: .now() + 1.5)
+        lock.lock(); let got = codes; lock.unlock()
+        var a = allowed, out = [String: String]()
+        for id in ids {
+            if got[id] == noErr { a.insert(id) } else if got[id] == OSStatus(errAEEventNotPermitted) { a.remove(id) }
+            out[id] = got[id] == OSStatus(errAEEventNotPermitted) ? "blocked" : a.contains(id) ? "allowed" : "new"
+        }
+        allowed = a
+        return out
     }
     static func sync() {   // after an ask: an app allowed in the moment, at macOS's own prompt, joins the list
-        for a in NSWorkspace.shared.runningApplications where a.activationPolicy == .regular { if let id = a.bundleIdentifier { status(id) } }
+        statuses(NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }.compactMap(\.bundleIdentifier))
     }
     static func png(_ img: NSImage) -> String {
         guard let r = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
@@ -800,8 +813,10 @@ enum Apps {
             guard let id = Bundle(path: p)?.bundleIdentifier, id != Bundle.main.bundleIdentifier, seen.insert(id).inserted else { continue }
             if icons[id] == nil { icons[id] = png(NSWorkspace.shared.icon(forFile: p)) }
             var name = fm.displayName(atPath: p); if name.hasSuffix(".app") { name.removeLast(4) }
-            out.append(["id": id, "name": name, "icon": icons[id]!, "status": status(id), "suggested": suggested.contains(id)])
+            out.append(["id": id, "name": name, "icon": icons[id]!, "suggested": suggested.contains(id)])
         }
+        let st = statuses(out.map { $0["id"] as! String })
+        for i in out.indices { out[i]["status"] = st[out[i]["id"] as! String] }
         return out.sorted { ($0["name"] as! String).localizedCaseInsensitiveCompare($1["name"] as! String) == .orderedAscending }
     }
     static func allow(_ ids: [String], _ progress: @escaping (String, String) -> Void) {   // off the main thread
@@ -814,9 +829,11 @@ enum Apps {
                 _ = done.wait(timeout: .now() + 15)
             }
             progress(id, "asking")
-            _ = check(id, ask: true)
+            let answered = DispatchSemaphore(value: 0)   // some apps (Spotify) never answer: move on after 20 s
+            DispatchQueue.global().async { _ = check(id, ask: true); answered.signal() }
+            _ = answered.wait(timeout: .now() + 20)
             started?.terminate()   // only the ones Atticus started
-            progress(id, status(id))
+            progress(id, statuses([id])[id]!)
         }
     }
 }
