@@ -75,6 +75,10 @@ To see it again: `defaults delete com.atticus.app onboarded`, then restart the a
 
 Test: `python3 atticus.py --selftest`. Remove: `launchctl bootout gui/$(id -u)/com.atticus.app`, then delete `~/Applications/Atticus.app`, `~/.atticus`, `~/.config/atticus` (your settings and history) and `~/Library/LaunchAgents/com.atticus.app.plist`.
 
+## Usage count
+
+Once a day, Atticus sends one random ID (made on your Mac, not tied to you) to PostHog, so I can see how many people use it. It never sends your name, your asks or your screen. Turn it off in Settings → Account & Access → Count me as a user.
+
 ## Files
 
 - `Atticus.swift`: the app (hotkey, speech, overlay, onboarding window)

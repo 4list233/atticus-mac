@@ -27,6 +27,8 @@ PREFS = os.path.join(DIR, 'settings.json')   # written by the Settings window
 GUMROAD_PRODUCT = ''   # Gumroad product ID; empty = free
 BUY = 'https://saarthurr.gumroad.com/l/atticus'
 KEY_FILE = os.path.join(DIR, 'license')
+# Daily-user count: once a day, a random ID (no name, no asks) goes to PostHog. Off in Settings → Safety. Empty key = off.
+POSTHOG_KEY = 'phc_mGpLLzJtYTToBF8uSkqkUxMMG9ANmQWKDBnpsRDmzy6P'
 
 
 # About the user: name, one line they wrote, up to 8 short facts Atticus picked up. Capped at 300 characters
@@ -593,6 +595,20 @@ def activate(key):
     return 'Thanks for buying Atticus! It is unlocked.'
 
 
+def ping():
+    day, stamp = time.strftime('%Y-%m-%d'), os.path.join(DIR, 'pinged')
+    if not POSTHOG_KEY or not pref('stats', True) or (os.path.exists(stamp) and open(stamp).read() == day):
+        return
+    idf = os.path.join(DIR, 'id')
+    if not os.path.exists(idf):
+        os.makedirs(DIR, exist_ok=True)
+        open(idf, 'w').write(base64.b32encode(os.urandom(10)).decode())
+    open(stamp, 'w').write(day)
+    body = json.dumps({'api_key': POSTHOG_KEY, 'event': 'used', 'distinct_id': open(idf).read(), 'properties': {'$process_person_profile': False}})
+    subprocess.Popen(['curl', '-s', '-m', '10', '-H', 'Content-Type: application/json', '-d', body, 'https://us.i.posthog.com/i/v0/e/'],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)   # its own process: never slows the answer
+
+
 def say(tag, text):
     print(f'{tag} {" ".join(text.split())}', flush=True)
 
@@ -826,6 +842,7 @@ def main():
         return print(f'forgot {len(lines) - len(keep)} line(s)')
     if args[:1] == ['--fast']:   # Atticus.app calls this mid-speech; exit 1 = not a simple command
         os.makedirs(DIR, exist_ok=True)
+        ping()
         r = licensed() and fast(' '.join(args[1:]))
         if not r:
             sys.exit(1)
@@ -890,6 +907,7 @@ def main():
     task = task if warm else ' '.join(a for a in args if a != '--plan') or ask()
     if not task:
         return warm and warm.kill()
+    ping()
     key = re.fullmatch(r'\W*(?:my )?(?:license )?key\W+([\w-]{8,})\W*', task, re.I)
     if key or not licensed():
         if warm:
