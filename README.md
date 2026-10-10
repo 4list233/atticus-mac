@@ -44,7 +44,7 @@ https://github.com/user-attachments/assets/e3444422-02e8-4dd7-bb44-d39f2b0f2bef
 <tr>
 <td valign="top"><h3>Private ears</h3>Apple's on-device speech turns your voice into text. Audio never leaves your Mac.</td>
 <td valign="top"><h3>Your whole Mac</h3>Apps, windows, files, settings, the web and the screen, with <a href="https://github.com/openclaw/Peekaboo">Peekaboo</a> for clicking inside any app.</td>
-<td valign="top"><h3>Safe by default</h3>Deleting, <code>sudo</code>, disk tools, shutdown and <code>git push</code> are blocked, so a misheard word can't do damage.</td>
+<td valign="top"><h3>Safe by default</h3>Safe mode runs the AI's commands in Claude Code's sandbox: they can only write to a scratch folder. Before anything deletes, sends, buys or changes a file, Atticus asks you first. <code>rm</code>, <code>sudo</code>, disk tools and shutdown are always blocked. Every exact command is in the ask log.</td>
 </tr>
 </table>
 

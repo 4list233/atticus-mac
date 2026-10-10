@@ -18,7 +18,7 @@ enum Prefs {
         "soundStart": "Pop", "soundDone": "Glass", "soundStop": "Tink", "volume": 0.16, "model": "haiku", "instant": true,
         "ahead": true, "aheadDelay": 0.7, "screen": "auto", "openOn": "here",
         "speak": false, "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
-        "learn": true, "pointer": false, "learnMe": true, "input": "voice", "boxW": 460, "boxH": 360]
+        "learn": true, "safe": true, "pointer": false, "learnMe": true, "input": "voice", "boxW": 460, "boxH": 360]
     static var d: [String: Any] = defaults.merging(
         (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path)))) as? [String: Any] ?? [:]) { $1 }
     static func set(_ k: String, _ v: Any) {
@@ -110,6 +110,7 @@ final class App: NSObject, WKScriptMessageHandler {
     var wasUp = false   // the box was already up when the shortcut went down: a tap puts it away
     var fresh = false   // opened by a tap and nothing said, typed or asked yet: the shortcut again puts it away
     var composing = false, compH: CGFloat = 0, clickTalk = false, quiet: DispatchWorkItem?   // typing box focused / its height from the bottom; mic button = talk without keys
+    var askFile = ""   // safe mode: where the Allow / Don't Allow answer goes (atticus.py's gate waits on it)
     var hovering = false, xHot = false, pinned = false, stuck = false, lastDone = Date.distantPast   // pinned: the user clicked the box, so only Esc / click-out / ✕ close it; stuck: the user dragged it, so only ✕
     var mine = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""   // the app the user's in, never Atticus itself
     let recent = NSString(string: "~/.config/atticus/recent.jsonl").expandingTildeInPath
@@ -256,6 +257,8 @@ final class App: NSObject, WKScriptMessageHandler {
             if b["mic"] != nil { fresh = false }
             if b["mic"] != nil && !busy && !engine.isRunning { clickTalk = true; start(); if !engine.isRunning { clickTalk = false } }
             if b["ready"] != nil { js("size", Prefs.num("boxH")) }
+            if b["safe"] != nil { Prefs.set("safe", true); js("mode", true) }
+            if let ok = b["allow"] as? Bool, !askFile.isEmpty { try? (ok ? "y" : "n").write(toFile: askFile, atomically: true, encoding: .utf8); askFile = "" }
             return
         }
         guard let h = (m.body as? NSNumber).map({ CGFloat($0.doubleValue) }), h > 0 else { return }
@@ -275,7 +278,7 @@ final class App: NSObject, WKScriptMessageHandler {
     }
 
     func show() {
-        gen += 1
+        gen += 1; js("mode", Prefs.bool("safe"))
         if panel.isVisible {   // still up: stay where the user dragged it
             NSAnimationContext.runAnimationGroup { $0.duration = 0.18; panel.animator().alphaValue = 1 }
             return
@@ -545,6 +548,11 @@ final class App: NSObject, WKScriptMessageHandler {
                     let line = String(buffer[..<r.lowerBound]); buffer.removeSubrange(..<r.upperBound)
                     if line == "! setup" { onboarding.open(); continue }   // Claude not installed, signed out or no plan
                     if line.hasPrefix("@ ") { pointAt(line); continue }   // experimental "show me where"
+                    if line.hasPrefix("? ") {   // safe mode: "? <question>\t<command>\t<answer file>"
+                        let p = line.dropFirst(2).components(separatedBy: "\t")
+                        guard p.count == 3, let self else { continue }
+                        self.askFile = p[2]; self.show(); self.js("ask", [p[0], p[1]]); continue
+                    }
                     if line.hasPrefix("✓") { self?.answer = line; self?.deliver(String(line.dropFirst(2))) }
                     self?.js("line", line)
                 }

@@ -14,7 +14,7 @@ tasks on the Mac. Output lines for the overlay: "· note", "▸ step", "✓ answ
   atticus.py --search <query>  |  --read <url>   free web search (DuckDuckGo) / one page as plain text
 Every run goes to ~/.config/atticus/log.jsonl with its cost.
 """
-import base64, html, json, shutil, threading, os, re, signal, subprocess, sys, tempfile, time, urllib.parse, urllib.request
+import atexit, base64, html, json, shutil, threading, os, re, signal, subprocess, sys, tempfile, time, urllib.parse, urllib.request
 
 HOME = os.path.expanduser('~')
 DIR = os.path.join(HOME, '.config/atticus')
@@ -102,6 +102,52 @@ Show me where (on): when the user asks where something is or how to do something
 
 # Full access: everything runs without asking, except these, which a misheard word must never trigger.
 DENY = [f'Bash({c}:*)' for c in ('rm', 'rmdir', 'sudo', 'dd', 'diskutil', 'shutdown', 'reboot', 'halt', 'git push', 'srm', 'trash')]
+
+# Safe mode (Settings, on by default): Claude Code's sandbox lets the AI's commands write only in a throwaway folder.
+# App control can't work inside it (Apple Events, opening apps), so those run outside, and the gate below checks every command.
+# A chain runs outside only if every part is listed, so harmless read-only tools are too ("…; curl wttr.in", "| head").
+SAFE_OUT = [f'{c} *' for c in ('osascript', 'open', 'peekaboo', 'mdfind', 'curl', 'head', 'tail', 'grep', 'sort', 'wc', 'echo', 'sleep', 'date', ME)] + ['pbpaste', 'date']
+# What the user must OK first. Matched per command, so `open "…?q=buy shoes"` or a search for "delete" never asks.
+RISKY = [('Delete something?', r'\b(rm|rmdir|srm|unlink|shred|trash|mv)\s|\bdelete\b|empty (the )?trash'),
+         ('Send this?', r'\bsend\b|\bsendmail\b|curl\b.*\s(-X\s*(POST|PUT|PATCH|DELETE)|--data\S*|-d|-F|--form)\s'),
+         ('Buy this?', r'\b(buy|purchase|checkout|check out|place (an |the )?order|pay)\b'),
+         ('Change a file?', r'(?<![0-9&])>>?\s*(?!/dev/null|&|/tmp/)\S|\btee\s|curl\b.*\s(-o|--output|-O)\b'),
+         ('Run a system command?', r'do shell script|\bsudo\b|\bkillall\b|\bdefaults write\b')]
+QUIET = (SEARCH, READ, LOOK, SHOW, PLACE, PLAY, TYPE, REMEMBER, FORGET, ABOUT, 'open ', 'mdfind ', 'pbpaste')   # never delete, send or buy
+
+
+def risky(cmd):
+    """-> the question to ask the user, or '' when the command can just run."""
+    for part in re.split(r';|&&|\|\||\||\n', cmd):
+        part = part.strip()
+        if part.startswith(QUIET) and '$(' not in part and '`' not in part:
+            continue
+        for q, rx in RISKY:
+            if re.search(rx, part, re.I):
+                return q
+    return ''
+
+
+def gate():
+    """Claude Code's PreToolUse hook in safe mode: a risky command waits for the user's Allow (60 s, then no)."""
+    cmd = json.load(sys.stdin).get('tool_input', {}).get('command', '')
+    q, d = risky(cmd), os.environ.get('ATTICUS_ASK', '')
+    if not q or not d:
+        return
+    a, parent = os.path.join(d, 'a'), os.getppid()
+    with open(os.path.join(d, 'q.tmp'), 'w') as f:
+        f.write(json.dumps({'q': q, 'cmd': cmd[:200]}))
+    os.rename(os.path.join(d, 'q.tmp'), os.path.join(d, 'q'))
+    for _ in range(600):
+        if os.path.exists(a) or os.getppid() != parent:   # parent gone: the ask was cancelled
+            break
+        time.sleep(0.1)
+    ok = os.path.exists(a) and open(a).read().strip() == 'y'
+    if os.path.exists(a):
+        os.remove(a)
+    if not ok:
+        print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
+                                                 'permissionDecisionReason': 'The user said no. Do not try another way; say it was not done.'}}))
 
 
 def osa(script, *args):
@@ -536,17 +582,43 @@ def start_claude():
     if not shutil.which('claude'):
         return None
     system = SYSTEM + (POINTER if pref('pointer', False) else '') + (LEARN_ME if pref('learnMe', True) else '')
+    safe, ask = [], ''
+    if pref('safe', True):
+        ask = tempfile.mkdtemp(prefix='atticus-ask-')
+        atexit.register(shutil.rmtree, ask, True)   # however this run ends
+        safe = ['--settings', json.dumps({
+            'sandbox': {'enabled': True, 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': False, 'excludedCommands': SAFE_OUT},
+            'hooks': {'PreToolUse': [{'matcher': 'Bash', 'hooks': [{'type': 'command', 'command': f'"{sys.executable}" "{ME}" --gate', 'timeout': 70}]}]}})]
     p = subprocess.Popen(['claude', '-p', '--input-format', 'stream-json', '--model', pref('model', 'haiku'), '--effort', 'low', '--system-prompt', system,
-                          '--tools', 'Bash,Read,WebSearch,WebFetch', '--permission-mode', 'bypassPermissions', '--disallowedTools', *DENY,
+                          '--tools', 'Bash,Read,WebSearch,WebFetch', '--permission-mode', 'bypassPermissions', '--disallowedTools', *DENY, *safe,
                           '--setting-sources', '', '--no-session-persistence', '--strict-mcp-config', '--disable-slash-commands', '--output-format', 'stream-json', '--verbose'],
-                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=tempfile.gettempdir())
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=tempfile.gettempdir(),
+                         env={**os.environ, 'ATTICUS_ASK': ask})
+    p.ask = ask
     signal.signal(signal.SIGTERM, lambda *_: (p.kill(), sys.exit(0)))   # the hotkey pressed again = cancel
     return p
 
 
+def relay(p):
+    """Passes the gate's question to the box ("? <question>\t<command>\t<answer file>"), or a dialog when there is no box."""
+    q = os.path.join(p.ask, 'q')
+    while p.poll() is None:
+        if os.path.exists(q):
+            j = json.load(open(q))
+            os.remove(q)
+            a = os.path.join(p.ask, 'a')
+            if os.environ.get('ATTICUS_UI') == '1':
+                print(f"? {j['q']}\t{' '.join(j['cmd'].split())}\t{a}", flush=True)   # not say(): it would squash the tabs
+            else:
+                yes = osa('on run argv\ndisplay dialog (item 2 of argv) with title (item 1 of argv) buttons {"Don\'t Allow", "Allow"}\n'
+                          'return button returned of result\nend run', j['q'], j['cmd']) == 'Allow'
+                open(a, 'w').write('y' if yes else 'n')
+        time.sleep(0.1)
+
+
 def run(task, p=None, shots=()):
     """One request through `claude -p --model haiku` (the user's plan), streaming notes and steps. shots: [(path, label)] sent with it."""
-    run.cmds = []
+    run.cmds = run.ran = []
     p = p or start_claude()
     if not p:
         say('!', 'setup')   # Atticus.app opens its setup window
@@ -555,6 +627,8 @@ def run(task, p=None, shots=()):
         'type': 'base64', 'media_type': 'image/jpeg', 'data': base64.b64encode(open(path, 'rb').read()).decode()}})] + [{'type': 'text', 'text': task}]
     p.stdin.write(json.dumps({'type': 'user', 'message': {'role': 'user', 'content': content}}) + '\n')
     p.stdin.close()
+    if getattr(p, 'ask', ''):
+        threading.Thread(target=relay, args=(p,), daemon=True).start()
     reply, cost, steps, cmds, failed = '', 0, [], [], False
     for line in p.stdout:
         try:
@@ -576,6 +650,7 @@ def run(task, p=None, shots=()):
         elif j.get('type') == 'result':
             reply, cost = (j.get('result') or '').strip(), j.get('total_cost_usd', 0)
     p.wait()
+    run.ran = cmds   # the exact commands, for the ask log
     if not reply and p.returncode:
         c = plan()   # the usual cause: not installed, signed out, or no paid plan
         if not c['ok']:
@@ -638,6 +713,8 @@ def ask():
 
 def main():
     args = sys.argv[1:]
+    if args == ['--gate']:
+        return gate()
     if args[:1] == ['--place']:
         return print(place(*args[1:]))
     if args == ['--look']:
@@ -753,7 +830,7 @@ def main():
     remember_turn(task, reply)
     with open(os.path.join(DIR, 'log.jsonl'), 'a') as f:
         f.write(json.dumps({'at': time.strftime('%Y-%m-%d %H:%M:%S'), 'task': task, 'reply': reply,
-                            'usd': round(cost, 5), 'secs': round(time.time() - t, 1), 'steps': steps}) + '\n')
+                            'usd': round(cost, 5), 'secs': round(time.time() - t, 1), 'steps': steps, 'ran': run.ran}) + '\n')
     # clicks inside an app pull it forward; give the user back the app the user was in unless the user asked to go somewhere
     if not re.search(r'\b(switch|focus|go to|bring|full ?screen)\b', task.lower()) and osa('tell application "System Events" to get name of first process whose frontmost is true') != app:
         osa(f'tell application "{app}" to activate')
@@ -800,5 +877,10 @@ if __name__ == '__main__':
         assert me()['facts'] == [f'fact {i}' for i in range(3, 10)] and len(me()['about']) <= 200 and len(me_line()) <= 300
         assert norm('One M') == norm('1m') == '1m'
         assert label('Bash', {'command': f'{PLAY} "1m"'}) == 'Playing 1m on Spotify'
+        assert not risky(f'{SEARCH} "how to delete a file"') and not risky('open "https://google.com/search?q=buy shoes"') and not risky(f'{SHOW} "Notes"; {PLACE} "Notes" left current')
+        assert risky('rm -rf ~/x') == risky('open -a Notes; mv ~/a ~/.Trash/') == 'Delete something?' and risky('open "$(rm x)"')
+        assert risky('osascript -e \'tell application "Mail" to send m\'') == 'Send this?' == risky('curl -s -X POST https://x') and not risky("curl -s 'wttr.in/x?format=%l'")
+        assert risky('osascript -e \'do shell script "echo"\'') == 'Run a system command?' and risky("osascript -e 'tell application \"Notes\" to delete note 1'") == 'Delete something?'
+        assert risky('echo x >> ~/.zshrc') == 'Change a file?' == risky('curl -s -o ~/x https://y') and not risky('osascript -e x 2>&1; ls >/dev/null; echo > /tmp/a')
         sys.exit(print('selftest ok'))
     main()

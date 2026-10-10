@@ -67,6 +67,23 @@
       0 4px 14px rgba(0,0,0,.35); }
   #x.hot svg { transform: rotate(90deg); }
 
+  /* safe mode: Atticus asks before it deletes, sends or buys */
+  .ok { margin-top: 10px; padding: 11px 12px 12px; border-radius: 14px; background: rgba(255,255,255,.07);
+    box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14); animation: grow .32s var(--spring) both; }
+  .ok b { display: block; font-size: 13.5px; font-weight: 600; }
+  .ok code { display: block; margin-top: 4px; font: 11px ui-monospace, Menlo, monospace; color: #8e8e93;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ok div { display: flex; gap: 8px; margin-top: 11px; }
+  .ok button { flex: 1; height: 28px; border: 0; border-radius: 14px; font: 500 12.5px -apple-system, system-ui, sans-serif; color: #fff;
+    cursor: pointer; background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.16); transition: transform .3s var(--spring), background .2s; }
+  .ok button.go { background: #0a84ff; box-shadow: none; }
+  .ok button:hover { transform: scale(1.03); } .ok button:active { transform: scale(.96); }
+
+  /* safe mode off: a small tag says so; clicking it turns safe mode back on */
+  #mode { display: none; flex: none; padding: 3px 9px; border-radius: 10px; font-size: 11px; font-weight: 500; color: #ff9f0a;
+    background: rgba(255,159,10,.14); box-shadow: inset 0 0 0 .5px rgba(255,159,10,.3); cursor: pointer; transition: transform .3s var(--spring); }
+  #mode.on { display: block; animation: in .35s var(--ease) both; } #mode:hover { transform: scale(1.05); }
+
   /* typing box: grows in on hover (or the shortcut, in typing mode); the mic goes back to voice */
   #comp { display: none; align-items: center; gap: 8px; margin-top: 12px; height: 36px; }
   #comp.open { display: flex; animation: grow .32s var(--spring) both; }   /* size is instant, so the box measures it right away */
@@ -104,7 +121,7 @@
 <body>
 <div id="x"><svg viewBox="0 0 10 10"><path d="M1 1L9 9M9 1L1 9"/></svg></div>
 <div id="card">
-  <div id="head"><canvas id="orb"></canvas><div id="status"></div></div>
+  <div id="head"><canvas id="orb"></canvas><div id="status"></div><span id="mode" title="Safe mode is off. Click to turn it on.">Full access</span></div>
   <div id="thread"></div>
   <div id="comp"><input id="ask" placeholder="Ask Atticus…" autocomplete="off" spellcheck="false" aria-label="Ask Atticus">
     <button id="mic" title="Talk instead" aria-label="Talk instead"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button></div>
@@ -230,6 +247,9 @@
     },
     compose(on) { comp(on, on); },
     tap([x, y]) {   // a click on the box, not a drag: on the answer = copy it, anywhere else = type
+      const el = document.elementFromPoint(x, y), b = el?.closest('.ok button');
+      if (b) return b.click();
+      if (el?.closest('#mode')) return post({ safe: true });
       const on = document.elementFromPoint(x, y)?.closest('.a:not(.stopped):not(.cancel)');
       drop(); if (on) post({ copy: 1 }); else comp(true, true);
     },   // typing mode's shortcut: open and put the cursor in it
@@ -240,6 +260,14 @@
       const t = Math.max(60, h - 26 - $('head').offsetHeight - o - 12);   // 26: card padding; 12: gap under the thread
       $('thread').style.maxHeight = t + 'px'; post({ boxH: t }); fit();
     },
+    ask([q, cmd]) {   // Allow / Don't Allow; the answer goes back to the app, then the card goes
+      const d = document.createElement('div'); d.className = 'ok';
+      d.innerHTML = '<b></b><code></code><div><button>Don’t Allow</button><button class="go">Allow</button></div>';
+      d.querySelector('b').textContent = q; d.querySelector('code').textContent = cmd;
+      d.querySelectorAll('button').forEach((b, i) => b.onclick = () => { d.remove(); status(i ? 'Allowed' : 'Not allowed', true); post({ allow: !!i }); fit(); });
+      (turn() || $('thread')).append(d); setState('breathing'); status('Waiting for you'); fit();
+    },
+    mode(safe) { $('mode').classList.toggle('on', !safe); },
     xhot(on) { $('x').classList.toggle('hot', on); },
     copied() { status('Copied to clipboard'); setTimeout(() => status(''), 1400); },
   };
