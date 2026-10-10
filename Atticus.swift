@@ -564,7 +564,7 @@ final class App: NSObject, WKScriptMessageHandler {
                 guard let self, self.proc === p else { return }   // a cancelled run ending late must not touch the next one
                 self.busy = false; self.proc = nil
                 if !self.answer.isEmpty { self.lastDone = Date(); self.cue("soundDone") }
-                DispatchQueue.global().async { Apps.sync() }
+                Apps.q.async { Apps.sync() }
                 self.hide(after: self.linger(max(6, min(30, Double(self.answer.count) / 12))))   // longer answers stay longer
             }
         }
@@ -879,7 +879,13 @@ enum Apps {
         "com.apple.Photos", "com.apple.iWork.Pages", "com.apple.iWork.Keynote", "com.apple.iWork.Numbers", "com.microsoft.Word",
         "com.microsoft.Excel", "com.microsoft.Powerpoint", "com.tinyspeck.slackmacgap", "us.zoom.xos", "com.hnc.Discord", "notion.id"]
     static var icons: [String: String] = [:]   // bundle id -> data URL, made once per launch
-    static var stopped = false   // Settings' Stop button
+    static var job = 0, current = 0   // each Allow click is a new job; Stop (or a newer click) ends the one running
+    static var stopped: Bool { job != current }
+    static let q = DispatchQueue(label: "apps")   // one job at a time: two at once corrupted icons and lost allowed apps (a crash)
+    static func wait(_ s: DispatchSemaphore, _ secs: Double) -> Bool {   // true = done; gives up early on Stop
+        for _ in 0..<Int(secs * 10) { if s.wait(timeout: .now() + 0.1) == .success { return true }; if stopped { return false } }
+        return false
+    }
 
     static var allowed: Set<String> {
         get { Set(UserDefaults.standard.stringArray(forKey: "allowedApps") ?? []) }
@@ -935,20 +941,25 @@ enum Apps {
         for i in out.indices { out[i]["status"] = st[out[i]["id"] as! String] }
         return out.sorted { ($0["name"] as! String).localizedCaseInsensitiveCompare($1["name"] as! String) == .orderedAscending }
     }
-    static func allow(_ ids: [String], _ progress: @escaping (String, String) -> Void) {   // off the main thread
-        stopped = false
+    static func allow(_ ids: [String], _ progress: @escaping (String, String) -> Void) {   // on q
         for id in ids where !stopped {
             var started: NSRunningApplication?
             if NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
                 let c = NSWorkspace.OpenConfiguration(); c.activates = false; c.hides = true; c.addsToRecentItems = false
                 let done = DispatchSemaphore(value: 0)
                 NSWorkspace.shared.openApplication(at: url, configuration: c) { a, _ in started = a; done.signal() }
-                _ = done.wait(timeout: .now() + 15)
+                _ = wait(done, 15)
             }
             progress(id, "asking")
-            let answered = DispatchSemaphore(value: 0)   // some apps (Spotify) never answer: move on after 20 s
-            DispatchQueue.global().async { _ = check(id, ask: true); answered.signal() }
-            _ = answered.wait(timeout: .now() + 20)
+            // An app that just opened can't be asked yet (procNotFound, and macOS shows nothing): try again for up to 5 s.
+            // Some apps (Spotify) never answer: move on after 20 s.
+            for _ in 0..<20 where !stopped {
+                final class Box { var code = OSStatus(procNotFound) }
+                let answered = DispatchSemaphore(value: 0), r = Box()
+                DispatchQueue.global().async { r.code = check(id, ask: true); answered.signal() }
+                guard wait(answered, 20), r.code == OSStatus(procNotFound) else { break }
+                Thread.sleep(forTimeInterval: 0.25)
+            }
             started?.terminate()   // only the ones Atticus started
             progress(id, statuses([id])[id]!)
         }
@@ -986,7 +997,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
     func webView(_ v: WKWebView, didFinish n: WKNavigation!) { push(); refresh(); DispatchQueue.global().async { [weak self] in self?.send("perms", Onboarding.perms()) }; if !tab.isEmpty { js("st.tab('\(tab)')"); tab = "" } }
 
     func send(_ call: String, _ v: Any) {
-        guard let d = try? JSONSerialization.data(withJSONObject: v), let j = String(data: d, encoding: .utf8) else { return }
+        guard JSONSerialization.isValidJSONObject(v), let d = try? JSONSerialization.data(withJSONObject: v), let j = String(data: d, encoding: .utf8) else { return }
         DispatchQueue.main.async { [weak self] in self?.js("st.\(call)(\(j))") }
     }
 
@@ -1083,15 +1094,17 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         case "forget", "remember":
             guard let line = b["line"] as? String else { return }
             DispatchQueue.global().async { [weak self] in self?.helper(["--" + what, line]); DispatchQueue.main.async { self?.refresh() } }
-        case "apps": DispatchQueue.global().async { [weak self] in self?.send("apps", Apps.list()) }
+        case "apps": Apps.q.async { [weak self] in self?.send("apps", Apps.list()) }
         case "allow":
             guard let ids = b["ids"] as? [String] else { return }
-            DispatchQueue.global().async { [weak self] in
+            Apps.job += 1; let me = Apps.job
+            Apps.q.async { [weak self] in
+                Apps.current = me
                 Apps.allow(ids) { id, s in self?.send("appStatus", [id, s]) }
                 self?.send("allowDone", 0)
             }
         case "grant": if let id = b["id"] as? String { onboarding.grant(id) }
-        case "stopAllow": Apps.stopped = true
+        case "stopAllow": Apps.job += 1
         case "automation": NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!)
         case "quit": NSApp.terminate(nil)
         default: break

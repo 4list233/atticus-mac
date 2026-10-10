@@ -432,7 +432,11 @@
   document.querySelectorAll('[data-g]').forEach(b => b.onclick = () => post({ do: 'grant', id: b.dataset.g }));
   document.querySelectorAll('#appview button').forEach(b => b.onclick = () => { view = b.dataset.v; paintApps(); });
   $('allow').onclick = () => {
-    if (asking) return post({ do: 'stopAllow' });   // the box on screen now still needs an answer; no more after it
+    if (asking) {   // stops now; the macOS box on screen still takes an answer, and the list refreshes when it's done
+      post({ do: 'stopAllow' }); asking = 0;
+      APPS.forEach(a => { if (a.status === 'asking') a.status = 'new'; });
+      return paintApps();
+    }
     const ids = APPS.filter(a => a.status === 'new' && pick.has(a.id)).map(a => a.id);
     asking = total = ids.length; count(); post({ do: 'allow', ids });
   };
