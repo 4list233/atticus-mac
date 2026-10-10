@@ -31,6 +31,26 @@ enum Prefs {
     static func num(_ k: String) -> Double { (d[k] as? NSNumber)?.doubleValue ?? 0 }
 }
 
+// Read-aloud uses the Mac's Spoken Content voice, and most people never pick one: once, switch it to Siri's.
+// A test line that fails (Siri voice not downloaded) puts the old voice back.
+func siriVoice() {
+    guard !UserDefaults.standard.bool(forKey: "siriVoice") else { return }
+    UserDefaults.standard.set(true, forKey: "siriVoice")
+    DispatchQueue.global().async {
+        let key = "SpokenContentDefaultVoiceSelectionsByLanguage" as CFString, dom = "com.apple.Accessibility" as CFString
+        let old = CFPreferencesCopyAppValue(key, dom)
+        if (old as? [Any])?.contains(where: { (($0 as? [String: Any])?["voiceId"] as? String)?.hasPrefix("com.apple.siri.") == true }) == true { return }
+        let siri: [Any] = ["en", ["_type": "Speech.VoiceSelection", "_version": 0, "boundLanguage": "en", "voiceId": "com.apple.siri.natural.en-US-F"]]
+        CFPreferencesSetAppValue(key, siri as CFArray, dom); CFPreferencesAppSynchronize(dom)
+        let out = NSTemporaryDirectory() + "atticus-voice.aiff", p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/say"); p.arguments = ["-o", out, "hi"]
+        try? p.run(); p.waitUntilExit()
+        let size = (try? FileManager.default.attributesOfItem(atPath: out)[.size] as? Int) ?? 0
+        try? FileManager.default.removeItem(atPath: out)
+        if p.terminationStatus != 0 || size < 1000 { CFPreferencesSetAppValue(key, old, dom); CFPreferencesAppSynchronize(dom) }
+    }
+}
+
 // The talk shortcut, any key plus modifiers, recorded in Settings: Carbon modifiers to register, and the
 // modifier keys whose release ends listening (none for a lone F-key: its own key-up ends it).
 func hotkey() -> (code: Int, mods: Int, flags: NSEvent.ModifierFlags) {
@@ -87,6 +107,7 @@ final class App: NSObject, WKScriptMessageHandler {
     var stops = 0   // each key release; tells a late "words landed" from a current one
     var dragging = false, fromTop = false   // moving or resizing the box; fromTop: dragging the top edge, so the bottom stays put
     var began = Date()   // when the shortcut went down: a quick tap opens the box to type, a hold talks
+    var wasUp = false   // the box was already up when the shortcut went down: a tap puts it away
     var fresh = false   // opened by a tap and nothing said, typed or asked yet: the shortcut again puts it away
     var composing = false, compH: CGFloat = 0, clickTalk = false, quiet: DispatchWorkItem?   // typing box focused / its height from the bottom; mic button = talk without keys
     var hovering = false, xHot = false, pinned = false, stuck = false, lastDone = Date.distantPast   // pinned: the user clicked the box, so only Esc / click-out / ✕ close it; stuck: the user dragged it, so only ✕
@@ -113,7 +134,9 @@ final class App: NSObject, WKScriptMessageHandler {
     func deliver(_ a: String) {   // Settings: read answers aloud, copy them
         if Prefs.bool("autoCopy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(a, forType: .string) }
         if Prefs.bool("speak") {
-            shush(); let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/say"); p.arguments = ["--", a]; try? p.run(); voice = p
+            shush(); let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/say"); p.arguments = ["--", a]
+            p.terminationHandler = { [weak self] _ in DispatchQueue.main.async { self?.hide(after: 2) } }   // the box waits for the voice
+            try? p.run(); voice = p
         }
     }
     func linger(_ s: Double) -> Double { s * (["short": 0.5, "long": 2][Prefs.str("linger")] ?? 1) }
@@ -162,25 +185,24 @@ final class App: NSObject, WKScriptMessageHandler {
             close(clear: false)
         }
         var grab: (mouse: NSPoint, origin: NSPoint)?, moved = false
-        var sizing: (mouse: NSPoint, frame: NSRect, maxH: Double, e: (l: Bool, r: Bool, t: Bool, b: Bool))?   // dragging an edge or corner
+        var sizing: (mouse: NSPoint, frame: NSRect, e: (l: Bool, r: Bool, t: Bool, b: Bool))?   // dragging an edge or corner
         NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] e in
             guard let self else { return e }
             switch e.type {
             case .leftMouseDown:
                 guard e.window == panel else { return e }
                 let p = e.locationInWindow
-                if let ed = edges(p), !(overX(p) && !ed.r && !ed.t) { sizing = (NSEvent.mouseLocation, panel.frame, Prefs.num("boxH"), ed); fromTop = ed.t; pinned = true; dragging = true }
+                if let ed = edges(p), !(overX(p) && !ed.r && !ed.t) { sizing = (NSEvent.mouseLocation, panel.frame, ed); fromTop = ed.t; pinned = true; dragging = true }
                 else if overX(p) { close(clear: true) }
                 else if p.y < compH { pinned = true; panel.makeKey(); panel.makeFirstResponder(web); return e }   // the typing box: a normal click
                 else { pinned = true; grab = (NSEvent.mouseLocation, panel.frame.origin); moved = false; dragging = true }
             case .leftMouseDragged:
-                if let z = sizing {   // width from the side edges; how tall the conversation may get from the top/bottom edges
+                if let z = sizing {   // width from the side edges, height from the top/bottom; a corner does both
                     let m = NSEvent.mouseLocation, dx = m.x - z.mouse.x, dy = m.y - z.mouse.y
                     let w = min(900, max(340, z.frame.width + (z.e.r ? dx : z.e.l ? -dx : 0)))
-                    let h = min(900, max(120, z.maxH + (z.e.b ? -dy : z.e.t ? dy : 0)))
                     var f = panel.frame; f.size.width = w; f.origin.x = z.e.l ? z.frame.maxX - w : z.frame.minX; frame(f)
-                    Prefs.d["boxW"] = w; Prefs.d["boxH"] = h
-                    js("size", h)
+                    Prefs.d["boxW"] = w
+                    if z.e.t || z.e.b { js("hold", min(1000, max(120, z.frame.height + (z.e.b ? -dy : dy)))) }   // the page sets the height
                     return nil
                 }
                 guard let g = grab else { return e }
@@ -221,6 +243,7 @@ final class App: NSObject, WKScriptMessageHandler {
     func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
         if m.name == "c", let b = m.body as? [String: Any] {
             if let h = b["comp"] as? NSNumber { compH = CGFloat(h.doubleValue) }
+            if let h = b["boxH"] as? NSNumber { Prefs.d["boxH"] = h.doubleValue }   // saved when the drag ends
             if let f = b["focus"] as? Bool {
                 composing = f
                 if !f && !hovering && !busy { hide(after: 3) }
@@ -271,7 +294,7 @@ final class App: NSObject, WKScriptMessageHandler {
     func hide(after s: Double) {
         let g = gen
         DispatchQueue.main.asyncAfter(deadline: .now() + s) { [self] in
-            guard g == gen, !busy, !engine.isRunning, !hovering, !pinned, !composing else { return }
+            guard g == gen, !busy, !engine.isRunning, !hovering, !pinned, !composing, voice?.isRunning != true else { return }
             NSAnimationContext.runAnimationGroup({ $0.duration = 0.3; panel.animator().alphaValue = 0 },
                                                  completionHandler: { [self] in if g == gen { gone() } })
         }
@@ -315,6 +338,7 @@ final class App: NSObject, WKScriptMessageHandler {
 
     // ✕ also ends the conversation; clicking away or timing out keeps it for 5 minutes.
     func close(clear: Bool) {
+        shush(); if engine.isRunning || busy { hush(); proc?.terminate(); proc = nil }   // gone means quiet: no mic, no voice, no answer on the way
         if clear { try? FileManager.default.removeItem(atPath: recent); lastDone = .distantPast }
         gen += 1
         let g = gen
@@ -325,11 +349,12 @@ final class App: NSObject, WKScriptMessageHandler {
     func start() {
         guard !Prefs.bool("paused") else { return }
         shush()
+        if engine.isRunning { return dismiss() }   // listening with no keys held (tapped open, mic button): the shortcut stops it
         if busy {   // pressed again while it works = cancel
             return cancel()
         }
         if fresh && panel.isVisible { return dismiss() }
-        guard !engine.isRunning else { return }
+        wasUp = panel.isVisible
         text = ""; consumed = 0; did = []; ahead = ""
         if !panel.isVisible && Date().timeIntervalSince(lastDone) > 30 { js("reset"); try? FileManager.default.removeItem(atPath: recent) }
         if Prefs.str("input") == "type" && !clickTalk {   // Settings: the shortcut opens the box ready to type
@@ -432,6 +457,7 @@ final class App: NSObject, WKScriptMessageHandler {
     func stop() {
         guard engine.isRunning, !clickTalk || text.isEmpty == false else { return }
         if !clickTalk && text.isEmpty && Date().timeIntervalSince(began) < 0.4 {   // tapped, not held: like Spotlight
+            if wasUp { hush(); return close(clear: false) }   // the box was up: a tap puts it away
             clickTalk = true; fresh = true; panel.makeKey(); panel.makeFirstResponder(web); js("compose", true); return
         }
         engine.stop(); engine.inputNode.removeTap(onBus: 0); feed?.finish()
@@ -458,7 +484,7 @@ final class App: NSObject, WKScriptMessageHandler {
         }
     }
 
-    func typed(_ t: String, keep: Bool = false) {   // "Ask Atticus…" from the menu bar, or the typing box (keep: it stays open for the next one)
+    func typed(_ t: String, keep: Bool = false) {   // the typing box (keep: it stays open for the next one)
         guard !busy, !engine.isRunning else { return }
         fresh = false; js("listen", keep); show(); js("words", t); run(t)
     }
@@ -807,7 +833,7 @@ final class MenuBar: NSObject, NSMenuDelegate {
         let head = NSMenuItem(title: Prefs.bool("paused") ? "Atticus is paused" : "Hold \(keys) and talk", action: nil, keyEquivalent: "")
         head.isEnabled = false; m.addItem(head)
         m.addItem(.separator())
-        add(m, "Ask Atticus…", #selector(ask), "")
+        add(m, "Ask Atticus", #selector(ask), "")
         add(m, Prefs.bool("paused") ? "Resume Atticus" : "Pause Atticus", #selector(pause), "")
         m.addItem(.separator())
         let u = NSMenuItem(title: today(), action: nil, keyEquivalent: ""); u.isEnabled = false; m.addItem(u)
@@ -826,14 +852,7 @@ final class MenuBar: NSObject, NSMenuDelegate {
         let usd = rows.reduce(0.0) { $0 + (($1["usd"] as? NSNumber)?.doubleValue ?? 0) }
         return "Today: \(rows.count) ask\(rows.count == 1 ? "" : "s") · " + (usd < 1 ? String(format: "%.2f¢", usd * 100) : String(format: "$%.2f", usd))
     }
-    @objc func ask() {
-        NSApp.activate(ignoringOtherApps: true)
-        let a = NSAlert(); a.messageText = "Ask Atticus"; a.informativeText = "Type what you would say."
-        let f = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24)); f.placeholderString = "What’s the weather tomorrow?"
-        a.accessoryView = f; a.addButton(withTitle: "Ask"); a.addButton(withTitle: "Cancel")
-        a.window.initialFirstResponder = f
-        if a.runModal() == .alertFirstButtonReturn, !f.stringValue.trimmingCharacters(in: .whitespaces).isEmpty { app.typed(f.stringValue) }
-    }
+    @objc func ask() { app.clickTalk = true; app.start(); if !app.engine.isRunning { app.clickTalk = false } }   // the same box as the shortcut, like its mic button
     @objc func pause() { Prefs.set("paused", !Prefs.bool("paused")); paint(); settings.push() }
     @objc func openSettings() { settings.open() }
     @objc func openSetup() { onboarding.open() }
@@ -1027,6 +1046,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         case "set":
             guard let k = b["k"] as? String, let v = b["v"] else { return }
             Prefs.set(k, v)
+            if k == "speak", v as? Bool == true { siriVoice() }
             if k == "hideWhenSharing" { app.panel.sharingType = v as? Bool == true ? .none : .readOnly }
             if k == "menuIcon" { bar.item.isVisible = v as? Bool == true }
             if k == "paused" { bar.paint() }
@@ -1104,6 +1124,7 @@ var ref: EventHotKeyRef?
     return RegisterEventHotKey(UInt32(h.code), UInt32(h.mods), EventHotKeyID(signature: 0x41545443, id: 1), GetApplicationEventTarget(), 0, &ref) == noErr
 }
 registerHotkey()
+if Prefs.bool("speak") { siriVoice() }
 let settings = SettingsWindow()
 let bar = MenuBar()
 let delegate = Delegate()

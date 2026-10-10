@@ -8,6 +8,8 @@
   html { background: rgba(18,18,20,.5); }   /* a dark tint under the glass: the orb shows over white pages too */
   #card { padding: 12px 14px 14px; animation: pop .42s var(--spring) both; }
   #card.again { animation: none; }
+  #card.held { box-sizing: border-box; display: flex; flex-direction: column; }   /* dragged to a height: keep it */
+  #card.held #comp { margin-top: auto; } #card.held #thread { margin-bottom: 12px; }
 
   #head { display: flex; align-items: center; gap: 10px; height: 44px; padding-right: 30px; }
   canvas { width: 44px; height: 44px; flex: none; margin-left: -4px; transition: transform .35s var(--ease); }
@@ -171,7 +173,7 @@
   };
 
   window.ui = {
-    reset() { $('thread').innerHTML = ''; $('card').classList.remove('again'); void $('card').offsetWidth; },
+    reset() { $('thread').innerHTML = ''; $('card').classList.remove('held'); $('card').style.minHeight = ''; $('card').classList.remove('again'); void $('card').offsetWidth; },
     listen(keep) {   // keep: a typed ask; the box stays for the next one
       listening = !keep;
       if (keep) $('ask').value = ''; else comp(false);
@@ -232,6 +234,12 @@
       drop(); if (on) post({ copy: 1 }); else comp(true, true);
     },   // typing mode's shortcut: open and put the cursor in it
     size(h) { $('thread').style.maxHeight = h + 'px'; fit(); },
+    hold(h) {   // the user dragged an edge: the box is h tall until the next conversation
+      const c = $('card'), o = $('comp').classList.contains('open') ? $('comp').offsetHeight : 0;
+      c.classList.add('held'); c.style.minHeight = h + 'px';
+      const t = Math.max(60, h - 26 - $('head').offsetHeight - o - 12);   // 26: card padding; 12: gap under the thread
+      $('thread').style.maxHeight = t + 'px'; post({ boxH: t }); fit();
+    },
     xhot(on) { $('x').classList.toggle('hot', on); },
     copied() { status('Copied to clipboard'); setTimeout(() => status(''), 1400); },
   };
