@@ -29,6 +29,8 @@ swiftc -O -target "$(uname -m)-apple-macos26.0" Atticus.swift -o "$APP/Contents/
 # rebuilds; without one it signs ad hoc, and permissions must be granted again after each build.
 ID=$(security find-identity -p codesigning | awk '/Atticus Local Signing/{print $2; exit}')
 codesign -s "${ID:--}" --force "$APP"
+# register with macOS, or System Settings can't list it for permissions
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"
 AGENT=~/Library/LaunchAgents/com.atticus.app.plist   # starts at login, restarts if it quits
 mkdir -p ~/Library/LaunchAgents ~/.config/atticus
 cat > "$AGENT" <<P
