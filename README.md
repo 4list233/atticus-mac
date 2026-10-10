@@ -14,10 +14,7 @@
 
 <br>
 
-<p align="center">
-  <a href="docs/atticus-film.mp4"><img src="docs/film-poster.png" alt="Watch the Atticus film (75 s)" width="88%"></a><br>
-  <sub><b>▶ Watch the film</b> · 75 seconds</sub>
-</p>
+https://github.com/user-attachments/assets/e3444422-02e8-4dd7-bb44-d39f2b0f2bef
 
 <br>
 
