@@ -764,6 +764,7 @@ enum Apps {
         "com.apple.Photos", "com.apple.iWork.Pages", "com.apple.iWork.Keynote", "com.apple.iWork.Numbers", "com.microsoft.Word",
         "com.microsoft.Excel", "com.microsoft.Powerpoint", "com.tinyspeck.slackmacgap", "us.zoom.xos", "com.hnc.Discord", "notion.id"]
     static var icons: [String: String] = [:]   // bundle id -> data URL, made once per launch
+    static var stopped = false   // Settings' Stop button
 
     static var allowed: Set<String> {
         get { Set(UserDefaults.standard.stringArray(forKey: "allowedApps") ?? []) }
@@ -820,7 +821,8 @@ enum Apps {
         return out.sorted { ($0["name"] as! String).localizedCaseInsensitiveCompare($1["name"] as! String) == .orderedAscending }
     }
     static func allow(_ ids: [String], _ progress: @escaping (String, String) -> Void) {   // off the main thread
-        for id in ids {
+        stopped = false
+        for id in ids where !stopped {
             var started: NSRunningApplication?
             if NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
                 let c = NSWorkspace.OpenConfiguration(); c.activates = false; c.hides = true; c.addsToRecentItems = false
@@ -972,6 +974,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
                 self?.send("allowDone", 0)
             }
         case "grant": if let id = b["id"] as? String { onboarding.grant(id) }
+        case "stopAllow": Apps.stopped = true
         case "automation": NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!)
         case "quit": NSApp.terminate(nil)
         default: break

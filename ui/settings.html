@@ -125,7 +125,8 @@
   .search { flex: 1; height: 28px; padding: 0 10px; border: 0; border-radius: 7px; font: 13px system-ui; color: var(--fg); outline: 0;
     background: var(--card); box-shadow: inset 0 0 0 .5px var(--line), 0 1px 1px rgba(0,0,0,.05); }
   .search:focus { box-shadow: inset 0 0 0 .5px var(--line), 0 0 0 3px rgba(10,132,255,.35); }
-  .appbar .btn { height: 28px; } .btn:disabled { opacity: .45; pointer-events: none; }
+  .appbar .btn { height: 28px; } .appbar .seg { align-self: center; }
+  .btn.stop { background: #ff453a; } .btn:disabled { opacity: .45; pointer-events: none; }
   h3 .all { all: unset; float: right; color: var(--accent); text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 11.5px; cursor: pointer; }
   .app { min-height: 46px; cursor: pointer; } .app img { width: 30px; height: 30px; flex: none; }
   .app .t b { font-weight: 400; }
@@ -257,7 +258,8 @@
   <section id="apps">
     <h1>Apps</h1>
     <p class="lede">Tick the apps Atticus can control. macOS asks once for each one, so allow them all now and Atticus won’t stop to ask later.</p>
-    <div class="appbar"><input id="appq" class="search" placeholder="Search apps" aria-label="Search apps"><button class="btn blue" id="allow" disabled>Allow</button></div>
+    <div class="appbar"><div class="seg" id="appview"><button data-v="key" class="on">Key Apps</button><button data-v="all">All Apps</button></div>
+      <input id="appq" class="search" placeholder="Search all apps" aria-label="Search all apps"><button class="btn blue" id="allow" disabled>Allow</button></div>
     <div id="applist"><div class="group"><div class="empty">Finding your apps…</div></div></div>
     <p class="note">Atticus opens each app out of sight, asks, and closes it again. Click OK on each macOS box.<br>
       Using an app that isn’t ticked? macOS asks the first time, and it shows up here as allowed.
@@ -392,7 +394,7 @@
   $('myabout').oninput = () => $('abcount').textContent = $('myabout').value.length + '/200';
 
   // Apps: every installed app; suggested ones start ticked. Atticus.swift asks macOS about the ticked ones in one go.
-  let APPS = [], pick = null, asking = 0, total = 0;
+  let APPS = [], pick = null, asking = 0, total = 0, view = 'key';
   const appEsc = t => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   function appRow(a) {
     const end = a.status === 'allowed' ? '<span class="pill ok">Allowed</span>'
@@ -402,25 +404,30 @@
     return `<label class="row app"><img src="${a.icon}" alt=""><div class="t"><b>${appEsc(a.name)}</b></div>${end}</label>`;
   }
   function paintApps() {
-    const q = $('appq').value.trim().toLowerCase(), shown = APPS.filter(a => a.name.toLowerCase().includes(q));
-    const group = (title, list) => list.length ? `<h3>${title}${list.some(a => a.status === 'new') ? `<button class="all" data-g="${title}">Select all</button>` : ''}</h3>
-      <div class="group">${list.map(appRow).join('')}</div>` : '';
-    const sug = shown.filter(a => a.suggested), rest = shown.filter(a => !a.suggested);
-    $('applist').innerHTML = group('Suggested', sug) + group('All apps', rest) || '<div class="group"><div class="empty">No app matches.</div></div>';
+    // Key Apps: the usual ones, with Select all. All Apps and search: every app, ticked one by one (no 100-box surprise).
+    const q = $('appq').value.trim().toLowerCase();
+    const shown = q ? APPS.filter(a => a.name.toLowerCase().includes(q)) : view === 'key' ? APPS.filter(a => a.suggested) : APPS;
+    const sel = !q && view === 'key' && shown.some(a => a.status === 'new') ? '<button class="all">Select all</button>' : '';
+    const title = q ? 'Matches' : view === 'key' ? 'Key apps' : `All apps · ${APPS.length}`;
+    $('applist').innerHTML = shown.length ? `<h3>${title}${sel}</h3><div class="group">${shown.map(appRow).join('')}</div>`
+      : '<div class="group"><div class="empty">No app matches.</div></div>';
+    document.querySelectorAll('#appview button').forEach(b => b.classList.toggle('on', b.dataset.v === view));
     document.querySelectorAll('.ck').forEach(c => c.onchange = () => { c.checked ? pick.add(c.dataset.id) : pick.delete(c.dataset.id); count(); });
-    document.querySelectorAll('h3 .all').forEach(b => b.onclick = () => {
-      (b.dataset.g === 'Suggested' ? sug : rest).filter(a => a.status === 'new').forEach(a => pick.add(a.id)); paintApps(); });
+    document.querySelectorAll('h3 .all').forEach(b => b.onclick = () => { shown.filter(a => a.status === 'new').forEach(a => pick.add(a.id)); paintApps(); });
     document.querySelectorAll('#applist [data-do]').forEach(b => b.onclick = e => { e.preventDefault(); post({ do: b.dataset.do }); });
     count();
   }
   function count() {
     const n = APPS.filter(a => a.status === 'new' && pick.has(a.id)).length;
-    $('allow').disabled = asking > 0 || !n;
-    $('allow').textContent = asking ? `Asking ${total - asking + 1} of ${total}…` : n ? `Allow ${n} App${n > 1 ? 's' : ''}` : 'Allow';
+    $('allow').disabled = !asking && !n;
+    $('allow').classList.toggle('stop', asking > 0);
+    $('allow').textContent = asking ? `Stop · ${total - asking + 1} of ${total}` : n ? `Allow ${n} App${n > 1 ? 's' : ''}` : 'Allow';
   }
   $('appq').oninput = paintApps;
   document.querySelectorAll('[data-g]').forEach(b => b.onclick = () => post({ do: 'grant', id: b.dataset.g }));
+  document.querySelectorAll('#appview button').forEach(b => b.onclick = () => { view = b.dataset.v; paintApps(); });
   $('allow').onclick = () => {
+    if (asking) return post({ do: 'stopAllow' });   // the box on screen now still needs an answer; no more after it
     const ids = APPS.filter(a => a.status === 'new' && pick.has(a.id)).map(a => a.id);
     asking = total = ids.length; count(); post({ do: 'allow', ids });
   };
