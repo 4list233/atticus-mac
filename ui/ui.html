@@ -1,0 +1,169 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<!-- Atticus overlay. Atticus.app loads this, puts orbs.js in place of the marker below, and calls window.ui.* -->
+<style>
+  :root { color-scheme: dark; --ease: cubic-bezier(.2,.8,.2,1); --spring: cubic-bezier(.34,1.56,.64,1); }
+  html, body { margin: 0; background: transparent; overflow: hidden; -webkit-user-select: none; cursor: default;
+    font: 13px -apple-system, system-ui, sans-serif; color: #f5f5f7; -webkit-font-smoothing: antialiased; }
+  #card { padding: 12px 14px 14px; animation: pop .42s var(--spring) both; }
+  #card.again { animation: none; }
+
+  #head { display: flex; align-items: center; gap: 10px; height: 44px; padding-right: 30px; }
+  canvas { width: 44px; height: 44px; flex: none; margin-left: -4px; transition: transform .35s var(--ease); }
+  #status { flex: 1; min-width: 0; font-size: 12.5px; color: #a1a1a6; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  #status span { display: inline-block; animation: in .35s var(--ease) both; }
+  #status.live span { background: linear-gradient(90deg, #8e8e93 0%, #fff 45%, #8e8e93 90%); background-size: 200% 100%;
+    -webkit-background-clip: text; color: transparent; animation: in .35s var(--ease) both, shimmer 1.5s linear infinite; }
+
+  #thread { max-height: 360px; overflow-y: auto; scroll-behavior: smooth; padding-top: 2px;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 100%); }
+  #thread::-webkit-scrollbar { width: 0; }
+  #thread:empty { display: none; }
+  .turn { padding-top: 10px; animation: in .4s var(--ease) both; transition: opacity .4s var(--ease); }
+  .turn + .turn { margin-top: 10px; border-top: .5px solid rgba(255,255,255,.08); }
+  .turn.old { opacity: .55; }
+
+  .q { margin-left: auto; width: fit-content; max-width: 86%; padding: 7px 11px; border-radius: 14px 14px 4px 14px;
+    background: rgba(255,255,255,.09); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.12);
+    font-size: 13px; line-height: 1.38; color: #e5e5ea; transition: font-size .3s var(--ease), color .3s; }
+  .q.live { font-size: 15px; color: #fff; }
+  .q.live::after { content: ""; display: inline-block; width: 1.5px; height: 1em; margin-left: 2px; vertical-align: -2px;
+    background: #fff; animation: blink 1s steps(1) infinite; }
+  .q.empty { color: #8e8e93; }
+
+  .steps { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .steps:empty { display: none; }
+  .step { font-size: 12px; color: #8e8e93; display: flex; gap: 7px; align-items: center; white-space: nowrap;
+    overflow: hidden; animation: in .35s var(--ease) both; }
+  .step::before { content: ""; flex: none; width: 5px; height: 5px; border-radius: 50%; background: #636366;
+    transition: background .3s; }
+  .step span { overflow: hidden; text-overflow: ellipsis; }
+  .step.live { color: #f5f5f7; }
+  .step.live::before { background: #fff; animation: pulse 1s ease-in-out infinite; }
+  .step.done::before { background: #30d158; }
+
+  .a { margin-top: 9px; font-size: 14px; line-height: 1.48; }
+  .a:empty { display: none; }
+  .a .w { display: inline-block; animation: word .5s var(--ease) both; }
+  .a.cancel { color: #8e8e93; font-size: 12.5px; }
+  .a.stopped { display: flex; align-items: center; gap: 8px; color: #a1a1a6; font-size: 12.5px; letter-spacing: .1px; }
+  .a.stopped i { width: 7px; height: 7px; border-radius: 2px; background: #ff453a; box-shadow: 0 0 8px rgba(255,69,58,.6);
+    animation: in .35s var(--spring) both; }
+  .step.cut { color: #636366; text-decoration: line-through; text-decoration-color: rgba(255,255,255,.2); }
+
+  #x { position: absolute; top: 12px; right: 12px; width: 22px; height: 22px; border-radius: 50%; display: grid;
+    place-items: center; opacity: .7; z-index: 2;
+    background: radial-gradient(120% 120% at 30% 15%, rgba(255,255,255,.30), rgba(255,255,255,.07) 55%, rgba(255,255,255,.03));
+    box-shadow: inset 0 0 0 .5px rgba(255,255,255,.35), inset 0 -1.5px 2px rgba(0,0,0,.28), 0 2px 6px rgba(0,0,0,.22);
+    transition: transform .45s var(--spring), opacity .25s, box-shadow .3s, background .3s; }
+  #x svg { width: 8px; height: 8px; stroke: #fff; stroke-width: 1.6; stroke-linecap: round; transition: transform .45s var(--spring); }
+  #x.hot { transform: scale(1.28); opacity: 1;
+    background: radial-gradient(120% 120% at 30% 15%, rgba(255,255,255,.5), rgba(255,255,255,.14) 55%, rgba(255,255,255,.06));
+    box-shadow: inset 0 0 0 .5px rgba(255,255,255,.55), inset 0 -1.5px 3px rgba(0,0,0,.3), 0 0 0 4px rgba(255,255,255,.05),
+      0 4px 14px rgba(0,0,0,.35); }
+  #x.hot svg { transform: rotate(90deg); }
+
+  @keyframes pop { from { opacity: 0; transform: scale(.94) translateY(-6px); } to { opacity: 1; transform: none; } }
+  @keyframes in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+  @keyframes word { from { opacity: 0; filter: blur(5px); transform: translateY(3px); } to { opacity: 1; filter: none; transform: none; } }
+  @keyframes pulse { 50% { opacity: .3; } }
+  @keyframes blink { 50% { opacity: 0; } }
+  @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+</style></head>
+<body>
+<div id="x"><svg viewBox="0 0 10 10"><path d="M1 1L9 9M9 1L1 9"/></svg></div>
+<div id="card">
+  <div id="head"><canvas id="orb"></canvas><div id="status"></div></div>
+  <div id="thread"></div>
+</div>
+<script type="text/plain" id="orbsrc">/*ORBS*/</script>
+<script type="module">
+  // thinking-orbs engine: M = MODE_FRAMES, p = paintFrame, r = resolvePreset (its minified export names)
+  const E = await import(URL.createObjectURL(new Blob([document.getElementById('orbsrc').textContent], { type: 'text/javascript' })));
+  const $ = id => document.getElementById(id);
+  const cv = $('orb'), ctx = cv.getContext('2d'), S = 64, dpr = 2;
+  cv.width = cv.height = S * dpr;
+  let preset = E.r('breathing', S), state = 'breathing', boost = 1, t = 0, prev = performance.now();
+  const setState = s => { if (s !== state) { state = s; preset = E.r(s, S); } };
+  (function frame(now) {
+    t += (now - prev) / 1000 * preset.speed * boost; prev = now;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, S, S);
+    E.p(ctx, E.M[preset.mode](S, t, preset.opts), true, null);
+    requestAnimationFrame(frame);
+  })(prev);
+
+  const turn = () => $('thread').lastElementChild;
+  const part = c => turn()?.querySelector('.' + c);
+  const fit = () => {
+    webkit.messageHandlers.h.postMessage($('card').offsetHeight);
+    $('thread').scrollTop = $('thread').scrollHeight;
+  };
+  const status = (s, live) => {
+    $('status').className = live ? 'live' : '';
+    $('status').innerHTML = '<span></span>'; $('status').firstChild.textContent = s;
+  };
+  const settle = () => turn()?.querySelectorAll('.step.live').forEach(e => { e.classList.remove('live'); e.classList.add('done'); });
+  const reveal = (el, text) => {   // the answer fades in word by word, under a second in total
+    el.textContent = '';
+    const parts = text.split(/(\s+)/), gap = Math.min(16, 900 / parts.length);
+    parts.forEach((w, i) => {
+      if (/^\s+$/.test(w) || !w) return el.append(w);
+      const s = document.createElement('span'); s.className = 'w'; s.style.animationDelay = `${i * gap}ms`; s.textContent = w;
+      el.append(s);
+    });
+  };
+
+  window.ui = {
+    reset() { $('thread').innerHTML = ''; $('card').classList.remove('again'); void $('card').offsetWidth; },
+    listen() {
+      if ($('thread').children.length) $('card').classList.add('again');
+      [...$('thread').children].forEach(e => e.classList.add('old'));
+      while ($('thread').children.length > 5) $('thread').firstElementChild.remove();
+      const d = document.createElement('div'); d.className = 'turn';
+      d.innerHTML = '<div class="q live empty">Listening…</div><div class="steps"></div><div class="a"></div>';
+      $('thread').append(d);
+      setState('listening'); boost = 1; status('Listening', true); fit();
+    },
+    level(v) { boost = 0.5 + Math.min(1, v) * 2.5; $('orb').style.transform = `scale(${1 + Math.min(1, v) * .1})`; },
+    words(w) { const q = part('q'); if (q) { q.classList.remove('empty'); q.textContent = w; fit(); } },
+    think() {
+      boost = 1; $('orb').style.transform = ''; setState('solving');
+      part('q')?.classList.remove('live'); status('Thinking', true); fit();
+    },
+    line(l) {
+      const tag = l[0], s = l.slice(2);
+      if (tag === '·') status(s, true);
+      else if (tag === '▸') {
+        settle();
+        const d = document.createElement('div'); d.className = 'step live'; d.innerHTML = '<span></span>'; d.firstChild.textContent = s;
+        part('steps').append(d);
+        while (part('steps').children.length > 4) part('steps').firstChild.remove();
+        status(s, true);
+        setState(/^(Searching|Reading|Looking|Taking|Checking)/.test(s) ? 'searching' : /^(Moving|Opening|Using)/.test(s) ? 'working' : 'connecting');
+      } else if (tag === '✓') {
+        settle(); part('q')?.classList.remove('live'); status(''); reveal(part('a'), s); setState('breathing');
+      }
+      fit();
+    },
+    msg(s) {
+      settle(); part('q')?.classList.remove('live'); setState('breathing'); status('');
+      if (part('q')?.classList.contains('empty')) { turn().remove(); status(s); }
+      else { const a = part('a'); if (a) { a.className = 'a cancel'; a.textContent = s; } }
+      fit();
+    },
+    stopped(s) {   // Esc or the hotkey cut it off
+      turn()?.querySelectorAll('.step.live').forEach(e => { e.classList.remove('live'); e.classList.add('cut'); });
+      setState('breathing'); status(''); boost = 1; $('orb').style.transform = '';
+      const q = part('q');
+      if (!q || q.classList.contains('empty')) { turn()?.remove(); status(s); return fit(); }
+      q.classList.remove('live');
+      const a = part('a'); a.className = 'a stopped'; a.innerHTML = '<i></i><span></span>'; a.lastChild.textContent = s;
+      fit();
+    },
+    xhot(on) { $('x').classList.toggle('hot', on); },
+    copied() { status('Copied to clipboard'); setTimeout(() => status(''), 1400); },
+  };
+  fit();
+</script>
+</body></html>
