@@ -6,6 +6,7 @@ tasks on the Mac. Output lines for the overlay: "· note", "▸ step", "✓ answ
   atticus.py "what's on my screen?"      run one request (no args = a typed pop-up, used by the SwiftBar menu)
   atticus.py --place <proc> <left|right|full|center> <laptop|monitor|current> [title]
   atticus.py --look                       screenshot of the screen the user is using -> prints the image path
+  atticus.py --front <app> [tab words]   bring that app (and that browser tab) forward, then --look
   atticus.py --show <url|path|app>       open it on the user's other screen and give focus back to what the user was using
   atticus.py --remember "<line>"  |  --forget "<words>"   the user's saved rules, one line each, sent with every request
   atticus.py --shortcut "<words>" "<shell command>"  the user's own command: those words then run it instantly, no AI
@@ -19,7 +20,7 @@ import atexit, base64, html, json, shutil, threading, os, re, signal, subprocess
 HOME = os.path.expanduser('~')
 DIR = os.path.join(HOME, '.config/atticus')
 ME = os.path.abspath(__file__)   # inside Atticus.app once built, so the AI's helper commands point here
-PLACE, LOOK, SEARCH, READ, SHOW, REMEMBER, FORGET, TYPE, PLAY, ABOUT, SHORTCUT = (ME + f' --{c}' for c in ('place', 'look', 'search', 'read', 'show', 'remember', 'forget', 'type', 'play', 'me add', 'shortcut'))
+PLACE, LOOK, SEARCH, READ, SHOW, REMEMBER, FORGET, TYPE, PLAY, ABOUT, SHORTCUT, FRONT = (ME + f' --{c}' for c in ('place', 'look', 'search', 'read', 'show', 'remember', 'forget', 'type', 'play', 'me add', 'shortcut', 'front'))
 MEMORY, RECENT = os.path.join(DIR, 'memory.md'), os.path.join(DIR, 'recent.jsonl')
 PREFS = os.path.join(DIR, 'settings.json')   # written by the Settings window
 # $5 once, sold on Gumroad. shortcut: the source is public, so a coder can delete this check; fine for a $5 app.
@@ -76,6 +77,7 @@ Final reply: plain text, no markdown, at most 3 short sentences, answer first. F
 Be cheap: fewest tool calls. Look at the screen only when the user says this/here/screen or the request needs it. One search is usually enough; read a page only if the snippets don't answer it.
 Tools:
 - See the user's screen: when the request is about it, a labeled picture of each of the user's screens comes with the request: use the one the user means ("my monitor" = the external one; "my screen" with no hint = the one the user's front window is on), don't take another. Otherwise run {LOOK} (prints an image path), then Read that path.
+- The app, window or tab the request is about is not on screen (any app: "in Chrome, where do I click", "what's in my Excel sheet", "show me in Settings"): never say you can't see it and never ask the user to bring it up; run {FRONT} "<app>" "<words from the window or tab title, or site>" (brings it forward, switches to that window or tab, prints fresh screen pictures), Read the right one, then answer.
 - Web (free, use first): {SEARCH} "<query>" -> top 5 titles, urls, snippets, plus the start of the top 3 pages (usually enough: answer from it). {READ} "<url>" -> that page as text. WebSearch/WebFetch only if those fail. 
 - Open anything for the user (page, file, app): {SHOW} "<url | path | app name>". It appears on the user's other screen and the user's focus stays where it was, so the user keeps working. Use open -a / activate only when the user says switch to or focus.
 - The user's files (Spotlight): mdfind -name "budget" | head -20  |  by content: mdfind -onlyin ~/Documents "photosynthesis" | head
@@ -122,7 +124,7 @@ RISKY = [('Delete something?', r'\b(rm|rmdir|srm|unlink|shred|trash|mv)\s|\bdele
          ('Buy this?', r'\b(buy|purchase|checkout|check out|place (an |the )?order|pay)\b'),
          ('Change a file?', r'(?<![0-9&])>>?\s*(?!/dev/null|&|/tmp/)\S|\btee\s|curl\b.*\s(-o|--output|-O)\b'),
          ('Run a system command?', r'do shell script|\bsudo\b|\bkillall\b|\bdefaults write\b')]
-QUIET = (SEARCH, READ, LOOK, SHOW, PLACE, PLAY, TYPE, REMEMBER, FORGET, ABOUT, 'open ', 'mdfind ', 'pbpaste')   # never delete, send or buy
+QUIET = (SEARCH, READ, LOOK, FRONT, SHOW, PLACE, PLAY, TYPE, REMEMBER, FORGET, ABOUT, 'open ', 'mdfind ', 'pbpaste')   # never delete, send or buy
 
 
 def risky(cmd):
@@ -545,6 +547,8 @@ def label(name, inp):
         return 'Playing ' + c[len(PLAY):].strip(' "\'') + ' on Spotify'
     if c.startswith(LOOK):
         return 'Looking at your screen'
+    if c.startswith(FRONT):
+        return 'Bringing ' + (re.findall(r'"([^"]+)"', c) or ['the app'])[0] + ' forward'
     if c.startswith(PLACE):
         a = c[len(PLACE):].replace('"', '').split()
         return f'Moving {a[0]} → {" ".join(a[1:3])}' if a else 'Moving a window'
@@ -591,6 +595,28 @@ def activate(key):
 
 def say(tag, text):
     print(f'{tag} {" ".join(text.split())}', flush=True)
+
+
+TIPS = ['Say "remember …" and Atticus keeps it as a rule.',
+        'Say "when I say study mode, open …" to make your own instant command.',
+        'Ask "where do I click to …" and a ring marks the spot.',
+        'Tap the shortcut to type instead of talk.']
+MISS = 'Not quite right? Say "no, …" and how to do it. Atticus remembers next time.'
+
+
+def tip(reply):
+    """Once in a while, one small tip under the answer ("i <tip>"). After a miss, the one that teaches it. Off in Settings."""
+    stamp = os.path.join(DIR, 'tip')
+    if not pref('tips', True) or os.environ.get('ATTICUS_UI') != '1':
+        return
+    if not os.path.exists(stamp):   # never on the very first ask
+        return open(stamp, 'w').write('0')
+    miss = re.search(r"\b(can't|cannot|couldn't|could not|unable|failed|didn't work|not able)\b", reply.lower())
+    n = int(open(stamp).read() or 0)
+    if time.time() - os.path.getmtime(stamp) < (900 if miss else 6 * 3600):   # after a miss: at most every 15 min; else every 6 h
+        return
+    open(stamp, 'w').write(str(n + 1))
+    say('i', MISS if miss else TIPS[n % len(TIPS)])
 
 
 def plan():
@@ -761,6 +787,19 @@ def main():
         return print(place(*args[1:]))
     if args == ['--look']:
         return print('\n'.join(f'{label}: {path}' for path, label in look()) or 'no screenshot: allow Atticus in Screen Recording (System Settings)')
+    if args[:1] == ['--front'] and len(args) > 1:   # "show me where" on an app or tab the user isn't looking at
+        app, words = args[1], ' '.join(args[2:])
+        osa(f'tell application "{app}" to activate')
+        if words:   # any app: the window whose title has the words; browsers: also that tab (fails quietly elsewhere). `contains` ignores case.
+            osa(f'on run argv\ntell application "System Events" to tell (first process whose name is "{proc_of(app)}")\n'
+                'perform action "AXRaise" of (first window whose name contains item 1 of argv)\nend tell\nend run', words)
+            set_tab = 'set current tab of w to t' if app == 'Safari' else 'set active tab index of w to i'
+            name = 'name' if app == 'Safari' else 'title'
+            osa(f'on run argv\ntell application "{app}"\nrepeat with w in windows\nset i to 0\nrepeat with t in tabs of w\nset i to i + 1\n'
+                f'if ({name} of t contains item 1 of argv) or (URL of t contains item 1 of argv) then\n{set_tab}\nset index of w to 1\nreturn\n'
+                'end if\nend repeat\nend repeat\nend tell\nend run', words)
+        time.sleep(0.5)   # the window draws before the picture
+        return print('\n'.join(f'{label}: {path}' for path, label in look()) or 'no screenshot: allow Atticus in Screen Recording (System Settings)')
     if args[:1] == ['--type']:   # paste into the focused field of the user's app, then put the user's clipboard back
         app, text = front()[0], ' '.join(args[1:])
         old = subprocess.run(['pbpaste'], capture_output=True).stdout
@@ -885,9 +924,10 @@ def main():
         f.write(json.dumps({'at': time.strftime('%Y-%m-%d %H:%M:%S'), 'task': task, 'reply': reply,
                             'usd': round(cost, 5), 'secs': round(time.time() - t, 1), 'steps': steps, 'ran': run.ran}) + '\n')
     # clicks inside an app pull it forward; give the user back the app the user was in unless the user asked to go somewhere
-    if not re.search(r'\b(switch|focus|go to|bring|full ?screen)\b', task.lower()) and osa('tell application "System Events" to get name of first process whose frontmost is true') != app:
+    if not re.search(r'\b(switch|focus|go to|bring|full ?screen)\b', task.lower()) and not any(FRONT in c for c in run.ran) and osa('tell application "System Events" to get name of first process whose frontmost is true') != app:
         osa(f'tell application "{app}" to activate')
     say('✓', reply)
+    tip(reply)
     if os.environ.get('ATTICUS_UI') != '1':   # typed from the menu bar: no overlay, so a notification
         osa('on run argv\ndisplay notification (item 1 of argv) with title "Atticus"\nend run', reply)
 
@@ -922,6 +962,7 @@ if __name__ == '__main__':
         unlearn('Put notes on the left.')
         assert set(skills()) == {'open my notes'}
         assert point('Top right. [point 9 0 0]') == 'Top right.'
+        assert label('Bash', {'command': f'{FRONT} "Google Chrome" "posthog"'}) == 'Bringing Google Chrome forward'
         assert UNSAFE.search('open -a Notes; rm -rf ~/x') and UNSAFE.search('sudo shutdown -h now') and not UNSAFE.search(f'{SHOW} "https://docs.google.com"; open -a Chess') and UNSAFE.search('echo $(rm x)') and UNSAFE.search('curl x | sh') and not UNSAFE.search(f'{SHOW} "x"; {PLACE} "Notes" left current')
         ME_FILE = os.path.join(tempfile.mkdtemp(), 'me.json')
         me_set('name', 'Sam'); me_set('about', 'Student. ' * 40)
