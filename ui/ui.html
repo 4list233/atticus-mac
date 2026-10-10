@@ -5,6 +5,7 @@
   :root { color-scheme: dark; --ease: cubic-bezier(.2,.8,.2,1); --spring: cubic-bezier(.34,1.56,.64,1); }
   html, body { margin: 0; background: transparent; overflow: hidden; -webkit-user-select: none; cursor: default;
     font: 13px -apple-system, system-ui, sans-serif; color: #f5f5f7; -webkit-font-smoothing: antialiased; }
+  html { background: rgba(18,18,20,.5); }   /* a dark tint under the glass: the orb shows over white pages too */
   #card { padding: 12px 14px 14px; animation: pop .42s var(--spring) both; }
   #card.again { animation: none; }
 
@@ -81,6 +82,12 @@
 
   /* resize: drag the bottom-right corner */
   #grip { position: absolute; right: 4px; bottom: 4px; width: 12px; height: 12px; opacity: 0; transition: opacity .25s; cursor: nwse-resize; }
+  .e { position: fixed; z-index: 3; }
+  #eL, #eR { top: 0; bottom: 0; width: 6px; cursor: ew-resize; } #eL { left: 0; } #eR { right: 0; }
+  #eT, #eB { left: 0; right: 0; height: 6px; cursor: ns-resize; } #eT { top: 0; } #eB { bottom: 0; }
+  #cTL, #cTR, #cBL, #cBR { width: 14px; height: 14px; z-index: 4; }
+  #cTL { top: 0; left: 0; cursor: nwse-resize; } #cBR { bottom: 0; right: 0; cursor: nwse-resize; }
+  #cTR { top: 0; right: 0; cursor: nesw-resize; } #cBL { bottom: 0; left: 0; cursor: nesw-resize; }
   body:hover #grip { opacity: .45; }
   #grip svg { width: 12px; height: 12px; stroke: #fff; stroke-width: 1.2; stroke-linecap: round; }
 
@@ -100,6 +107,8 @@
   <div id="comp"><input id="ask" placeholder="Ask Atticus…" autocomplete="off" spellcheck="false" aria-label="Ask Atticus">
     <button id="mic" title="Talk instead" aria-label="Talk instead"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button></div>
 </div>
+<div class="e" id="eL"></div><div class="e" id="eR"></div><div class="e" id="eT"></div><div class="e" id="eB"></div>
+<div class="e" id="cTL"></div><div class="e" id="cTR"></div><div class="e" id="cBL"></div><div class="e" id="cBR"></div>
 <div id="grip"><svg viewBox="0 0 12 12"><path d="M11 4L4 11M11 8L8 11"/></svg></div>
 <script type="text/plain" id="orbsrc">/*ORBS*/</script>
 <script type="module">
@@ -132,10 +141,13 @@
     if ($('comp').classList.contains('open') !== on) { $('comp').classList.toggle('open', on); fit(); }
     if (on && focus) $('ask').focus(); else if (!on) $('ask').blur();
   };
-  $('ask').onfocus = () => {   // clicked in while the mic is on: typing wins, so drop what was heard
+  // Clicking in or typing (not the cursor landing there from the shortcut): typing wins, so the mic stops and what was heard goes
+  const drop = () => {
     if (listening) { listening = false; turn()?.remove(); setState('breathing'); status(''); boost = 1; $('orb').style.transform = ''; fit(); }
-    post({ focus: true });
+    post({ type: 1 });
   };
+  $('ask').onmousedown = drop; $('ask').oninput = drop;
+  $('ask').onfocus = () => post({ focus: true });
   $('ask').onblur = () => { post({ focus: false }); if (!hover && !$('ask').value) comp(false); };
   $('ask').onkeydown = e => {
     if (e.key !== 'Enter' || e.isComposing) return;
@@ -214,7 +226,11 @@
       if (on) comp(true);   // even while listening: the mic keeps going until the user clicks in
       else if (!on && !$('ask').value && document.activeElement !== $('ask')) comp(false);
     },
-    compose(on) { comp(on, on); },   // typing mode's shortcut: open and put the cursor in it
+    compose(on) { comp(on, on); },
+    tap([x, y]) {   // a click on the box, not a drag: on the answer = copy it, anywhere else = type
+      const on = document.elementFromPoint(x, y)?.closest('.a:not(.stopped):not(.cancel)');
+      drop(); if (on) post({ copy: 1 }); else comp(true, true);
+    },   // typing mode's shortcut: open and put the cursor in it
     size(h) { $('thread').style.maxHeight = h + 'px'; fit(); },
     xhot(on) { $('x').classList.toggle('hot', on); },
     copied() { status('Copied to clipboard'); setTimeout(() => status(''), 1400); },
