@@ -118,6 +118,28 @@
   .dot { width: 8px; height: 8px; border-radius: 4px; background: var(--green); flex: none; }
   .dot.bad { background: #ff9f0a; }
 
+  [hidden] { display: none !important; }   /* .btn's all: unset would undo it */
+
+  /* apps */
+  .appbar { display: flex; gap: 8px; margin-bottom: 4px; position: sticky; top: -40px; padding: 8px 0; z-index: 1; }
+  .search { flex: 1; height: 28px; padding: 0 10px; border: 0; border-radius: 7px; font: 13px system-ui; color: var(--fg); outline: 0;
+    background: var(--card); box-shadow: inset 0 0 0 .5px var(--line), 0 1px 1px rgba(0,0,0,.05); }
+  .search:focus { box-shadow: inset 0 0 0 .5px var(--line), 0 0 0 3px rgba(10,132,255,.35); }
+  .appbar .btn { height: 28px; } .btn:disabled { opacity: .45; pointer-events: none; }
+  h3 .all { all: unset; float: right; color: var(--accent); text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 11.5px; cursor: pointer; }
+  .app { min-height: 46px; cursor: pointer; } .app img { width: 30px; height: 30px; flex: none; }
+  .app .t b { font-weight: 400; }
+  .ck { appearance: none; margin: 0; width: 20px; height: 20px; border-radius: 50%; flex: none; cursor: pointer;
+    box-shadow: inset 0 0 0 1.5px var(--track); transition: background .15s, box-shadow .15s; }
+  .ck:checked { background: var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M5.5 10.5l3 3 6-7' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/20px; box-shadow: none; }
+  .ck:focus-visible { outline: 3px solid rgba(10,132,255,.45); outline-offset: 2px; }
+  .pill { font-size: 11.5px; font-weight: 500; padding: 3px 9px; border-radius: 10px; flex: none; }
+  .pill.ok { color: var(--green); background: rgba(52,199,89,.13); }
+  .pill.no { color: #ff9f0a; background: rgba(255,159,10,.14); cursor: pointer; }
+  .pill.wait { color: var(--fg2); background: var(--sel); animation: blink 1.2s ease-in-out infinite; }
+  p.note { color: var(--fg3); font-size: 11.5px; line-height: 1.45; margin: 14px 4px 0; }
+  p.note a { color: var(--accent); cursor: pointer; }
+
   .about { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 10px 0 6px; }
   .about img { width: 96px; height: 96px; margin-bottom: 8px; }
   .about h1 { margin: 0; } .about p { color: var(--fg2); margin: 4px 0 0; }
@@ -129,6 +151,7 @@
   <button data-s="sound"><i class="ni" style="background:#ff375f"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5v14l-4.5-4.5H4zM16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></svg></i>Sound</button>
   <button data-s="brain"><i class="ni" style="background:#d97757"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg></i>Intelligence</button>
   <button data-s="screen"><i class="ni" style="background:#bf5af2"><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/></svg></i>Screen &amp; Windows</button>
+  <button data-s="apps"><i class="ni" style="background:#ff453a"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/></svg></i>Apps</button>
   <button data-s="memory"><i class="ni" style="background:#ff9f0a"><svg viewBox="0 0 24 24"><path d="M6 4h12v16l-6-4-6 4z"/></svg></i>Memory</button>
   <button data-s="usage"><i class="ni" style="background:#30d158"><svg viewBox="0 0 24 24"><path d="M5 19V11M12 19V5M19 19v-6"/></svg></i>Usage</button>
   <button data-s="account"><i class="ni" style="background:#0a84ff"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg></i>Account &amp; Access</button>
@@ -231,12 +254,29 @@
     </div>
   </section>
 
+  <section id="apps">
+    <h1>Apps</h1>
+    <p class="lede">Tick the apps Atticus can control. macOS asks once for each one, so allow them all now and Atticus won’t stop to ask later.</p>
+    <div class="appbar"><input id="appq" class="search" placeholder="Search apps" aria-label="Search apps"><button class="btn blue" id="allow" disabled>Allow</button></div>
+    <div id="applist"><div class="group"><div class="empty">Finding your apps…</div></div></div>
+    <p class="note">Atticus opens each app out of sight, asks, and closes it again. Click OK on each macOS box.<br>
+      Using an app that isn’t ticked? macOS asks the first time, and it shows up here as allowed.
+      To take access away: System Settings → Privacy &amp; Security → Automation. <a data-do="automation">Open it</a></p>
+  </section>
+
   <section id="account">
     <h1>Account &amp; Access</h1>
     <p class="lede">What Atticus needs to work.</p>
     <div class="group">
       <div class="row"><div class="t"><b>Claude</b><span class="status"><i class="dot" id="pdot"></i><span id="ptext">Checking…</span></span></div><button class="btn" data-do="setup" id="pbtn">Set Up</button></div>
-      <div class="row"><div class="t"><b>Permissions</b><span>Microphone, speech, accessibility, screen and automation.</span></div><button class="btn" data-do="setup">Review</button></div>
+    </div>
+    <h3>Permissions</h3>
+    <div class="group" id="perms">
+      <div class="row"><div class="t"><b>Microphone</b><span>Hears you while you hold the keys.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="mic">Allow</button></div>
+      <div class="row"><div class="t"><b>Speech Recognition</b><span>Turns your words into text, on this Mac.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="speech">Allow</button></div>
+      <div class="row"><div class="t"><b>Accessibility</b><span>Moves windows and clicks buttons for you.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="ax">Allow</button></div>
+      <div class="row"><div class="t"><b>Screen Recording</b><span>Looks at your screen when you say “this”.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="screen">Allow</button></div>
+      <div class="row"><div class="t"><b>Apps</b><span>Which apps Atticus can control.</span></div><button class="btn" onclick="st.tab('apps')">Choose</button></div>
     </div>
     <h3>Atticus</h3>
     <div class="group">
@@ -275,6 +315,7 @@
   document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
     document.querySelectorAll('nav button, section').forEach(e => e.classList.remove('on'));
     b.classList.add('on'); $(b.dataset.s).classList.add('on');
+    if (b.dataset.s === 'apps') post({ do: 'apps' });   // fresh list and statuses each visit
   });
   document.querySelectorAll('[data-do]').forEach(b => b.onclick = () => post({ do: b.dataset.do }));
 
@@ -350,7 +391,56 @@
   saveMe('myname', 'name'); saveMe('myabout', 'about');
   $('myabout').oninput = () => $('abcount').textContent = $('myabout').value.length + '/200';
 
+  // Apps: every installed app; suggested ones start ticked. Atticus.swift asks macOS about the ticked ones in one go.
+  let APPS = [], pick = null, asking = 0, total = 0;
+  const appEsc = t => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  function appRow(a) {
+    const end = a.status === 'allowed' ? '<span class="pill ok">Allowed</span>'
+      : a.status === 'blocked' ? '<span class="pill no" data-do="automation" title="macOS won’t ask again. Turn it on in System Settings.">Blocked · Fix</span>'
+      : a.status === 'asking' ? '<span class="pill wait">Asking…</span>'
+      : `<input type="checkbox" class="ck" data-id="${a.id}" ${pick.has(a.id) ? 'checked' : ''} aria-label="Allow ${appEsc(a.name)}">`;
+    return `<label class="row app"><img src="${a.icon}" alt=""><div class="t"><b>${appEsc(a.name)}</b></div>${end}</label>`;
+  }
+  function paintApps() {
+    const q = $('appq').value.trim().toLowerCase(), shown = APPS.filter(a => a.name.toLowerCase().includes(q));
+    const group = (title, list) => list.length ? `<h3>${title}${list.some(a => a.status === 'new') ? `<button class="all" data-g="${title}">Select all</button>` : ''}</h3>
+      <div class="group">${list.map(appRow).join('')}</div>` : '';
+    const sug = shown.filter(a => a.suggested), rest = shown.filter(a => !a.suggested);
+    $('applist').innerHTML = group('Suggested', sug) + group('All apps', rest) || '<div class="group"><div class="empty">No app matches.</div></div>';
+    document.querySelectorAll('.ck').forEach(c => c.onchange = () => { c.checked ? pick.add(c.dataset.id) : pick.delete(c.dataset.id); count(); });
+    document.querySelectorAll('h3 .all').forEach(b => b.onclick = () => {
+      (b.dataset.g === 'Suggested' ? sug : rest).filter(a => a.status === 'new').forEach(a => pick.add(a.id)); paintApps(); });
+    document.querySelectorAll('#applist [data-do]').forEach(b => b.onclick = e => { e.preventDefault(); post({ do: b.dataset.do }); });
+    count();
+  }
+  function count() {
+    const n = APPS.filter(a => a.status === 'new' && pick.has(a.id)).length;
+    $('allow').disabled = asking > 0 || !n;
+    $('allow').textContent = asking ? `Asking ${total - asking + 1} of ${total}…` : n ? `Allow ${n} App${n > 1 ? 's' : ''}` : 'Allow';
+  }
+  $('appq').oninput = paintApps;
+  document.querySelectorAll('[data-g]').forEach(b => b.onclick = () => post({ do: 'grant', id: b.dataset.g }));
+  $('allow').onclick = () => {
+    const ids = APPS.filter(a => a.status === 'new' && pick.has(a.id)).map(a => a.id);
+    asking = total = ids.length; count(); post({ do: 'allow', ids });
+  };
+
   window.st = {
+    perms(p) {   // each row shows Allowed or its Allow button
+      document.querySelectorAll('[data-g]').forEach(b => { b.hidden = !!p[b.dataset.g]; b.previousElementSibling.hidden = !p[b.dataset.g]; });
+    },
+    tab(name) { document.querySelector(`nav button[data-s="${name}"]`).click(); },
+    apps(list) {
+      if (asking) return;
+      if (!pick) pick = new Set(list.filter(a => a.suggested && a.status === 'new').map(a => a.id));
+      APPS = list; paintApps();
+    },
+    appStatus([id, status]) {
+      const a = APPS.find(a => a.id === id); if (!a) return;
+      a.status = status; if (status !== 'asking') { asking = Math.max(0, asking - 1); pick.delete(id); }
+      paintApps();
+    },
+    allowDone() { asking = 0; post({ do: 'apps' }); },
     load(d) {
       P = d.prefs; recording = false;
       $('shortcut').classList.remove('rec'); $('change').textContent = 'Change Shortcut';

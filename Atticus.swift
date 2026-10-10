@@ -442,6 +442,7 @@ final class App: NSObject, WKScriptMessageHandler {
                 guard let self, self.proc === p else { return }   // a cancelled run ending late must not touch the next one
                 self.busy = false; self.proc = nil
                 if !self.answer.isEmpty { self.lastDone = Date(); self.cue("soundDone") }
+                DispatchQueue.global().async { Apps.sync() }
                 self.hide(after: self.linger(max(6, min(30, Double(self.answer.count) / 12))))   // longer answers stay longer
             }
         }
@@ -498,19 +499,17 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
     // Which permissions are on, sent to the page every second (System Settings changes them behind our back).
     func push() {
         DispatchQueue.global().async { [weak self] in
-            var se = AEAddressDesc()
-            let id = "com.apple.systemevents"
-            _ = id.withCString { AECreateDesc(typeApplicationBundleID, $0, id.utf8.count, &se) }
-            let auto = AEDeterminePermissionToAutomateTarget(&se, typeWildCard, typeWildCard, false) == noErr
-            AEDisposeDesc(&se)
-            let s: [String: Bool] = ["mic": AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
-                                     "speech": SFSpeechRecognizer.authorizationStatus() == .authorized,
-                                     "ax": AXIsProcessTrusted(), "screen": CGPreflightScreenCaptureAccess(), "auto": auto]
+            let s = Onboarding.perms()
             DispatchQueue.main.async {
                 guard let d = try? JSONSerialization.data(withJSONObject: s), let j = String(data: d, encoding: .utf8) else { return }
                 self?.web?.evaluateJavaScript("ob.set(\(j))")
             }
         }
+    }
+
+    static func perms() -> [String: Bool] {
+        ["mic": AVCaptureDevice.authorizationStatus(for: .audio) == .authorized, "speech": SFSpeechRecognizer.authorizationStatus() == .authorized,
+         "ax": AXIsProcessTrusted(), "screen": CGPreflightScreenCaptureAccess(), "auto": Apps.check("com.apple.systemevents", ask: false) == noErr]
     }
 
     // Claude Code installed, signed in, on a paid plan? (atticus.py --check)
@@ -551,7 +550,13 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
     func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
         guard let b = m.body as? [String: String] else { return }
         if b["do"] == "done" { return finish() }
-        switch b["id"] {
+        grant(b["id"] ?? "")
+    }
+
+    // A permission's Allow button, from setup or Settings. One click shows one thing: macOS's own box the first time
+    // (its button lands on the right list), System Settings once macOS won't ask again. Both at once confused people.
+    func grant(_ id: String) {
+        switch id {
         case "mic":
             if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined { AVCaptureDevice.requestAccess(for: .audio) { _ in } }
             else { settings("Microphone") }
@@ -559,7 +564,8 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
             if SFSpeechRecognizer.authorizationStatus() == .notDetermined { SFSpeechRecognizer.requestAuthorization { _ in } }
             else { settings("SpeechRecognition") }
         case "ax":
-            if !AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary) { settings("Accessibility") }
+            if UserDefaults.standard.bool(forKey: "askedAX") { if !AXIsProcessTrusted() { settings("Accessibility") } }
+            else { UserDefaults.standard.set(true, forKey: "askedAX"); _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary) }
         case "claude":
             fixPlan()
         case "screen":
@@ -568,28 +574,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
             if UserDefaults.standard.bool(forKey: "askedScreen") { if !CGPreflightScreenCaptureAccess() { settings("ScreenCapture") } }
             else { UserDefaults.standard.set(true, forKey: "askedScreen"); _ = CGRequestScreenCaptureAccess() }
         case "auto":
-            DispatchQueue.global().async { [weak self] in   // asking blocks until the user answers the macOS prompt
-                // macOS asks once per app it controls, and only about apps that are running (no "allow all" exists).
-                // So ask now, in one go: System Events (started if needed), then the usual apps and every app that is open.
-                let se = "com.apple.systemevents"
-                if NSRunningApplication.runningApplications(withBundleIdentifier: se).isEmpty {
-                    let c = NSWorkspace.OpenConfiguration(); c.activates = false
-                    NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: "/System/Library/CoreServices/System Events.app"), configuration: c) { _, _ in }
-                    for _ in 0..<30 where NSRunningApplication.runningApplications(withBundleIdentifier: se).isEmpty { usleep(100_000) }
-                }
-                var r = noErr
-                for id in [se, "com.apple.finder", "com.google.Chrome", "com.apple.Safari", "com.apple.Music", "com.spotify.client",
-                           "com.apple.Notes", "com.apple.reminders", "com.apple.Terminal"]
-                    + NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }.compactMap(\.bundleIdentifier)
-                where id == se || (id != Bundle.main.bundleIdentifier && !NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty) {
-                    var d = AEAddressDesc()
-                    _ = id.withCString { AECreateDesc(typeApplicationBundleID, $0, id.utf8.count, &d) }
-                    let x = AEDeterminePermissionToAutomateTarget(&d, typeWildCard, typeWildCard, true)
-                    AEDisposeDesc(&d)
-                    if id == se { r = x }
-                }
-                if r != noErr { DispatchQueue.main.async { self?.settings("Automation") } }
-            }
+            Atticus.settings.open(tab: "apps")
         default: break
         }
     }
@@ -768,12 +753,83 @@ final class MenuBar: NSObject, NSMenuDelegate {
 }
 
 // Settings window (ui/settings.html): every setting lives in Prefs; atticus.py reads the same file.
+// Apps Atticus may control. macOS asks once per app, only while that app runs, and has no "allow all". So Settings > Apps
+// lists every installed app and asks for all the ticked ones in one go: start each hidden, ask, quit it again.
+// macOS only answers "allowed?" for running apps, so what it said is kept in UserDefaults ("allowedApps").
+enum Apps {
+    static let suggested: Set<String> = ["com.apple.systemevents", "com.apple.finder", "com.apple.Safari", "com.google.Chrome",
+        "company.thebrowser.Browser", "com.brave.Browser", "com.apple.Notes", "com.apple.reminders", "com.apple.iCal", "com.apple.Music",
+        "com.spotify.client", "com.apple.Terminal", "com.googlecode.iterm2", "com.apple.mail", "com.apple.MobileSMS", "com.apple.Preview",
+        "com.apple.TextEdit", "com.apple.systempreferences", "com.microsoft.VSCode", "com.apple.shortcuts", "com.apple.AddressBook",
+        "com.apple.Photos", "com.apple.iWork.Pages", "com.apple.iWork.Keynote", "com.apple.iWork.Numbers", "com.microsoft.Word",
+        "com.microsoft.Excel", "com.microsoft.Powerpoint", "com.tinyspeck.slackmacgap", "us.zoom.xos", "com.hnc.Discord", "notion.id"]
+    static var icons: [String: String] = [:]   // bundle id -> data URL, made once per launch
+
+    static var allowed: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: "allowedApps") ?? []) }
+        set { UserDefaults.standard.set(Array(newValue), forKey: "allowedApps") }
+    }
+    static func check(_ id: String, ask: Bool) -> OSStatus {   // ask: show macOS's prompt if it never asked (blocks until answered)
+        var d = AEAddressDesc()
+        _ = id.withCString { AECreateDesc(typeApplicationBundleID, $0, id.utf8.count, &d) }
+        defer { AEDisposeDesc(&d) }
+        return AEDeterminePermissionToAutomateTarget(&d, typeWildCard, typeWildCard, ask)
+    }
+    @discardableResult static func status(_ id: String) -> String {
+        let r = check(id, ask: false)
+        if r == noErr { allowed.insert(id) } else if r == OSStatus(errAEEventNotPermitted) { allowed.remove(id); return "blocked" }
+        return allowed.contains(id) ? "allowed" : "new"
+    }
+    static func sync() {   // after an ask: an app allowed in the moment, at macOS's own prompt, joins the list
+        for a in NSWorkspace.shared.runningApplications where a.activationPolicy == .regular { if let id = a.bundleIdentifier { status(id) } }
+    }
+    static func png(_ img: NSImage) -> String {
+        guard let r = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                       isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return "" }
+        NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: r)
+        img.draw(in: NSRect(x: 0, y: 0, width: 64, height: 64)); NSGraphicsContext.restoreGraphicsState()
+        return "data:image/png;base64," + (r.representation(using: .png, properties: [:])?.base64EncodedString() ?? "")
+    }
+    static func list() -> [[String: Any]] {
+        let fm = FileManager.default
+        let dirs = ["/Applications", "/Applications/Utilities", "/System/Applications", "/System/Applications/Utilities", NSHomeDirectory() + "/Applications"]
+        let paths = dirs.flatMap { d in ((try? fm.contentsOfDirectory(atPath: d)) ?? []).filter { $0.hasSuffix(".app") }.map { d + "/" + $0 } }
+            + ["/System/Library/CoreServices/Finder.app", "/System/Library/CoreServices/System Events.app"]
+        var seen = Set<String>(), out: [[String: Any]] = []
+        for p in paths {
+            guard let id = Bundle(path: p)?.bundleIdentifier, id != Bundle.main.bundleIdentifier, seen.insert(id).inserted else { continue }
+            if icons[id] == nil { icons[id] = png(NSWorkspace.shared.icon(forFile: p)) }
+            var name = fm.displayName(atPath: p); if name.hasSuffix(".app") { name.removeLast(4) }
+            out.append(["id": id, "name": name, "icon": icons[id]!, "status": status(id), "suggested": suggested.contains(id)])
+        }
+        return out.sorted { ($0["name"] as! String).localizedCaseInsensitiveCompare($1["name"] as! String) == .orderedAscending }
+    }
+    static func allow(_ ids: [String], _ progress: @escaping (String, String) -> Void) {   // off the main thread
+        for id in ids {
+            var started: NSRunningApplication?
+            if NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
+                let c = NSWorkspace.OpenConfiguration(); c.activates = false; c.hides = true; c.addsToRecentItems = false
+                let done = DispatchSemaphore(value: 0)
+                NSWorkspace.shared.openApplication(at: url, configuration: c) { a, _ in started = a; done.signal() }
+                _ = done.wait(timeout: .now() + 15)
+            }
+            progress(id, "asking")
+            _ = check(id, ask: true)
+            started?.terminate()   // only the ones Atticus started
+            progress(id, status(id))
+        }
+    }
+}
+
 final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSWindowDelegate {
     var win: NSWindow?, web: WKWebView?
 
-    func open() {
+    var tab = "", timer: Timer?   // tab: shown once the page loads
+
+    func open(tab t: String = "") {
         NSApp.activate(ignoringOtherApps: true)
-        if let w = win { w.makeKeyAndOrderFront(nil); refresh(); return }
+        if let w = win { w.makeKeyAndOrderFront(nil); refresh(); if !t.isEmpty { js("st.tab('\(t)')") }; return }
+        tab = t
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 560),
                          styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
         w.titlebarAppearsTransparent = true; w.titleVisibility = .hidden; w.title = "Atticus Settings"
@@ -788,9 +844,17 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         bg.addSubview(v); w.contentView = bg
         win = w; web = v
         w.center(); w.makeKeyAndOrderFront(nil)
+        timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in   // System Settings changes them behind our back
+            DispatchQueue.global().async { self?.send("perms", Onboarding.perms()) }
+        }
     }
 
-    func webView(_ v: WKWebView, didFinish n: WKNavigation!) { push(); refresh() }
+    func webView(_ v: WKWebView, didFinish n: WKNavigation!) { push(); refresh(); DispatchQueue.global().async { [weak self] in self?.send("perms", Onboarding.perms()) }; if !tab.isEmpty { js("st.tab('\(tab)')"); tab = "" } }
+
+    func send(_ call: String, _ v: Any) {
+        guard let d = try? JSONSerialization.data(withJSONObject: v), let j = String(data: d, encoding: .utf8) else { return }
+        DispatchQueue.main.async { [weak self] in self?.js("st.\(call)(\(j))") }
+    }
 
     func push() {   // the settings, and the app icon for the sidebar
         var d: [String: Any] = ["prefs": Prefs.d, "version": Updater.version(), "update": Updater.status]
@@ -883,6 +947,15 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         case "forget", "remember":
             guard let line = b["line"] as? String else { return }
             DispatchQueue.global().async { [weak self] in self?.helper(["--" + what, line]); DispatchQueue.main.async { self?.refresh() } }
+        case "apps": DispatchQueue.global().async { [weak self] in self?.send("apps", Apps.list()) }
+        case "allow":
+            guard let ids = b["ids"] as? [String] else { return }
+            DispatchQueue.global().async { [weak self] in
+                Apps.allow(ids) { id, s in self?.send("appStatus", [id, s]) }
+                self?.send("allowDone", 0)
+            }
+        case "grant": if let id = b["id"] as? String { onboarding.grant(id) }
+        case "automation": NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!)
         case "quit": NSApp.terminate(nil)
         default: break
         }
@@ -890,6 +963,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
 
     func windowWillClose(_ n: Notification) {
         if monitor != nil { done(nil) }   // closed mid-recording: keep the old shortcut
+        timer?.invalidate(); timer = nil
         web?.configuration.userContentController.removeScriptMessageHandler(forName: "st")
         web = nil; win = nil
     }
