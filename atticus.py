@@ -81,7 +81,7 @@ Tools:
 - See the user's screen: when the request is about it, a labeled picture of each of the user's screens comes with the request: use the one the user means ("my monitor" = the external one; "my screen" with no hint = the one the user's front window is on), don't take another. Otherwise run {LOOK} (prints an image path), then Read that path.
 - The app, window or tab the request is about is not on screen (any app: "in Chrome, where do I click", "what's in my Excel sheet", "show me in Settings"): never say you can't see it and never ask the user to bring it up; run {FRONT} "<app>" "<words from the window or tab title, or site>" (brings it forward, switches to that window or tab, prints fresh screen pictures), Read the right one, then answer.
 - Web (free, use first): {SEARCH} "<query>" -> top 5 titles, urls, snippets, plus the start of the top 3 pages (usually enough: answer from it). {READ} "<url>" -> that page as text. WebSearch/WebFetch only if those fail. 
-- Open anything for the user (page, file, app): {SHOW} "<url | path | app name>". It appears on the user's other screen and the user's focus stays where it was, so the user keeps working. Use open -a / activate only when the user says switch to or focus.
+- Open anything for the user (page, file, app): {SHOW} "<url | path | app name>". It opens where the user's Settings say (in front, or on the other screen with focus kept); don't open or focus it again.
 - The user's files (Spotlight): mdfind -name "budget" | head -20  |  by content: mdfind -onlyin ~/Documents "photosynthesis" | head
 - Weather: curl -s 'wttr.in/<place>?format=%l:+%C+%t+(feels+%f),+wind+%w&u'
 - Papers: curl -s "http://export.arxiv.org/api/query?search_query=all:<q>&max_results=5"
@@ -100,7 +100,8 @@ Corrections: when the user says "no, I meant…", fix it, then save ONE short ru
 Rules: "this", "it", "here" mean the front app/window in Context. Process names can differ from app names (VS Code is "Code").
 NEVER_RISKY
 If a command fails, try one other way, then say what failed."""
-NEVER = 'Never delete, move files, send, post or buy anything.'
+NEVER = ('Full access: delete, send, post or buy when the user clearly asks; just run it, no asking in words. '
+         'Files: trash "<path>" (to the Trash), never rm.')
 # safe mode: the user gets an Allow card first, so the AI may do what was clearly asked
 ASK_FIRST = ('Delete, send, post or buy only when the user clearly asks; the user sees an Allow / Don\'t Allow card first, so just run it, '
              'never ask in words. Files: trash "<path>" (to the Trash), never rm. If the user says no, stop and say it was not done.')
@@ -108,6 +109,10 @@ ASK_FIRST = ('Delete, send, post or buy only when the user clearly asks; the use
 LEARN_ME = f"""
 About the user: if they state a lasting fact about themselves that helps day to day (their name, city, school or job,
 favorite apps, units), save it in 8 words or fewer with {ABOUT} "<fact>". Never one-off or private details (health, money, passwords)."""
+
+TEACH = """
+Tip: if you could not do it, or the user had to correct you or ask again a second way ("focus it", "no, …"), end your reply with
+[tip <the exact words the user can say so it works first time next time, e.g. Say "remember: open means bring it to the front">]."""
 
 POINTER = """
 Show me where (on): when the user asks where something is or how to do something on screen, answer in one line, then end with
@@ -248,6 +253,9 @@ def show(target):
     """Open a URL, file or app where the user can see it, then hand focus back to the app the user was using."""
     mine, _ = front()
     t = os.path.expanduser(target)
+    if pref('openOn', 'here') == 'here':   # Settings → Open apps on: This screen = in front, like a double-click
+        r = subprocess.run(['open', t] if re.match(r'^[a-z]+://', t) or os.path.exists(t) else ['open', '-a', t])
+        return f'no app or file called "{target}"' if r.returncode else f'opened {target} in front'
     if re.match(r'^[a-z]+://', t) or os.path.exists(t):
         subprocess.run(['open', '-g', t])
         js = ('ObjC.import("AppKit"); var t = %s; var u = /^[a-z]+:\\/\\//.test(t) ? $.NSURL.URLWithString(t) : $.NSURL.fileURLWithPath(t); '
@@ -620,19 +628,21 @@ TIPS = ['Say "remember …" and Atticus keeps it as a rule.',
 MISS = 'Not quite right? Say "no, …" and how to do it. Atticus remembers next time.'
 
 
-def tip(reply):
-    """Once in a while, one small tip under the answer ("i <tip>"). After a miss, the one that teaches it. Off in Settings."""
-    stamp = os.path.join(DIR, 'tip')
+def tip(reply, taught=''):
+    """One small tip under the answer ("i <tip>"). After a miss or a redo: how to teach it (the AI's own words if it gave some),
+    every time; otherwise a general tip at most every 6 h. Off in Settings."""
     if not pref('tips', True) or os.environ.get('ATTICUS_UI') != '1':
         return
+    if taught or re.search(r"\b(can't|cannot|couldn't|could not|unable|failed|didn't work|not able)\b", reply.lower()):
+        return say('i', taught or MISS)
+    stamp = os.path.join(DIR, 'tip')
     if not os.path.exists(stamp):   # never on the very first ask
         return open(stamp, 'w').write('0')
-    miss = re.search(r"\b(can't|cannot|couldn't|could not|unable|failed|didn't work|not able)\b", reply.lower())
     n = int(open(stamp).read() or 0)
-    if time.time() - os.path.getmtime(stamp) < (900 if miss else 6 * 3600):   # after a miss: at most every 15 min; else every 6 h
+    if time.time() - os.path.getmtime(stamp) < 6 * 3600:
         return
     open(stamp, 'w').write(str(n + 1))
-    say('i', MISS if miss else TIPS[n % len(TIPS)])
+    say('i', TIPS[n % len(TIPS)])
 
 
 def plan():
@@ -658,7 +668,7 @@ def start_claude():
     """`claude -p` started ahead, waiting for the request on stdin: its ~1 s startup happens while the user is still talking."""
     if not shutil.which('claude'):
         return None
-    system = SYSTEM.replace('NEVER_RISKY', ASK_FIRST if pref('safe', True) else NEVER) + (POINTER if pref('pointer', False) else '') + (LEARN_ME if pref('learnMe', True) else '')
+    system = SYSTEM.replace('NEVER_RISKY', ASK_FIRST if pref('safe', True) else NEVER) + (POINTER if pref('pointer', False) else '') + (LEARN_ME if pref('learnMe', True) else '') + (TEACH if pref('tips', True) else '')
     safe, ask = [], ''
     if pref('safe', True):
         ask = tempfile.mkdtemp(prefix='atticus-ask-')
@@ -667,7 +677,7 @@ def start_claude():
             'sandbox': {'enabled': True, 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': True, 'excludedCommands': SAFE_OUT},
             'hooks': {'PreToolUse': [{'matcher': 'Bash', 'hooks': [{'type': 'command', 'command': f'"{sys.executable}" "{ME}" --gate', 'timeout': 70}]}]}})]
     p = subprocess.Popen(['claude', '-p', '--input-format', 'stream-json', '--model', pref('model', 'haiku'), '--effort', 'low', '--system-prompt', system,
-                          '--tools', 'Bash,Read,WebSearch,WebFetch', '--permission-mode', 'bypassPermissions', '--disallowedTools', *DENY, *([] if safe else ['Bash(trash:*)']), *safe,
+                          '--tools', 'Bash,Read,WebSearch,WebFetch', '--permission-mode', 'bypassPermissions', '--disallowedTools', *DENY, *safe,
                           '--setting-sources', '', '--no-session-persistence', '--strict-mcp-config', '--disable-slash-commands', '--output-format', 'stream-json', '--verbose'],
                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=tempfile.gettempdir(),
                          env={**os.environ, 'ATTICUS_ASK': ask})
@@ -930,6 +940,8 @@ def main():
     reply, cost, steps = run(f'Context: {ctx}\n' + (f'Earlier:\n{earlier}' if earlier else '') +
                       (f'Memory:\n{mem}\n' if mem else '') + f'Request: {task}', warm, screen_for(task, snap, fx) or ())
     reply = point(re.sub(r'\s*\n\s*Sources?:.*\Z', '', reply, flags=re.S | re.I))
+    taught = re.search(r'\[tip ([^\]]+)\]', reply)
+    reply = (reply[:taught.start()] + reply[taught.end():]).strip() if taught else reply
     fix = turns and re.match(r"(no|nope|not that|wrong|that's wrong|i meant|i said)\b", plain(task))
     if fix:
         unlearn(turns[-1]['q'])   # a learned shortcut that did the wrong thing goes
@@ -942,10 +954,11 @@ def main():
         f.write(json.dumps({'at': time.strftime('%Y-%m-%d %H:%M:%S'), 'task': task, 'reply': reply,
                             'usd': round(cost, 5), 'secs': round(time.time() - t, 1), 'steps': steps, 'ran': run.ran}) + '\n')
     # clicks inside an app pull it forward; give the user back the app the user was in unless the user asked to go somewhere
-    if not re.search(r'\b(switch|focus|go to|bring|full ?screen)\b', task.lower()) and not any(FRONT in c for c in run.ran) and osa('tell application "System Events" to get name of first process whose frontmost is true') != app:
+    if not re.search(r'\b(switch|focus|go to|bring|full ?screen)\b', task.lower()) and not any(FRONT in c or (SHOW in c and pref('openOn', 'here') == 'here') for c in run.ran) and osa('tell application "System Events" to get name of first process whose frontmost is true') != app:
         osa(f'tell application "{app}" to activate')
     say('✓', reply)
-    tip(reply)
+    learned = [r for c in run.ran for r in re.findall(r'--remember\s+["\']([^"\']+)', c)]   # it taught itself: say so, so the user sees it improve
+    tip(reply, f'Learned: {learned[-1]}. Say "forget" and a word from it to undo.' if learned else taught[1].strip() if taught else '')
     if os.environ.get('ATTICUS_UI') != '1':   # typed from the menu bar: no overlay, so a notification
         osa('on run argv\ndisplay notification (item 1 of argv) with title "Atticus"\nend run', reply)
 
@@ -980,6 +993,7 @@ if __name__ == '__main__':
         unlearn('Put notes on the left.')
         assert set(skills()) == {'open my notes'}
         assert point('Top right. [point 9 0 0]') == 'Top right.'
+        assert re.findall(r'--remember\s+["\']([^"\']+)', f'{REMEMBER} "open means front"') == ['open means front']
         assert label('Bash', {'command': f'{FRONT} "Google Chrome" "posthog"'}) == 'Bringing Google Chrome forward'
         assert UNSAFE.search('open -a Notes; rm -rf ~/x') and UNSAFE.search('sudo shutdown -h now') and not UNSAFE.search(f'{SHOW} "https://docs.google.com"; open -a Chess') and UNSAFE.search('echo $(rm x)') and UNSAFE.search('curl x | sh') and not UNSAFE.search(f'{SHOW} "x"; {PLACE} "Notes" left current')
         ME_FILE = os.path.join(tempfile.mkdtemp(), 'me.json')
