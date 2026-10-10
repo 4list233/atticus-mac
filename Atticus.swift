@@ -18,7 +18,7 @@ enum Prefs {
         "soundStart": "Pop", "soundDone": "Glass", "soundStop": "Tink", "volume": 0.16, "model": "haiku", "instant": true,
         "ahead": true, "aheadDelay": 0.7, "screen": "auto", "openOn": "here",
         "speak": false, "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
-        "learn": true, "pointer": false, "learnMe": true]
+        "learn": true, "pointer": false, "learnMe": true, "input": "voice", "boxW": 460, "boxH": 360]
     static var d: [String: Any] = defaults.merging(
         (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path)))) as? [String: Any] ?? [:]) { $1 }
     static func set(_ k: String, _ v: Any) {
@@ -69,8 +69,11 @@ final class Tracker: NSView {
     override func mouseExited(with e: NSEvent) { onExit?() }
 }
 
+// The box can take typing (canBecomeKey) without pulling Atticus forward (nonactivating): the user's app stays in front.
+final class KeyPanel: NSPanel { override var canBecomeKey: Bool { true } }
+
 final class App: NSObject, WKScriptMessageHandler {
-    let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 76),
+    let panel = KeyPanel(contentRect: NSRect(x: 0, y: 0, width: max(340, Prefs.num("boxW")), height: 76),
                         styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
     let web: WKWebView
     let engine = AVAudioEngine()
@@ -82,9 +85,14 @@ final class App: NSObject, WKScriptMessageHandler {
     var consumed = 0, fastBusy = false, did: [String] = [], pause: DispatchWorkItem?   // commands done while still talking
     var ahead = "", aheadItem: DispatchWorkItem?   // words the AI already started on while the user was still holding the keys
     var stops = 0   // each key release; tells a late "words landed" from a current one
+    var dragging = false   // moving or resizing the box: frame changes land at once
+    var composing = false, compH: CGFloat = 0, clickTalk = false, quiet: DispatchWorkItem?   // typing box focused / its height from the bottom; mic button = talk without keys
     var hovering = false, xHot = false, pinned = false, stuck = false, lastDone = Date.distantPast   // pinned: the user clicked the box, so only Esc / click-out / ✕ close it; stuck: the user dragged it, so only ✕
     var mine = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""   // the app the user's in, never Atticus itself
     let recent = NSString(string: "~/.config/atticus/recent.jsonl").expandingTildeInPath
+    func frame(_ f: NSRect, animate: Bool = false) {
+        NSAnimationContext.runAnimationGroup { $0.duration = animate ? 0.2 : 0; $0.timingFunction = CAMediaTimingFunction(name: .easeOut); panel.animator().setFrame(f, display: true) }
+    }
     func overX(_ p: NSPoint) -> Bool { p.x > panel.frame.width - 42 && p.y > panel.frame.height - 42 }
     // Words the recognizer should expect: the user's app names plus a few of the user's own (free, on-device).
     lazy var hints: [String] = Array((["Atticus", "Chrome", "VS Code", "Peekaboo", "split screen", "study mode"] +
@@ -102,25 +110,27 @@ final class App: NSObject, WKScriptMessageHandler {
 
     override init() {
         let cfg = WKWebViewConfiguration()
-        web = WKWebView(frame: NSRect(x: 0, y: 0, width: 460, height: 76), configuration: cfg)
+        web = WKWebView(frame: NSRect(x: 0, y: 0, width: max(340, Prefs.num("boxW")), height: 76), configuration: cfg)
         super.init()
         cfg.userContentController.add(self, name: "h")
+        cfg.userContentController.add(self, name: "c")
         web.setValue(false, forKey: "drawsBackground")
         web.autoresizingMask = [.width, .height]
         let bg = NSVisualEffectView(frame: web.frame)
-        bg.material = .hudWindow; bg.state = .active; bg.wantsLayer = true
+        bg.material = .hudWindow; bg.state = .active; bg.wantsLayer = true; bg.autoresizingMask = [.width, .height]
         bg.layer?.cornerRadius = 18; bg.layer?.masksToBounds = true
         bg.addSubview(web)
         let tracker = Tracker(frame: web.frame)
         tracker.autoresizingMask = [.width, .height]
         tracker.onMove = { [weak self] p in
             guard let self else { return }
+            if !hovering { js("hover", true) }
             hovering = true
             if overX(p) != xHot { xHot.toggle(); js("xhot", xHot); (xHot ? NSCursor.pointingHand : NSCursor.arrow).set() }
         }
         tracker.onExit = { [weak self] in
             guard let self else { return }
-            hovering = false
+            hovering = false; js("hover", false)
             if xHot { xHot = false; js("xhot", false); NSCursor.arrow.set() }
             if !busy { hide(after: 3) }   // mouse gone for a few seconds = close
         }
@@ -139,18 +149,33 @@ final class App: NSObject, WKScriptMessageHandler {
             close(clear: false)
         }
         var grab: (mouse: NSPoint, origin: NSPoint)?, moved = false
+        var sizing: (mouse: NSPoint, frame: NSRect, maxH: Double)?   // dragging the bottom-right corner
         NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] e in
             guard let self else { return e }
             switch e.type {
             case .leftMouseDown:
                 guard e.window == panel else { return e }
-                if overX(e.locationInWindow) { close(clear: true) } else { pinned = true; grab = (NSEvent.mouseLocation, panel.frame.origin); moved = false }
+                let p = e.locationInWindow
+                if overX(p) { close(clear: true) }
+                else if p.x > panel.frame.width - 18 && p.y < 18 { sizing = (NSEvent.mouseLocation, panel.frame, Prefs.num("boxH")); pinned = true; dragging = true }
+                else if p.y < compH { pinned = true; panel.makeKey(); panel.makeFirstResponder(web); return e }   // the typing box: a normal click
+                else { pinned = true; grab = (NSEvent.mouseLocation, panel.frame.origin); moved = false; dragging = true }
             case .leftMouseDragged:
+                if let z = sizing {   // wider/narrower, and how tall the conversation may get; the top-left corner stays put
+                    let m = NSEvent.mouseLocation
+                    let w = min(900, max(340, z.frame.width + m.x - z.mouse.x)), h = min(900, max(120, z.maxH + z.mouse.y - m.y))
+                    var f = panel.frame; f.size.width = w; frame(f)
+                    Prefs.d["boxW"] = w; Prefs.d["boxH"] = h
+                    js("size", h)
+                    return nil
+                }
                 guard let g = grab else { return e }
                 let m = NSEvent.mouseLocation
                 if abs(m.x - g.mouse.x) + abs(m.y - g.mouse.y) > 3 { moved = true; stuck = true }
-                panel.setFrameOrigin(NSPoint(x: g.origin.x + m.x - g.mouse.x, y: g.origin.y + m.y - g.mouse.y))
+                var f = panel.frame; f.origin = NSPoint(x: g.origin.x + m.x - g.mouse.x, y: g.origin.y + m.y - g.mouse.y); frame(f)
             default:
+                dragging = false
+                if sizing != nil { sizing = nil; Prefs.set("boxH", Prefs.num("boxH")); return nil }   // saves both
                 guard grab != nil else { return e }
                 grab = nil
                 if !moved && !answer.isEmpty {
@@ -160,6 +185,11 @@ final class App: NSObject, WKScriptMessageHandler {
                 }
             }
             return nil
+        }
+        NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: panel, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            composing = false   // the page may not get a blur; the box must still be able to fade
+            if !hovering && !busy { hide(after: 3) }
         }
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] n in
             if let a = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication, a != .current { self?.mine = a.localizedName ?? "" }
@@ -174,12 +204,25 @@ final class App: NSObject, WKScriptMessageHandler {
         AVCaptureDevice.requestAccess(for: .audio) { _ in }
     }
 
-    // The page reports its height; grow the box down from the top-left corner.
+    // The page reports its height; grow the box down from the top-left corner. "c": the typing box.
     func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
+        if m.name == "c", let b = m.body as? [String: Any] {
+            if let h = b["comp"] as? NSNumber { compH = CGFloat(h.doubleValue) }
+            if let f = b["focus"] as? Bool {
+                composing = f
+                if f && engine.isRunning { hush() }   // clicked into the typing box while listening: stop the mic quietly
+                if !f && !hovering && !busy { hide(after: 3) }
+            }
+            if let t = b["send"] as? String { typed(t, keep: true) }
+            if b["mic"] != nil && !busy && !engine.isRunning { clickTalk = true; start(); if !engine.isRunning { clickTalk = false } }
+            if b["ready"] != nil { js("size", Prefs.num("boxH")) }
+            return
+        }
         guard let h = (m.body as? NSNumber).map({ CGFloat($0.doubleValue) }), h > 0 else { return }
         var f = panel.frame
         f.origin.y = f.maxY - h; f.size.height = h
-        panel.setFrame(f, display: true, animate: panel.isVisible)
+        guard f != panel.frame else { return }
+        frame(f, animate: panel.isVisible && !dragging)
     }
 
     func js(_ call: String, _ arg: Any? = nil) {
@@ -210,14 +253,14 @@ final class App: NSObject, WKScriptMessageHandler {
     func hide(after s: Double) {
         let g = gen
         DispatchQueue.main.asyncAfter(deadline: .now() + s) { [self] in
-            guard g == gen, !busy, !engine.isRunning, !hovering, !pinned else { return }
+            guard g == gen, !busy, !engine.isRunning, !hovering, !pinned, !composing else { return }
             NSAnimationContext.runAnimationGroup({ $0.duration = 0.3; panel.animator().alphaValue = 0 },
                                                  completionHandler: { [self] in if g == gen { gone() } })
         }
     }
 
     func gone() {
-        panel.orderOut(nil); pinned = false; stuck = false
+        panel.orderOut(nil); pinned = false; stuck = false; composing = false; js("compose", false)
         if let r = escRef { UnregisterEventHotKey(r); escRef = nil }
     }
 
@@ -225,15 +268,20 @@ final class App: NSObject, WKScriptMessageHandler {
     func escape() {
         if voice.isSpeaking { voice.stopSpeaking(at: .immediate); return }
         if engine.isRunning {
-            engine.stop(); engine.inputNode.removeTap(onBus: 0); feed?.finish(); reading?.cancel(); pause?.cancel(); unwarm()
-            aheadItem?.cancel(); dropAhead()
-            let an = analyzer; Task { await an?.cancelAndFinishNow() }
-            cue("soundStop"); js("stopped", "Stopped listening"); hide(after: 1.5)
+            hush(); cue("soundStop"); js("stopped", "Stopped listening"); hide(after: 1.5)
         } else if busy {
             cancel()
         } else if panel.isVisible && !stuck {
             close(clear: false)
         }
+    }
+
+    func hush() {   // stop listening, drop what was heard, say nothing
+        engine.stop(); engine.inputNode.removeTap(onBus: 0); feed?.finish(); reading?.cancel(); pause?.cancel(); unwarm()
+        clickTalk = false; quiet?.cancel(); stops += 1   // stops: a late "words landed" from this listen does nothing
+        aheadItem?.cancel(); dropAhead()
+        let an = analyzer; Task { await an?.cancelAndFinishNow() }
+        busy = false   // an early start dropped above never reports back (its exit handler sees proc changed)
     }
 
     func cancel() {
@@ -259,6 +307,12 @@ final class App: NSObject, WKScriptMessageHandler {
         guard !engine.isRunning else { return }
         text = ""; consumed = 0; did = []; ahead = ""
         if !panel.isVisible && Date().timeIntervalSince(lastDone) > 30 { js("reset"); try? FileManager.default.removeItem(atPath: recent) }
+        if Prefs.str("input") == "type" && !clickTalk {   // Settings: the shortcut opens the box ready to type
+            if composing && panel.isVisible { return close(clear: false) }   // pressed again = put it away
+            onboarding.tried(); show()
+            panel.makeKey(); panel.makeFirstResponder(web); js("compose", true)
+            return
+        }
         cue("soundStart")
         unwarm(); warm = spawn()
         onboarding.tried()
@@ -309,8 +363,9 @@ final class App: NSObject, WKScriptMessageHandler {
         let began = Date()
         Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] t in
             guard let self, engine.isRunning else { return t.invalidate() }
-            let f = hotkey().flags
-            if (!f.isEmpty && NSEvent.modifierFlags.isDisjoint(with: f)) || Date().timeIntervalSince(began) > 60 { t.invalidate(); stop() }
+            let f = hotkey().flags, held = Date().timeIntervalSince(began)
+            if (!clickTalk && !f.isEmpty && NSEvent.modifierFlags.isDisjoint(with: f)) || held > 60
+                || (clickTalk && text.isEmpty && held > 8) { t.invalidate(); stop() }   // mic button, nothing said: give up
         }
     }
 
@@ -323,6 +378,10 @@ final class App: NSObject, WKScriptMessageHandler {
         let item = DispatchWorkItem { [weak self] in self?.tryFast() }
         pause = item
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: item)
+        if clickTalk {   // no keys to let go of: a 1.3 s pause ends it
+            quiet?.cancel(); let q = DispatchWorkItem { [weak self] in self?.stop() }; quiet = q
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.3, execute: q)
+        }
         if !ahead.isEmpty && key(rest()) != key(ahead) { dropAhead() }   // the user kept talking: that start was for half a sentence
         aheadItem?.cancel()   // a longer pause = the user is probably done: start the AI now, keys still held
         guard Prefs.bool("ahead") else { return }
@@ -348,6 +407,7 @@ final class App: NSObject, WKScriptMessageHandler {
     func stop() {
         guard engine.isRunning else { return }
         engine.stop(); engine.inputNode.removeTap(onBus: 0); feed?.finish()
+        clickTalk = false; quiet?.cancel()
         busy = true
         js("think")   // keys are up: stop saying Listening now, not when the last words land
         let an = analyzer, rd = reading
@@ -370,9 +430,9 @@ final class App: NSObject, WKScriptMessageHandler {
         }
     }
 
-    func typed(_ t: String) {   // "Ask Atticus…" from the menu bar: same box, no mic
+    func typed(_ t: String, keep: Bool = false) {   // "Ask Atticus…" from the menu bar, or the typing box (keep: it stays open for the next one)
         guard !busy, !engine.isRunning else { return }
-        js("listen"); show(); js("words", t); run(t)
+        js("listen", keep); show(); js("words", t); run(t)
     }
 
     func words() -> [Substring] { text.split(separator: " ") }

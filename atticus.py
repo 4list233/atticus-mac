@@ -8,6 +8,7 @@ tasks on the Mac. Output lines for the overlay: "· note", "▸ step", "✓ answ
   atticus.py --look                       screenshot of the screen the user is using -> prints the image path
   atticus.py --show <url|path|app>       open it on the user's other screen and give focus back to what the user was using
   atticus.py --remember "<line>"  |  --forget "<words>"   the user's saved rules, one line each, sent with every request
+  atticus.py --shortcut "<words>" "<shell command>"  the user's own command: those words then run it instantly, no AI
   atticus.py --fast "<words>"            run it instantly with no AI if it is a simple command (exit 1 if not)
   atticus.py --play "<playlist name>"     play one of the user's Spotify playlists, no clicks, focus stays put
   atticus.py --search <query>  |  --read <url>   free web search (DuckDuckGo) / one page as plain text
@@ -18,7 +19,7 @@ import base64, html, json, shutil, threading, os, re, signal, subprocess, sys, t
 HOME = os.path.expanduser('~')
 DIR = os.path.join(HOME, '.config/atticus')
 ME = os.path.abspath(__file__)   # inside Atticus.app once built, so the AI's helper commands point here
-PLACE, LOOK, SEARCH, READ, SHOW, REMEMBER, FORGET, TYPE, PLAY, ABOUT = (ME + f' --{c}' for c in ('place', 'look', 'search', 'read', 'show', 'remember', 'forget', 'type', 'play', 'me add'))
+PLACE, LOOK, SEARCH, READ, SHOW, REMEMBER, FORGET, TYPE, PLAY, ABOUT, SHORTCUT = (ME + f' --{c}' for c in ('place', 'look', 'search', 'read', 'show', 'remember', 'forget', 'type', 'play', 'me add', 'shortcut'))
 MEMORY, RECENT = os.path.join(DIR, 'memory.md'), os.path.join(DIR, 'recent.jsonl')
 PREFS = os.path.join(DIR, 'settings.json')   # written by the Settings window
 
@@ -84,7 +85,9 @@ Tools:
 - Task list, to-do, "remind me": Reminders, all items in one call: osascript -e 'tell application "Reminders"' -e 'repeat with t in {{"A", "B"}}' -e 'make new reminder with properties {{name:t}}' -e 'end repeat' -e 'end tell' (for a time add due date:(current date) + <seconds>). "Note this": osascript -e 'tell application "Notes" to make new note with properties {{body:"<h1>Title</h1>A<br>B"}}'. "Where is my list/note" = {SHOW} "Reminders" (or "Notes").
 - Clipboard: pbpaste. Music: osascript -e 'tell application "Music" to playpause'.
 Earlier: the last few questions from the past 5 minutes, if any; use them for follow-ups ("open the second one", "and tomorrow?").
-Memory: the user's saved rules come under "Memory:" in the request; follow them. When the user says remember / from now on / when I say X do Y, save ONE short line with {REMEMBER} "<rule>". When the user says forget, run {FORGET} "<words from that line>".
+Memory: the user's saved rules come under "Memory:" in the request; follow them. When the user says remember / from now on, save ONE short line with {REMEMBER} "<rule>". When the user says forget, run {FORGET} "<words from that line>".
+Shortcuts: "when I say X, open/do Y" or "make X a command" where Y is fixed actions (open apps, sites, files): run Y once, then save it with {SHORTCUT} "<X>" '<the one shell command>' (chain with ;). It then runs instantly with no AI; it is not a rule. A rule that is really a command: save the shortcut, then {FORGET} the rule.
+Atticus Settings (the user's rules, shortcuts, apps, permissions): open -a Atticus
 Corrections: when the user says "no, I meant…", fix it, then save ONE short rule with {REMEMBER} so it won't happen again.
 Rules: "this", "it", "here" mean the front app/window in Context. Process names can differ from app names (VS Code is "Code").
 Never delete, move files, send, post or buy anything. If a command fails, try one other way, then say what failed."""
@@ -300,6 +303,10 @@ SKILLS = os.path.join(DIR, 'skills.json')
 DEICTIC = re.compile(r'\b(this|that|these|those|it|here|there|them|him|her)\b')   # "close this" depends on the moment: never learned
 
 
+# shortcut: a deny list, not proof of safety; shortcuts only ever come from the user's own ask
+UNSAFE = re.compile(r'(^|[;&|(`\s])(rm|rmdir|sudo|dd|diskutil|shutdown|reboot|halt|srm|trash|mv|find|curl|wget)\s|git push|\$\(|`|>|\|\s*(ba|z)?sh\b|\bdelete\b')
+
+
 def skills():
     try:
         return json.load(open(SKILLS))
@@ -310,7 +317,9 @@ def skills():
 def learn(task, cmds, reply):
     """Save the commands if every one is a replayable action (no reading, searching, clicking by element ID)."""
     k = plain(task)
-    cmds = [c for c in cmds if not c.startswith((REMEMBER, FORGET, ABOUT))]   # saving a rule or a fact is not part of the action
+    if any(x in c for c in cmds for x in (FORGET, SHORTCUT)):   # changing rules or shortcuts is not itself a shortcut
+        return
+    cmds = [c for c in cmds if not c.startswith((REMEMBER, ABOUT))]   # saving a rule or a fact is not part of the action
     act = (SHOW, PLACE, PLAY, TYPE, 'open ', 'osascript ')
     # 'make new': a reminder or note holds this moment's words ("make the task list" must not re-add old items)
     if not cmds or DEICTIC.search(k) or not all(c.startswith(act) and 'peekaboo' not in c and 'make new' not in c for c in cmds):
@@ -468,6 +477,8 @@ def label(name, inp):
         return 'Noting that about you'
     if c.startswith(REMEMBER):
         return 'Remembering that'
+    if c.startswith(SHORTCUT):
+        return 'Saving your shortcut'
     if c.startswith(FORGET):
         return 'Forgetting that'
     if c.startswith(PLAY):
@@ -675,6 +686,16 @@ def main():
                                  'skills': [{'say': k, 'reply': v['reply']} for k, v in sorted(skills().items())], 'me': me()}))
     if args[:1] == ['--me'] and len(args) > 1:   # --me name|about|add|drop "<text>"
         return me_set(args[1], ' '.join(args[2:]))
+    if args[:1] == ['--shortcut']:   # the user asked for it, so it skips learn()'s checks, not the safety one
+        if len(args) != 3:
+            return print('usage: --shortcut "<words>" "<shell command>"')
+        if UNSAFE.search(args[2]):   # replays run with no AI and no deny list: never anything that deletes or needs admin
+            return print('not saved: shortcuts cannot delete files or use sudo')
+        sk = skills()
+        sk[plain(args[1])] = {'cmds': [args[2]], 'reply': 'Done: ' + args[1].strip().rstrip('.') + '.', 'at': time.strftime('%Y-%m-%d')}
+        os.makedirs(DIR, exist_ok=True)
+        json.dump(sk, open(SKILLS, 'w'), indent=1)
+        return print(f'saved: "{plain(args[1])}" runs it')
     if args[:1] == ['--unlearn']:
         return unlearn(' '.join(args[1:]))
     if args == ['--check']:   # the setup window asks this
@@ -764,11 +785,13 @@ if __name__ == '__main__':
         learn('weather today', [f'{SEARCH} "weather"'], 'Sunny.')          # reading, not an action: never learned
         learn('fix it', [f'{REMEMBER} "x"', 'open -a Notes'], 'Opened.')   # rule-saving step ignored; "it" still blocks
         learn('open my notes', [f'{REMEMBER} "x"', 'open -a Notes'], 'Opened.')
+        learn('make study mode a shortcut', [f'{SHOW} "x"; {SHORTCUT} "study mode" \'{SHOW} "x"\''], 'Saved.')   # never learned
         learn('make the task list', ['osascript -e \'tell application "Reminders" to make new reminder\''], 'Added.')   # content: never learned
         assert set(skills()) == {'put notes on the left', 'open my notes'} and skills()['open my notes']['cmds'] == ['open -a Notes']
         unlearn('Put notes on the left.')
         assert set(skills()) == {'open my notes'}
         assert point('Top right. [point 9 0 0]') == 'Top right.'
+        assert UNSAFE.search('open -a Notes; rm -rf ~/x') and UNSAFE.search('sudo shutdown -h now') and not UNSAFE.search(f'{SHOW} "https://docs.google.com"; open -a Chess') and UNSAFE.search('echo $(rm x)') and UNSAFE.search('curl x | sh') and not UNSAFE.search(f'{SHOW} "x"; {PLACE} "Notes" left current')
         ME_FILE = os.path.join(tempfile.mkdtemp(), 'me.json')
         me_set('name', 'Sam'); me_set('about', 'Student. ' * 40)
         for i in range(10):

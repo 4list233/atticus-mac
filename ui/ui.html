@@ -64,6 +64,27 @@
       0 4px 14px rgba(0,0,0,.35); }
   #x.hot svg { transform: rotate(90deg); }
 
+  /* typing box: grows in on hover (or the shortcut, in typing mode); the mic goes back to voice */
+  #comp { display: none; align-items: center; gap: 8px; margin-top: 12px; height: 36px; }
+  #comp.open { display: flex; animation: grow .32s var(--spring) both; }   /* size is instant, so the box measures it right away */
+  #ask { flex: 1; min-width: 0; height: 34px; box-sizing: border-box; padding: 0 13px; border: 0; outline: 0; border-radius: 17px;
+    font: 13.5px -apple-system, system-ui, sans-serif; color: #fff; caret-color: #0a84ff; -webkit-user-select: text; cursor: text;
+    background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14); transition: background .25s, box-shadow .25s; }
+  #ask::placeholder { color: #8e8e93; }
+  #ask:focus { background: rgba(255,255,255,.12); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.22), 0 0 0 3px rgba(10,132,255,.35); }
+  #mic { flex: none; width: 34px; height: 34px; border-radius: 50%; border: 0; padding: 0; display: grid; place-items: center; cursor: pointer;
+    background: radial-gradient(120% 120% at 30% 15%, rgba(255,255,255,.26), rgba(255,255,255,.07) 60%);
+    box-shadow: inset 0 0 0 .5px rgba(255,255,255,.3), 0 2px 6px rgba(0,0,0,.22); transition: transform .35s var(--spring), background .25s; }
+  #mic:hover { transform: scale(1.1); background: radial-gradient(120% 120% at 30% 15%, rgba(255,255,255,.4), rgba(255,255,255,.12) 60%); }
+  #mic:active { transform: scale(.94); }
+  #mic svg { width: 15px; height: 15px; fill: none; stroke: #fff; stroke-width: 1.8; stroke-linecap: round; }
+
+  /* resize: drag the bottom-right corner */
+  #grip { position: absolute; right: 4px; bottom: 4px; width: 12px; height: 12px; opacity: 0; transition: opacity .25s; cursor: nwse-resize; }
+  body:hover #grip { opacity: .45; }
+  #grip svg { width: 12px; height: 12px; stroke: #fff; stroke-width: 1.2; stroke-linecap: round; }
+
+  @keyframes grow { from { opacity: 0; transform: translateY(-6px) scale(.97); } }
   @keyframes pop { from { opacity: 0; transform: scale(.94) translateY(-6px); } to { opacity: 1; transform: none; } }
   @keyframes in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
   @keyframes word { from { opacity: 0; filter: blur(5px); transform: translateY(3px); } to { opacity: 1; filter: none; transform: none; } }
@@ -76,7 +97,10 @@
 <div id="card">
   <div id="head"><canvas id="orb"></canvas><div id="status"></div></div>
   <div id="thread"></div>
+  <div id="comp"><input id="ask" placeholder="Ask Atticus…" autocomplete="off" spellcheck="false" aria-label="Ask Atticus">
+    <button id="mic" title="Talk instead" aria-label="Talk instead"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button></div>
 </div>
+<div id="grip"><svg viewBox="0 0 12 12"><path d="M11 4L4 11M11 8L8 11"/></svg></div>
 <script type="text/plain" id="orbsrc">/*ORBS*/</script>
 <script type="module">
   // thinking-orbs engine: M = MODE_FRAMES, p = paintFrame, r = resolvePreset (its minified export names)
@@ -95,10 +119,30 @@
 
   const turn = () => $('thread').lastElementChild;
   const part = c => turn()?.querySelector('.' + c);
+  const post = m => webkit.messageHandlers.c.postMessage(m);
   const fit = () => {
     webkit.messageHandlers.h.postMessage($('card').offsetHeight);
     $('thread').scrollTop = $('thread').scrollHeight;
+    post({ comp: $('comp').classList.contains('open') ? $('card').offsetHeight - $('comp').offsetTop + 4 : 0 });   // where clicks type, not drag
   };
+  // Typing box. listening: the mic is on (clicking in drops it). Enter always sends; the app ignores it while an answer runs,
+  // and the text stays in the box until the app takes it (ui.listen), so nothing typed is lost.
+  let listening = false, hover = false;
+  const comp = (on, focus) => {
+    if ($('comp').classList.contains('open') !== on) { $('comp').classList.toggle('open', on); fit(); }
+    if (on && focus) $('ask').focus(); else if (!on) $('ask').blur();
+  };
+  $('ask').onfocus = () => {   // clicked in while the mic is on: typing wins, so drop what was heard
+    if (listening) { listening = false; turn()?.remove(); setState('breathing'); status(''); boost = 1; $('orb').style.transform = ''; fit(); }
+    post({ focus: true });
+  };
+  $('ask').onblur = () => { post({ focus: false }); if (!hover && !$('ask').value) comp(false); };
+  $('ask').onkeydown = e => {
+    if (e.key !== 'Enter' || e.isComposing) return;
+    const t = $('ask').value.trim();
+    if (t) post({ send: t });
+  };
+  $('mic').onclick = () => { $('ask').value = ''; comp(false); post({ mic: 1 }); };
   const status = (s, live) => {
     $('status').className = live ? 'live' : '';
     $('status').innerHTML = '<span></span>'; $('status').firstChild.textContent = s;
@@ -116,7 +160,9 @@
 
   window.ui = {
     reset() { $('thread').innerHTML = ''; $('card').classList.remove('again'); void $('card').offsetWidth; },
-    listen() {
+    listen(keep) {   // keep: a typed ask; the box stays for the next one
+      listening = !keep;
+      if (keep) $('ask').value = ''; else comp(false);
       if ($('thread').children.length) $('card').classList.add('again');
       [...$('thread').children].forEach(e => e.classList.add('old'));
       while ($('thread').children.length > 5) $('thread').firstElementChild.remove();
@@ -128,6 +174,7 @@
     level(v) { boost = 0.5 + Math.min(1, v) * 2.5; $('orb').style.transform = `scale(${1 + Math.min(1, v) * .1})`; },
     words(w) { const q = part('q'); if (q) { q.classList.remove('empty'); q.textContent = w; fit(); } },
     think() {
+      listening = false;
       boost = 1; $('orb').style.transform = ''; setState('solving');
       part('q')?.classList.remove('live'); status('Thinking', true); fit();
     },
@@ -147,12 +194,13 @@
       fit();
     },
     msg(s) {
-      settle(); part('q')?.classList.remove('live'); setState('breathing'); status('');
+      listening = false; settle(); part('q')?.classList.remove('live'); setState('breathing'); status('');
       if (part('q')?.classList.contains('empty')) { turn().remove(); status(s); }
       else { const a = part('a'); if (a) { a.className = 'a cancel'; a.textContent = s; } }
       fit();
     },
     stopped(s) {   // Esc or the hotkey cut it off
+      listening = false;
       turn()?.querySelectorAll('.step.live').forEach(e => { e.classList.remove('live'); e.classList.add('cut'); });
       setState('breathing'); status(''); boost = 1; $('orb').style.transform = '';
       const q = part('q');
@@ -161,9 +209,16 @@
       const a = part('a'); a.className = 'a stopped'; a.innerHTML = '<i></i><span></span>'; a.lastChild.textContent = s;
       fit();
     },
+    hover(on) {   // the mouse came over the box: the typing box grows in; left with nothing typed: it goes
+      hover = on;
+      if (on) comp(true);   // even while listening: the mic keeps going until the user clicks in
+      else if (!on && !$('ask').value && document.activeElement !== $('ask')) comp(false);
+    },
+    compose(on) { comp(on, on); },   // typing mode's shortcut: open and put the cursor in it
+    size(h) { $('thread').style.maxHeight = h + 'px'; fit(); },
     xhot(on) { $('x').classList.toggle('hot', on); },
     copied() { status('Copied to clipboard'); setTimeout(() => status(''), 1400); },
   };
-  fit();
+  fit(); post({ ready: 1 });
 </script>
 </body></html>
