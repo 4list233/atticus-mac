@@ -569,8 +569,8 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
             else { UserDefaults.standard.set(true, forKey: "askedScreen"); _ = CGRequestScreenCaptureAccess() }
         case "auto":
             DispatchQueue.global().async { [weak self] in   // asking blocks until the user answers the macOS prompt
-                // macOS asks once per app it controls, and only about apps that are running. So ask for the usual
-                // ones now, in one go: System Events (started if needed), then whichever of the others are open.
+                // macOS asks once per app it controls, and only about apps that are running (no "allow all" exists).
+                // So ask now, in one go: System Events (started if needed), then the usual apps and every app that is open.
                 let se = "com.apple.systemevents"
                 if NSRunningApplication.runningApplications(withBundleIdentifier: se).isEmpty {
                     let c = NSWorkspace.OpenConfiguration(); c.activates = false
@@ -580,7 +580,8 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
                 var r = noErr
                 for id in [se, "com.apple.finder", "com.google.Chrome", "com.apple.Safari", "com.apple.Music", "com.spotify.client",
                            "com.apple.Notes", "com.apple.reminders", "com.apple.Terminal"]
-                where id == se || !NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty {
+                    + NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }.compactMap(\.bundleIdentifier)
+                where id == se || (id != Bundle.main.bundleIdentifier && !NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty) {
                     var d = AEAddressDesc()
                     _ = id.withCString { AECreateDesc(typeApplicationBundleID, $0, id.utf8.count, &d) }
                     let x = AEDeterminePermissionToAutomateTarget(&d, typeWildCard, typeWildCard, true)
