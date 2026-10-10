@@ -547,7 +547,10 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
         case "claude":
             fixPlan()
         case "screen":
-            if !CGRequestScreenCaptureAccess() { settings("ScreenCapture") }
+            // First click: only macOS's own prompt (its button lands on the right list). Opening Settings at the
+            // same time put people in the wrong section; later clicks, when macOS won't prompt again, open Settings.
+            if UserDefaults.standard.bool(forKey: "askedScreen") { if !CGPreflightScreenCaptureAccess() { settings("ScreenCapture") } }
+            else { UserDefaults.standard.set(true, forKey: "askedScreen"); _ = CGRequestScreenCaptureAccess() }
         case "auto":
             DispatchQueue.global().async { [weak self] in   // asking blocks until the user answers the macOS prompt
                 // macOS asks once per app it controls, and only about apps that are running. So ask for the usual
