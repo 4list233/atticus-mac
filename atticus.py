@@ -85,7 +85,7 @@ Tools:
 - The user's files (Spotlight): mdfind -name "budget" | head -20  |  by content: mdfind -onlyin ~/Documents "photosynthesis" | head
 - Weather: curl -s 'wttr.in/<place>?format=%l:+%C+%t+(feels+%f),+wind+%w&u'
 - Papers: curl -s "http://export.arxiv.org/api/query?search_query=all:<q>&max_results=5"
-- Move, snap or resize a window (does the math): {PLACE} "<process>" <left|right|full|center> <laptop|monitor|current|exact screen name from Context> ["part of title"]. Use it for EVERY window move. "Move to my laptop/monitor" = center. Side by side = two calls, left and right.
+- Move, snap or resize a window (does the math): {PLACE} "<process>" <left|right|full|center> <laptop|monitor|current|exact screen name from Context> ["part of title"]. Use it for EVERY window move. "Move to my laptop/monitor" = center. Several windows (side by side, a layout) = ONE call, moves joined with +: {PLACE} "Google Chrome" right current + "Terminal" left current; they all move at the same moment. Never sleep between steps: the helpers wait for windows themselves.
 - Window names: osascript -e 'tell application "System Events" to get name of every window of process "Safari"'. Raise one: ... to perform action "AXRaise" of (first window whose name contains "x"), then activate the app.
 - Type text into the box the user is in (search bar, chat box, doc): {TYPE} "<text>". It goes back to the user's app and pastes; one call, done. Never use peekaboo for typing.
 - Last resort, only when nothing above works (it moves the user's real mouse and pulls the app forward) — click or read buttons/menus inside an app: peekaboo see --app "<App>" --json --no-remote | head -c 3000 (always cut it; lists elements with IDs), then peekaboo click --on <ID> --no-remote, peekaboo type "text" --no-remote, peekaboo menu click --app "<App>" --path "File > New" --no-remote. Run peekaboo <cmd> --help if unsure.
@@ -211,7 +211,7 @@ def place(proc, where='full', screen='current', title=''):
     # the real window: Chrome's window 1 can be a hidden popup bar
     win = f'(first window whose name contains "{title}")' if title else '(first window whose subrole is "AXStandardWindow")'
     tell = f'tell application "System Events" to tell process "{proc}" to '
-    for tries in (0, 1):
+    for tries in range(4):   # a window just opened (--show right before) can take a moment to appear
         # full screen (or split view) windows can't move; checked each try, since it only shows once the app is forward
         if osa(tell + f'get value of attribute "AXFullScreen" of {win}') == 'true':
             osa(tell + f'set value of attribute "AXFullScreen" of {win} to false')
@@ -221,16 +221,18 @@ def place(proc, where='full', screen='current', title=''):
             ww, wh = map(int, osa(tell + f'get size of {win}').split(', '))
             app_mode = False
             break
-        except ValueError:   # System Events can't see windows on another Space: bring the app forward, look again
-            if not tries:
-                osa(f'tell application "{proc}" to activate')
-                time.sleep(0.4)
-    else:   # still hidden; scriptable apps (Finder, Safari…) still answer for their own windows
-        try:
-            l, t, r, b = map(int, osa(f'tell application "{proc}" to get bounds of window 1').split(', '))
-        except ValueError:
-            return f'no window found for "{proc}" {title}'
-        px, py, ww, wh, app_mode = l, t, r - l, b - t, True
+        except ValueError:   # System Events can't see it (another Space): scriptable apps (Notes, Finder…) answer for their own windows, fast
+            try:
+                l, t, r, b = map(int, osa(f'tell application "{proc}" to get bounds of window 1').split(', '))
+                px, py, ww, wh, app_mode = l, t, r - l, b - t, True
+                break
+            except ValueError:   # not scriptable, or not open yet: bring it forward, look again
+                if not tries:
+                    osa(f'tell application "{proc}" to activate')
+                if tries < 3:
+                    time.sleep(0.4)
+    else:
+        return f'no window found for "{proc}" {title}'
     pick = {'laptop': lambda s: s[5], 'monitor': lambda s: not s[5]}.get(
         screen, (lambda s: s[0] == screen) if screen != 'current' else (lambda s: s[1] <= px + ww // 2 < s[1] + s[3]))
     scr = screens()
@@ -537,7 +539,7 @@ def label(name, inp):
         return 'Reading ' + re.sub(r'^https?://(www\.)?([^/]+).*', r'\2', inp.get('url', ''))
     if name == 'Read':
         return 'Reading your screen' if inp.get('file_path', '').startswith(SHOT) else 'Reading ' + os.path.basename(inp.get('file_path', ''))
-    c = ' '.join(inp.get('command', '').split())
+    c = re.sub(r'^cd \S+\s*(;|&&)\s*', '', ' '.join(inp.get('command', '').split()))   # "cd /tmp; <helper>" reads as the helper
     if c.startswith(SEARCH):
         return 'Searching the web: ' + c[len(SEARCH):].strip(' "\'')
     if c.startswith(READ):
@@ -560,6 +562,9 @@ def label(name, inp):
     if c.startswith(FRONT):
         return 'Bringing ' + (re.findall(r'"([^"]+)"', c) or ['the app'])[0] + ' forward'
     if c.startswith(PLACE):
+        many = re.findall(r'"([^"]+)"\s+(?:left|right|full|center)', c)
+        if len(many) > 1:
+            return 'Moving ' + ', '.join(many[:-1]) + ' and ' + many[-1]
         a = c[len(PLACE):].replace('"', '').split()
         return f'Moving {a[0]} → {" ".join(a[1:3])}' if a else 'Moving a window'
     m = re.match(r'^peekaboo (\w+)', c)
@@ -809,8 +814,10 @@ def main():
     args = sys.argv[1:]
     if args == ['--gate']:
         return gate()
-    if args[:1] == ['--place']:
-        return print(place(*args[1:]))
+    if args[:1] == ['--place']:   # several moves joined with +: all at once, not one window after another
+        moves = [m.split('\0') for m in '\0'.join(args[1:]).split('\0+\0') if m and m != '+']
+        from concurrent.futures import ThreadPoolExecutor
+        return print('\n'.join(ThreadPoolExecutor(len(moves) or 1).map(lambda m: place(*m), moves)))
     if args == ['--look']:
         return print('\n'.join(f'{label}: {path}' for path, label in look()) or 'no screenshot: allow Atticus in Screen Recording (System Settings)')
     if args[:1] == ['--front'] and len(args) > 1:   # "show me where" on an app or tab the user isn't looking at
@@ -968,6 +975,8 @@ if __name__ == '__main__':
         assert label('Bash', {'command': 'open -a "Visual Studio Code" x'}) == 'Opening Visual Studio Code'
         assert label('Bash', {'command': 'open "https://www.google.com/search?q=x"'}) == 'Opening google.com'
         assert label('Bash', {'command': f'{PLACE} "Finder" left monitor'}) == 'Moving Finder → left monitor'
+        assert label('Bash', {'command': f'{PLACE} "Google Chrome" right current + "Terminal" left current'}) == 'Moving Google Chrome and Terminal'
+        assert label('Bash', {'command': f'cd /tmp; {SHOW} "https://docs.claude.com"'}) == 'Opening docs.claude.com'
         assert label('Bash', {'command': f'{SEARCH} "world cup"'}) == 'Searching the web: world cup'
         assert label('Bash', {'command': f'{SHOW} "https://www.nytimes.com/x"'}) == 'Opening nytimes.com'
         assert label('Read', {'file_path': SHOT + '-2.jpg'}) == 'Reading your screen'
