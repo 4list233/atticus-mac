@@ -48,5 +48,6 @@ cat > "$AGENT" <<P
 </dict></plist>
 P
 [ -n "$ATTICUS_NO_RESTART" ] && exit 0   # the app's own updater restarts it when idle
+pkill -f "$APP/Contents/MacOS/Atticus$" 2>/dev/null && sleep 1   # a copy opened by hand holds the one-copy lock: stop it too
 launchctl kickstart -k gui/$(id -u)/com.atticus.app 2>/dev/null || launchctl bootstrap gui/$(id -u) "$AGENT"
 echo "Atticus is running. Hold Control+Option+Space and talk."
