@@ -190,7 +190,15 @@
   .nope span { font: 13.5px var(--mono); padding: 8px 14px; border-radius: 10px; background: #f5f5f7; color: var(--faint);
     text-decoration: line-through; text-decoration-color: #ff453a; text-decoration-thickness: 1.5px; }
 
-  video { display: block; width: 100%; margin-top: 64px; border-radius: 24px; background: #e8e8ed;
+  .film { position: relative; margin-top: 64px; }
+  .film-play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 9.4%; min-width: 56px; aspect-ratio: 1; padding: 0; border: 0; border-radius: 50%;
+    background: #1d1d1f; color: #fff; cursor: pointer; display: grid; place-items: center; }
+  .film-play[hidden] { display: none; }
+  .film-play::before { content: ""; width: 40%; height: 46%; margin-left: 10%;
+    background: currentColor; clip-path: polygon(0 0, 100% 50%, 0 100%); }
+  .film-play:focus-visible { outline: 3px solid #0a84ff; outline-offset: 5px; }
+  video { display: block; width: 100%; border-radius: 24px; background: #e8e8ed;
     box-shadow: 0 0 0 .5px var(--line), 0 30px 80px rgba(0,0,0,.08); }
 
   .needs { list-style: none; padding: 0; margin: 40px auto 0; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
@@ -322,7 +330,10 @@
 
 <section class="center">
   <h2 class="rv">See it work.</h2>
-  <video class="rv" style="--i:1" src="docs/atticus-film.mp4" poster="docs/film-poster.png" controls playsinline preload="none"></video>
+  <div class="film rv" style="--i:1">
+    <video id="film" aria-label="Atticus demo" tabindex="0" src="docs/atticus-film.mp4" poster="docs/film-poster.png" controls playsinline preload="none"></video>
+    <button class="film-play" type="button" aria-label="Play Atticus demo" aria-controls="film" hidden></button>
+  </div>
 </section>
 
 <section class="center">
@@ -337,6 +348,25 @@
 
 <footer>Made by <a href="https://github.com/SaarthurR">SaarthurR</a> · Orb by <a href="https://github.com/Jakubantalik/thinking-orbs">thinking-orbs</a></footer>
 
+<script>
+  // The poster's play icon is artwork; give it a real control, independent of the orb module.
+  const film = document.getElementById('film');
+  const filmPlay = document.querySelector('.film-play');
+  filmPlay.hidden = false;
+  filmPlay.addEventListener('click', async () => {
+    filmPlay.disabled = true;
+    try {
+      await film.play();
+      film.focus({ preventScroll: true });
+    } catch {
+      // Keep the button available if playback fails so the visitor can retry.
+      filmPlay.hidden = false;
+    } finally {
+      filmPlay.disabled = false;
+    }
+  });
+  film.addEventListener('playing', () => { filmPlay.hidden = true; });
+</script>
 <script type="module">
   // the real Atticus orb: M = MODE_FRAMES, p = paintFrame, r = resolvePreset (thinking-orbs' minified export names)
   const E = await import('./ui/orbs.js');
@@ -370,7 +400,7 @@
     hint.classList.toggle('live', all);
     hint.textContent = all ? 'Listening… now picture saying “open Spotify.”' : 'Try it. Hold the keys.';
   };
-  addEventListener('keydown', e => { if (keys[e.key]) { if (e.key === ' ') e.preventDefault(); held.add(e.key); sync(); } });
+  addEventListener('keydown', e => { if (e.target.closest('button, a, input, textarea, select, video, [contenteditable]')) return; if (keys[e.key]) { if (e.key === ' ') e.preventDefault(); held.add(e.key); sync(); } });
   addEventListener('keyup', e => { held.delete(e.key); sync(); });
   addEventListener('blur', () => { held.clear(); sync(); });
   if (matchMedia('(hover: none)').matches) hint.textContent = 'Hold control, option, space on your Mac.';
