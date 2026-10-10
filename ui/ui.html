@@ -68,11 +68,18 @@
   #x.hot svg { transform: rotate(90deg); }
 
   /* safe mode: Atticus asks before it deletes, sends or buys */
-  .ok { margin-top: 10px; padding: 11px 12px 12px; border-radius: 14px; background: rgba(255,255,255,.07);
-    box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14); animation: grow .32s var(--spring) both; }
+  .ok { margin-top: 10px; padding: 11px 12px 12px; border-radius: 14px; background: rgba(255,255,255,.07); cursor: pointer;
+    box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14); animation: grow .32s var(--spring) both; overflow: hidden; max-height: 320px;
+    transition: max-height .34s var(--ease), opacity .25s, margin .34s var(--ease), padding .34s var(--ease), background .2s; }
+  .ok:hover { background: rgba(255,255,255,.09); }
+  .ok.gone { max-height: 0; opacity: 0; margin-top: 0; padding-top: 0; padding-bottom: 0; }
   .ok b { display: block; font-size: 13.5px; font-weight: 600; }
-  .ok code { display: block; margin-top: 4px; font: 11px ui-monospace, Menlo, monospace; color: #8e8e93;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ok code { display: block; margin-top: 4px; font: 11px/15px ui-monospace, Menlo, monospace; color: #8e8e93; max-height: 15px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: max-height .34s var(--ease), color .2s; }
+  .ok:hover code { color: #aeaeb2; }
+  .ok code.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .ok code.full { max-height: 165px; overflow-y: auto; color: #d1d1d6; }
+  .ok code::-webkit-scrollbar { width: 0; }
   .ok div { display: flex; gap: 8px; margin-top: 11px; }
   .ok button { flex: 1; height: 28px; border: 0; border-radius: 14px; font: 500 12.5px -apple-system, system-ui, sans-serif; color: #fff;
     cursor: pointer; background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.16); transition: transform .3s var(--spring), background .2s; }
@@ -182,6 +189,7 @@
     $('status').className = live ? 'live' : '';
     $('status').innerHTML = '<span></span>'; $('status').firstChild.textContent = s;
   };
+  const follow = ms => { const end = performance.now() + ms; (function f() { fit(); if (performance.now() < end) requestAnimationFrame(f); })(); };   // the window keeps up with a CSS height change
   const settle = () => turn()?.querySelectorAll('.step.live').forEach(e => { e.classList.remove('live'); e.classList.add('done'); });
   const reveal = (el, text) => {   // the answer fades in word by word, under a second in total
     el.textContent = '';
@@ -251,7 +259,7 @@
     },
     compose(on) { comp(on, on); },
     tap([x, y]) {   // a click on the box, not a drag: on the answer = copy it, anywhere else = type
-      const el = document.elementFromPoint(x, y), b = el?.closest('.ok button');
+      const el = document.elementFromPoint(x, y), b = el?.closest('.ok button, .ok');
       if (b) return b.click();
       if (el?.closest('#mode')) return post({ safe: true });
       const on = document.elementFromPoint(x, y)?.closest('.a:not(.stopped):not(.cancel)');
@@ -268,7 +276,17 @@
       const d = document.createElement('div'); d.className = 'ok';
       d.innerHTML = '<b></b><code></code><div><button>Don’t Allow</button><button class="go">Allow</button></div>';
       d.querySelector('b').textContent = q; d.querySelector('code').textContent = cmd;
-      d.querySelectorAll('button').forEach((b, i) => b.onclick = () => { d.remove(); status(i ? 'Allowed' : 'Not allowed', true); post({ allow: !!i }); fit(); });
+      const c = d.querySelector('code');
+      d.onanimationend = () => d.style.animation = 'none';   // so the shrink below can transition
+      d.onclick = () => {   // the whole command: grows open, click again to fold it back
+        if (c.classList.toggle('full')) c.classList.add('wrap'); else setTimeout(() => c.classList.contains('full') || c.classList.remove('wrap'), 340);
+        follow(360);
+      };
+      d.querySelectorAll('button').forEach((b, i) => b.onclick = e => {
+        e.stopPropagation(); if (d.classList.contains('gone')) return;
+        post({ allow: !!i }); status(i ? 'Allowed' : 'Not allowed', true); setState('solving');
+        d.classList.add('gone'); follow(360); setTimeout(() => { d.remove(); fit(); }, 360);
+      });
       (turn() || $('thread')).append(d); setState('breathing'); status('Waiting for you'); fit();
     },
     mode(safe) { $('mode').classList.toggle('on', !safe); },

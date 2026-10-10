@@ -22,6 +22,10 @@ ME = os.path.abspath(__file__)   # inside Atticus.app once built, so the AI's he
 PLACE, LOOK, SEARCH, READ, SHOW, REMEMBER, FORGET, TYPE, PLAY, ABOUT, SHORTCUT = (ME + f' --{c}' for c in ('place', 'look', 'search', 'read', 'show', 'remember', 'forget', 'type', 'play', 'me add', 'shortcut'))
 MEMORY, RECENT = os.path.join(DIR, 'memory.md'), os.path.join(DIR, 'recent.jsonl')
 PREFS = os.path.join(DIR, 'settings.json')   # written by the Settings window
+# $5 once, sold on Gumroad. shortcut: the source is public, so a coder can delete this check; fine for a $5 app.
+GUMROAD_PRODUCT = ''   # Gumroad product ID; empty = free
+BUY = 'https://saarthurr.gumroad.com/l/atticus'
+KEY_FILE = os.path.join(DIR, 'license')
 
 
 # About the user: name, one line they wrote, up to 8 short facts Atticus picked up. Capped at 300 characters
@@ -143,7 +147,7 @@ def gate():
         return
     a, parent = os.path.join(d, 'a'), os.getppid()
     with open(os.path.join(d, 'q.tmp'), 'w') as f:
-        f.write(json.dumps({'q': q, 'cmd': cmd[:200]}))
+        f.write(json.dumps({'q': q, 'cmd': cmd[:800]}))
     os.rename(os.path.join(d, 'q.tmp'), os.path.join(d, 'q'))
     for _ in range(600):
         if os.path.exists(a) or os.getppid() != parent:   # parent gone: the ask was cancelled
@@ -561,6 +565,27 @@ def label(name, inp):
     return c[:60]
 
 
+def licensed():
+    return not GUMROAD_PRODUCT or os.path.exists(KEY_FILE)
+
+
+def activate(key):
+    req = urllib.request.Request('https://api.gumroad.com/v2/licenses/verify',
+                                 urllib.parse.urlencode({'product_id': GUMROAD_PRODUCT, 'license_key': key}).encode())
+    try:
+        r = json.loads(urllib.request.urlopen(req, timeout=10).read())
+    except urllib.error.HTTPError as e:   # Gumroad answers a bad key with a 404
+        r = json.loads(e.read() or b'{}')
+    except OSError:
+        return 'Could not reach Gumroad. Check the internet and try again.'
+    p = r.get('purchase') or {}
+    if not r.get('success') or p.get('refunded') or p.get('chargebacked'):
+        return 'That key did not work. Copy it from your Gumroad receipt and type: key <your key>'
+    os.makedirs(DIR, exist_ok=True)
+    open(KEY_FILE, 'w').write(key)
+    return 'Thanks for buying Atticus! It is unlocked.'
+
+
 def say(tag, text):
     print(f'{tag} {" ".join(text.split())}', flush=True)
 
@@ -750,7 +775,7 @@ def main():
         return print(f'forgot {len(lines) - len(keep)} line(s)')
     if args[:1] == ['--fast']:   # Atticus.app calls this mid-speech; exit 1 = not a simple command
         os.makedirs(DIR, exist_ok=True)
-        r = fast(' '.join(args[1:]))
+        r = licensed() and fast(' '.join(args[1:]))
         if not r:
             sys.exit(1)
         remember_turn(' '.join(args[1:]), r)
@@ -813,6 +838,14 @@ def main():
     task = task if warm else ' '.join(a for a in args if a != '--plan') or ask()
     if not task:
         return warm and warm.kill()
+    key = re.fullmatch(r'\W*(?:my )?(?:license )?key\W+([\w-]{8,})\W*', task, re.I)
+    if key or not licensed():
+        if warm:
+            warm.kill()
+        if key:
+            return say('✓', activate(key[1]))
+        subprocess.run(['open', BUY])
+        return say('✓', f'Atticus is $5, once. Buy a key on the page that just opened, then type: key <your key>')
     t = time.time()
     quick = pref('instant', True) and fast(task)
     if quick:
