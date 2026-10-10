@@ -85,3 +85,7 @@ Test: `python3 atticus.py --selftest`. Remove: `launchctl bootout gui/$(id -u)/c
 - `ui/ui.html`, `ui/onboarding.html`, `ui/settings.html`: the overlay, the welcome flow, and Settings
 - `ui/AppIcon.icns`: the app icon
 - `ui/orbs.js`: the [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) engine (MIT, Jakub Antalik)
+
+## License
+
+MIT. See `LICENSE`. `ui/orbs.js` is from [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs), also MIT.
