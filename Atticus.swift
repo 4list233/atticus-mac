@@ -18,7 +18,7 @@ enum Prefs {
         "soundStart": "Pop", "soundDone": "Glass", "soundStop": "Tink", "volume": 0.16, "model": "haiku", "instant": true,
         "ahead": true, "aheadDelay": 0.7, "screen": "auto", "openOn": "here",
         "speak": false, "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
-        "learn": true, "pointer": false]
+        "learn": true, "pointer": false, "learnMe": true]
     static var d: [String: Any] = defaults.merging(
         (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path)))) as? [String: Any] ?? [:]) { $1 }
     static func set(_ k: String, _ v: Any) {
@@ -876,6 +876,9 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         case "setup": onboarding.open()
         case "openLog": NSWorkspace.shared.open(URL(fileURLWithPath: NSString(string: "~/.config/atticus/log.jsonl").expandingTildeInPath))
         case "clearRecent": try? FileManager.default.removeItem(atPath: app.recent); app.lastDone = .distantPast
+        case "me":   // About you: name / about / drop a fact
+            guard let what = b["what"] as? String, let text = b["text"] as? String else { return }
+            DispatchQueue.global().async { [weak self] in self?.helper(["--me", what, text]); DispatchQueue.main.async { self?.refresh() } }
         case "forget", "remember":
             guard let line = b["line"] as? String else { return }
             DispatchQueue.global().async { [weak self] in self?.helper(["--" + what, line]); DispatchQueue.main.async { self?.refresh() } }

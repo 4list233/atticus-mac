@@ -18,9 +18,39 @@ import base64, html, json, shutil, threading, os, re, signal, subprocess, sys, t
 HOME = os.path.expanduser('~')
 DIR = os.path.join(HOME, '.config/atticus')
 ME = os.path.abspath(__file__)   # inside Atticus.app once built, so the AI's helper commands point here
-PLACE, LOOK, SEARCH, READ, SHOW, REMEMBER, FORGET, TYPE, PLAY = (ME + f' --{c}' for c in ('place', 'look', 'search', 'read', 'show', 'remember', 'forget', 'type', 'play'))
+PLACE, LOOK, SEARCH, READ, SHOW, REMEMBER, FORGET, TYPE, PLAY, ABOUT = (ME + f' --{c}' for c in ('place', 'look', 'search', 'read', 'show', 'remember', 'forget', 'type', 'play', 'me add'))
 MEMORY, RECENT = os.path.join(DIR, 'memory.md'), os.path.join(DIR, 'recent.jsonl')
 PREFS = os.path.join(DIR, 'settings.json')   # written by the Settings window
+
+
+# About the user: name, one line they wrote, up to 8 short facts Atticus picked up. Capped at 300 characters
+# (~75 tokens, ~0.008¢ an ask) so knowing them never gets expensive. One writer: this file's --me commands.
+ME_FILE = os.path.join(DIR, 'me.json')
+
+
+def me():
+    try:
+        return {'name': '', 'about': '', 'facts': [], **json.load(open(ME_FILE))}
+    except (OSError, ValueError):
+        return {'name': '', 'about': '', 'facts': []}
+
+
+def me_set(what, text):
+    m, text = me(), ' '.join(text.split())
+    if what in ('name', 'about'):
+        m[what] = text[:40 if what == 'name' else 200]
+    elif what == 'add' and text and text.lower() not in map(str.lower, m['facts']):
+        m['facts'] = (m['facts'] + [text[:60]])[-8:]   # newest 8
+    elif what == 'drop':
+        m['facts'] = [f for f in m['facts'] if f != text]
+    os.makedirs(DIR, exist_ok=True)
+    json.dump(m, open(ME_FILE, 'w'), indent=1)
+
+
+def me_line():
+    m = me()
+    parts = ([f"Name: {m['name']}."] if m['name'] else []) + ([m['about'].rstrip('.') + '.'] if m['about'] else []) + m['facts']
+    return ' '.join(parts)[:300]
 
 
 def pref(key, default):
@@ -56,6 +86,10 @@ Memory: the user's saved rules come under "Memory:" in the request; follow them.
 Corrections: when the user says "no, I meant…", fix it, then save ONE short rule with {REMEMBER} so it won't happen again.
 Rules: "this", "it", "here" mean the front app/window in Context. Process names can differ from app names (VS Code is "Code").
 Never delete, move files, send, post or buy anything. If a command fails, try one other way, then say what failed."""
+
+LEARN_ME = f"""
+About the user: if they state a lasting fact about themselves that helps day to day (their name, city, school or job,
+favorite apps, units), save it in 8 words or fewer with {ABOUT} "<fact>". Never one-off or private details (health, money, passwords)."""
 
 POINTER = """
 Show me where (on): when the user asks where something is or how to do something on screen, answer in one line, then end with
@@ -274,7 +308,7 @@ def skills():
 def learn(task, cmds, reply):
     """Save the commands if every one is a replayable action (no reading, searching, clicking by element ID)."""
     k = plain(task)
-    cmds = [c for c in cmds if not c.startswith((REMEMBER, FORGET))]   # saving a rule is not part of the action
+    cmds = [c for c in cmds if not c.startswith((REMEMBER, FORGET, ABOUT))]   # saving a rule or a fact is not part of the action
     act = (SHOW, PLACE, PLAY, TYPE, 'open ', 'osascript ')
     if not cmds or DEICTIC.search(k) or not all(c.startswith(act) and 'peekaboo' not in c for c in cmds):
         return
@@ -427,6 +461,8 @@ def label(name, inp):
     if c.startswith(SHOW):
         t = c[len(SHOW):].strip(' "\'')
         return 'Opening ' + (re.sub(r'^https?://(www\.)?([^/]+).*', r'\2', t) if '://' in t else os.path.basename(t))
+    if c.startswith(ABOUT):
+        return 'Noting that about you'
     if c.startswith(REMEMBER):
         return 'Remembering that'
     if c.startswith(FORGET):
@@ -485,7 +521,7 @@ def start_claude():
     """`claude -p` started ahead, waiting for the request on stdin: its ~1 s startup happens while the user is still talking."""
     if not shutil.which('claude'):
         return None
-    system = SYSTEM + (POINTER if pref('pointer', False) else '')
+    system = SYSTEM + (POINTER if pref('pointer', False) else '') + (LEARN_ME if pref('learnMe', True) else '')
     p = subprocess.Popen(['claude', '-p', '--input-format', 'stream-json', '--model', pref('model', 'haiku'), '--effort', 'low', '--system-prompt', system,
                           '--tools', 'Bash,Read,WebSearch,WebFetch', '--permission-mode', 'bypassPermissions', '--disallowedTools', *DENY,
                           '--setting-sources', '', '--no-session-persistence', '--strict-mcp-config', '--disable-slash-commands', '--output-format', 'stream-json', '--verbose'],
@@ -633,7 +669,9 @@ def main():
         rules = [l[2:].strip() for l in open(MEMORY)] if os.path.exists(MEMORY) else []
         return print(json.dumps({'today': use(time.strftime('%Y-%m-%d')), 'week': use(week), 'all': use(''),
                                  'rules': [r for r in rules if r], 'plan': plan(),
-                                 'skills': [{'say': k, 'reply': v['reply']} for k, v in sorted(skills().items())]}))
+                                 'skills': [{'say': k, 'reply': v['reply']} for k, v in sorted(skills().items())], 'me': me()}))
+    if args[:1] == ['--me'] and len(args) > 1:   # --me name|about|add|drop "<text>"
+        return me_set(args[1], ' '.join(args[2:]))
     if args[:1] == ['--unlearn']:
         return unlearn(' '.join(args[1:]))
     if args == ['--check']:   # the setup window asks this
@@ -662,7 +700,8 @@ def main():
     url = {'Google Chrome': 'URL of active tab of front window', 'Safari': 'URL of front document', 'Arc': 'URL of active tab of front window',
            'Brave Browser': 'URL of active tab of front window'}.get(app)
     url = url and osa(f'tell application "{app}" to get {url}')   # "articles on what I'm reading" needs the page
-    ctx = f'Front app: {app}. Front window: {win or "?"}.' + (f' Page: {url}.' if url else '') + f' Screens: {scr}. Now: {time.strftime("%a %b %d %Y %I:%M %p")}.'
+    you = me_line()
+    ctx = (f'About the user: {you} ' if you else '') + f'Front app: {app}. Front window: {win or "?"}.' + (f' Page: {url}.' if url else '') + f' Screens: {scr}. Now: {time.strftime("%a %b %d %Y %I:%M %p")}.'
     task = task if warm else ' '.join(a for a in args if a != '--plan') or ask()
     if not task:
         return warm and warm.kill()
@@ -726,6 +765,12 @@ if __name__ == '__main__':
         unlearn('Put notes on the left.')
         assert set(skills()) == {'open my notes'}
         assert point('Top right. [point 9 0 0]') == 'Top right.'
+        ME_FILE = os.path.join(tempfile.mkdtemp(), 'me.json')
+        me_set('name', 'Sam'); me_set('about', 'Student. ' * 40)
+        for i in range(10):
+            me_set('add', f'fact {i}')
+        me_set('add', 'FACT 9'); me_set('drop', 'fact 2')
+        assert me()['facts'] == [f'fact {i}' for i in range(3, 10)] and len(me()['about']) <= 200 and len(me_line()) <= 300
         assert norm('One M') == norm('1m') == '1m'
         assert label('Bash', {'command': f'{PLAY} "1m"'}) == 'Playing 1m on Spotify'
         sys.exit(print('selftest ok'))

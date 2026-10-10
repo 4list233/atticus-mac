@@ -108,6 +108,11 @@
   .add { display: flex; gap: 8px; padding: 10px 14px; box-shadow: inset 0 .5px 0 var(--line); }
   .add input { flex: 1; font: 13px system-ui; color: var(--fg); background: transparent; border: 0; outline: 0; }
   .empty { padding: 14px; color: var(--fg3); }
+  .field { flex: 1; font: 13px system-ui; color: var(--fg); background: transparent; border: 0; outline: 0; text-align: right; min-width: 0; }
+  .field::placeholder, textarea::placeholder { color: var(--fg3); }
+  textarea.field { text-align: left; resize: none; height: 38px; line-height: 1.4; padding: 0; font: 13px system-ui; }
+  .count { color: var(--fg3); font-size: 11px; font-variant-numeric: tabular-nums; flex: none; }
+  #facts .row { box-shadow: inset 0 .5px 0 var(--line); }
 
   .status { display: flex; align-items: center; gap: 8px; }
   .dot { width: 8px; height: 8px; border-radius: 4px; background: var(--green); flex: none; }
@@ -200,8 +205,17 @@
 
   <section id="memory">
     <h1>Memory</h1>
-    <p class="lede">Rules Atticus follows. Say “remember…” or “from now on…”, or add one here. Only rules that match what you ask are sent, so more rules don’t cost more.</p>
+    <h3>About you</h3>
+    <div class="group">
+      <div class="row"><div class="t"><b>Name</b></div><input class="field" id="myname" maxlength="40" placeholder="What should Atticus call you?" aria-label="Your name"></div>
+      <div class="row" style="align-items:flex-start"><div class="t" style="flex:none;width:120px"><b>A line about you</b><span>Sent with every ask, so keep it short.</span></div><textarea class="field" id="myabout" maxlength="200" placeholder="Student in Cupertino. Uses Chrome and Spotify." aria-label="About you"></textarea><span class="count" id="abcount"></span></div>
+      <div class="row"><div class="t"><b>Learn about me</b><span>Picks up lasting facts you mention (your city, your apps), 8 at most. Never health, money or passwords.</span></div><label class="sw"><input type="checkbox" data-k="learnMe"></label></div>
+      <div id="facts"></div>
+    </div>
+    <p class="lede" style="margin:8px 4px 0;font-size:11.5px">All of this together stays under 300 characters, about 0.008¢ an ask.</p>
+    <h3>Rules</h3>
     <div class="group" id="rules"></div>
+    <p class="lede" style="margin:8px 4px 0;font-size:11.5px">Say “remember…” or “from now on…”, or add one here. Only rules that match what you ask are sent, so more rules don’t cost more.</p>
     <h3>Learned shortcuts</h3>
     <div class="group" id="skills"></div>
   </section>
@@ -319,9 +333,22 @@
       `<div class="row rule"><div class="t"><b>“${esc(k.say)}”</b><span>${esc(k.reply)}</span></div><button class="x" data-u="${i}" aria-label="Forget this shortcut">×</button></div>`).join('')
       : '<div class="empty">None yet. Ask Atticus to do something; if it works, it lands here.</div>';
     document.querySelectorAll('[data-u]').forEach(b => b.onclick = () => post({ do: 'unlearn', say: s.skills[+b.dataset.u].say }));
+    const m = s.me || { name: '', about: '', facts: [] };
+    if (document.activeElement !== $('myname')) $('myname').value = m.name;
+    if (document.activeElement !== $('myabout')) $('myabout').value = m.about;
+    $('abcount').textContent = $('myabout').value.length + '/200';
+    $('facts').innerHTML = m.facts.map((f, i) =>
+      `<div class="row rule"><div class="t"><span style="margin:0;color:var(--fg)">${esc(f)}</span></div><button class="x" data-f="${i}" aria-label="Forget this">×</button></div>`).join('');
+    document.querySelectorAll('[data-f]').forEach(b => b.onclick = () => post({ do: 'me', what: 'drop', text: m.facts[+b.dataset.f] }));
     $('ptext').textContent = s.plan.text; $('pdot').classList.toggle('bad', !s.plan.ok);
     $('pbtn').style.display = s.plan.ok ? 'none' : '';
   }
+
+  // About you: saved when the field loses focus or on Return
+  const saveMe = (id, what) => { const e = $(id); e.onchange = () => post({ do: 'me', what, text: e.value.trim() });
+    e.onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); e.blur(); } }; };
+  saveMe('myname', 'name'); saveMe('myabout', 'about');
+  $('myabout').oninput = () => $('abcount').textContent = $('myabout').value.length + '/200';
 
   window.st = {
     load(d) {
