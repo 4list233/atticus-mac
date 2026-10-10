@@ -13,7 +13,7 @@ if ! xcode-select -p >/dev/null 2>&1; then
   exit 1
 fi
 if [ -d "$DIR/.git" ]; then
-  git -C "$DIR" pull -q --ff-only
+  git -C "$DIR" pull -q --ff-only || { echo "Could not update $DIR. Delete that folder, then paste the install line again."; exit 1; }
 else
   git clone -q --depth 1 https://github.com/SaarthurR/atticus-mac.git "$DIR"
 fi

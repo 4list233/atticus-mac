@@ -539,13 +539,12 @@ final class App: NSObject, WKScriptMessageHandler {
     func spawn() -> (p: Process, input: FileHandle)? {
         let p = py(["--wait"], ["ATTICUS_UI": "1", "ATTICUS_FRONT": mine])
         let pipe = Pipe(), inp = Pipe(); p.standardOutput = pipe; p.standardInput = inp
-        var buffer = ""
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] h in
-            guard let s = String(data: h.availableData, encoding: .utf8) else { return }
+        var buffer = Data()
+        let feed = { [weak self] (d: Data) in
             DispatchQueue.main.async {
-                buffer += s
-                while let r = buffer.range(of: "\n") {
-                    let line = String(buffer[..<r.lowerBound]); buffer.removeSubrange(..<r.upperBound)
+                buffer += d
+                while let i = buffer.firstIndex(of: 10) {
+                    let line = String(decoding: buffer[..<i], as: UTF8.self); buffer.removeSubrange(...i)
                     if line == "! setup" { onboarding.open(); continue }   // Claude not installed, signed out or no plan
                     if line.hasPrefix("@ ") { pointAt(line); continue }   // experimental "show me where"
                     if line.hasPrefix("? ") {   // safe mode: "? <question>\t<command>\t<answer file>"
@@ -558,8 +557,10 @@ final class App: NSObject, WKScriptMessageHandler {
                 }
             }
         }
+        pipe.fileHandleForReading.readabilityHandler = { feed($0.availableData) }
         p.terminationHandler = { [weak self] _ in
             pipe.fileHandleForReading.readabilityHandler = nil
+            feed(pipe.fileHandleForReading.readDataToEndOfFile())   // the answer may still be in the pipe
             DispatchQueue.main.async {
                 guard let self, self.proc === p else { return }   // a cancelled run ending late must not touch the next one
                 self.busy = false; self.proc = nil
@@ -782,9 +783,9 @@ enum Updater {
         try? p.run(); p.waitUntilExit()
         return (p.terminationStatus, String(data: o.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "")
     }
-    static func version() -> String {
+    static let version: String = {
         sh(#"cd "$0" 2>/dev/null && git log -1 --format='%h · %cd' --date=format:'%b %-d, %Y'"#).out.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
+    }()
     static func check(_ done: @escaping () -> Void = {}) {
         status = "Checking…"; done()
         DispatchQueue.global().async {
@@ -818,6 +819,7 @@ enum Updater {
 
 // Opening Atticus again (Spotlight, Finder, Dock) while it runs: setup the first time, Settings after.
 final class Delegate: NSObject, NSApplicationDelegate {
+    func applicationWillTerminate(_ n: Notification) { app.proc?.terminate(); app.unwarm(); app.voice?.terminate() }
     func applicationShouldHandleReopen(_ s: NSApplication, hasVisibleWindows: Bool) -> Bool {
         UserDefaults.standard.bool(forKey: "onboarded") ? settings.open() : onboarding.open()
         return false
@@ -1002,7 +1004,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
     }
 
     func push() {   // the settings, and the app icon for the sidebar
-        var d: [String: Any] = ["prefs": Prefs.d, "version": Updater.version(), "update": Updater.status]
+        var d: [String: Any] = ["prefs": Prefs.d, "version": Updater.version, "update": Updater.status]
         if let t = NSApp.applicationIconImage?.tiffRepresentation, let png = NSBitmapImageRep(data: t)?.representation(using: .png, properties: [:]) {
             d["icon"] = "data:image/png;base64," + png.base64EncodedString()
         }
@@ -1023,6 +1025,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
     // "Change shortcut": the next key pressed with modifiers (or a lone F-key) becomes the talk shortcut. Esc cancels.
     var monitor: Any?
     func record() {
+        if monitor != nil { return }
         if let r = ref { UnregisterEventHotKey(r); ref = nil }   // so pressing the old one doesn't start listening
         let fkeys = [122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111, 105, 107, 113, 106, 64, 79, 80, 90]
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] e in
@@ -1101,7 +1104,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
             Apps.q.async { [weak self] in
                 Apps.current = me
                 Apps.allow(ids) { id, s in self?.send("appStatus", [id, s]) }
-                self?.send("allowDone", 0)
+                self?.send("allowDone", [Any]())
             }
         case "grant": if let id = b["id"] as? String { onboarding.grant(id) }
         case "stopAllow": Apps.job += 1

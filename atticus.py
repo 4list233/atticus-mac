@@ -127,7 +127,7 @@ QUIET = (SEARCH, READ, LOOK, SHOW, PLACE, PLAY, TYPE, REMEMBER, FORGET, ABOUT, '
 
 def risky(cmd):
     """-> the question to ask the user, or '' when the command can just run."""
-    for part in re.split(r';|&&|\|\||\||\n', cmd):
+    for part in re.split(r'[;&|\n]', cmd):
         part = part.strip()
         if part.startswith(QUIET) and '$(' not in part and '`' not in part:
             continue
@@ -379,7 +379,7 @@ def learn(task, cmds, reply):
     cmds = [c for c in cmds if not c.startswith((REMEMBER, ABOUT))]   # saving a rule or a fact is not part of the action
     act = (SHOW, PLACE, PLAY, TYPE, 'open ', 'osascript ')
     # 'make new': a reminder or note holds this moment's words ("make the task list" must not re-add old items)
-    if not cmds or DEICTIC.search(k) or not all(c.startswith(act) and 'peekaboo' not in c and 'make new' not in c for c in cmds):
+    if not cmds or DEICTIC.search(k) or not all(c.startswith(act) and 'peekaboo' not in c and 'make new' not in c and not risky(c) for c in cmds):
         return
     sk = skills()
     sk[k] = {'cmds': cmds, 'reply': reply, 'at': time.strftime('%Y-%m-%d')}
@@ -398,7 +398,10 @@ def replay(k):
     if not s:
         return None
     for c in s['cmds']:   # any failure: hand it to the AI instead
-        if subprocess.run(['/bin/zsh', '-c', c], capture_output=True, timeout=20).returncode:
+        try:
+            if subprocess.run(['/bin/zsh', '-c', c], capture_output=True, timeout=20).returncode:
+                return None
+        except subprocess.TimeoutExpired:
             return None
     return s['reply']
 
@@ -420,7 +423,7 @@ def fast(text):
                                  'amazon': f'https://www.amazon.com/s?k={q}'}.get(m[2], f'https://www.google.com/search?q={q}')])
         return f'Searched {m[1]}' + (f' on {m[2].title()}.' if m[2] in ('youtube', 'spotify', 'amazon') else '.')
     m = re.fullmatch(r'play (?:my |the )?(?:spotify )?(?:playlist )?(?:called |named )?(.+?)( playlist)?( on spotify)?', t)
-    if m:   # "play X" alone may mean a video: only the user's playlist here, anything else goes to the AI (which uses --play)
+    if m and not DEICTIC.search(m[1]):   # "play X" alone may mean a video: only the user's playlist here, anything else goes to the AI (which uses --play)
         return play(m[1], anything=bool(m[3]))
     m = re.fullmatch(r'(?:open|launch|start|pull up|bring up|focus(?: on)?|switch to|go to)\s+(.+?)'
                      r'(?:\s+(?:on|to|in|at)\s+(?:the\s+|my\s+)?(left|right|full ?screen|center|middle|laptop|monitor)(?:\s+(?:side|half|screen))?)?', t)
@@ -435,7 +438,7 @@ def fast(text):
         return None
     if m:
         target = m[1]
-        if re.fullmatch(r'[\w-]+(\.[\w-]+)+(/\S*)?', target.replace(' dot ', '.')):
+        if re.fullmatch(r'[\w-]+(\.[\w-]+)+(/\S*)?', target.replace(' dot ', '.')) and not re.search(r'\.(pdf|docx?|xlsx?|pptx?|txt|csv|png|jpe?g|heic|key|pages|numbers|zip|mp[34]|mov|md|py|java)$', target):
             subprocess.run(['open', 'https://' + target.replace(' dot ', '.')])
             return f'Opened {target}.'
         app = app_named(target)
@@ -655,7 +658,7 @@ def run(task, p=None, shots=()):
     if not p:
         say('!', 'setup')   # Atticus.app opens its setup window
         return plan()['text'] + ' Atticus setup is open to fix it.', 0, []
-    content = [b for path, label in shots for b in ({'type': 'text', 'text': label}, {'type': 'image', 'source': {
+    content = [b for path, label in shots if os.path.exists(path) for b in ({'type': 'text', 'text': label}, {'type': 'image', 'source': {
         'type': 'base64', 'media_type': 'image/jpeg', 'data': base64.b64encode(open(path, 'rb').read()).decode()}})] + [{'type': 'text', 'text': task}]
     p.stdin.write(json.dumps({'type': 'user', 'message': {'role': 'user', 'content': content}}) + '\n')
     p.stdin.close()
@@ -730,8 +733,15 @@ def point(reply):
     return (reply[:m.start()] + reply[m.end():]).strip()
 
 
+def recent():
+    try:
+        return [json.loads(l) for l in open(RECENT)]
+    except (OSError, ValueError):   # missing, or cut short by a kill mid-write: start a fresh chat
+        return []
+
+
 def remember_turn(q, a):
-    turns = [json.loads(l) for l in open(RECENT)] if os.path.exists(RECENT) else []
+    turns = recent()
     turns = [r for r in turns if time.time() - r['t'] < 300][-2:] + [{'t': time.time(), 'q': q, 'a': a}]
     with open(RECENT, 'w') as f:
         f.writelines(json.dumps(r) + '\n' for r in turns)
@@ -769,6 +779,8 @@ def main():
         return print('saved')
     if args[:1] == ['--forget']:
         words = ' '.join(args[1:]).lower().split()
+        if not words:   # all([]) is True: would wipe every rule
+            return print('forgot 0 line(s)')
         lines = open(MEMORY).readlines() if os.path.exists(MEMORY) else []
         keep = [l for l in lines if not all(w in l.lower() for w in words)]
         open(MEMORY, 'w').writelines(keep)
@@ -820,6 +832,7 @@ def main():
     shots = []
     snap = threading.Thread(target=lambda: shots.extend(look()), daemon=True)   # the screen as the user pressed the keys; sent only if the words are about it
     snap.shots = shots
+    atexit.register(lambda: [os.remove(p) for p, _ in shots if os.path.exists(p)])   # private: no screenshot left in /tmp
     snap.start()
     if warm:   # "<app the user is in now>\t<request>": the user may have switched apps mid-sentence ("open Chrome and…")
         front_now, _, task = sys.stdin.readline().strip().rpartition('\t')
@@ -854,12 +867,12 @@ def main():
         remember_turn(task, quick)
         return say('✓', quick)
     mem = relevant_rules(task)
-    turns = [json.loads(l) for l in open(RECENT)] if os.path.exists(RECENT) else []
+    turns = recent()
     turns = [r for r in turns if time.time() - r['t'] < 600][-3:]   # this chat only (Atticus.app clears it for a new one); 10 min cap for typed asks
     earlier = ''.join(f'Q: {r["q"]}\nA: {r["a"][:300]}\n' for r in turns)
     reply, cost, steps = run(f'Context: {ctx}\n' + (f'Earlier:\n{earlier}' if earlier else '') +
                       (f'Memory:\n{mem}\n' if mem else '') + f'Request: {task}', warm, screen_for(task, snap, fx) or ())
-    reply = point(reply)
+    reply = point(re.sub(r'\s*\n\s*Sources?:.*\Z', '', reply, flags=re.S | re.I))
     fix = turns and re.match(r"(no|nope|not that|wrong|that's wrong|i meant|i said)\b", plain(task))
     if fix:
         unlearn(turns[-1]['q'])   # a learned shortcut that did the wrong thing goes
@@ -904,6 +917,7 @@ if __name__ == '__main__':
         learn('open my notes', [f'{REMEMBER} "x"', 'open -a Notes'], 'Opened.')
         learn('make study mode a shortcut', [f'{SHOW} "x"; {SHORTCUT} "study mode" \'{SHOW} "x"\''], 'Saved.')   # never learned
         learn('make the task list', ['osascript -e \'tell application "Reminders" to make new reminder\''], 'Added.')   # content: never learned
+        learn('open my stuff', ['open -a Notes & trash ~/x'], 'Opened.')   # risky: never replayed without the gate
         assert set(skills()) == {'put notes on the left', 'open my notes'} and skills()['open my notes']['cmds'] == ['open -a Notes']
         unlearn('Put notes on the left.')
         assert set(skills()) == {'open my notes'}
@@ -922,5 +936,6 @@ if __name__ == '__main__':
         assert risky('osascript -e \'tell application "Mail" to send m\'') == 'Send this?' == risky('curl -s -X POST https://x') and not risky("curl -s 'wttr.in/x?format=%l'")
         assert risky('osascript -e \'do shell script "echo"\'') == 'Run a system command?' and risky("osascript -e 'tell application \"Notes\" to delete note 1'") == 'Delete something?'
         assert risky('echo x >> ~/.zshrc') == 'Change a file?' == risky('curl -s -o ~/x https://y') and not risky('osascript -e x 2>&1; ls >/dev/null; echo > /tmp/a')
+        assert risky('open -a Notes & osascript -e \'tell application "Mail" to send m\'') == 'Send this?'
         sys.exit(print('selftest ok'))
     main()

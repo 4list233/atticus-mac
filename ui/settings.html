@@ -107,10 +107,12 @@
   .x:hover { background: var(--sel); color: #ff453a; }
   .add { display: flex; gap: 8px; padding: 10px 14px; box-shadow: inset 0 .5px 0 var(--line); }
   .add input { flex: 1; font: 13px system-ui; color: var(--fg); background: transparent; border: 0; outline: 0; }
+  .field:focus, .add input:focus { box-shadow: 0 0 0 3px rgba(10,132,255,.35); border-radius: 4px; }
+  .app:hover, .seg button:not(.on):hover { background: var(--sel); }
   .empty { padding: 14px; color: var(--fg3); }
   .field { flex: 1; font: 13px system-ui; color: var(--fg); background: transparent; border: 0; outline: 0; text-align: right; min-width: 0; }
   .field::placeholder, textarea::placeholder { color: var(--fg3); }
-  textarea.field { text-align: left; resize: none; height: 38px; line-height: 1.4; padding: 0; font: 13px system-ui; }
+  textarea.field { text-align: left; resize: none; height: 56px; line-height: 1.4; padding: 0; font: 13px system-ui; }
   .count { color: var(--fg3); font-size: 11px; font-variant-numeric: tabular-nums; flex: none; }
   #facts .row { box-shadow: inset 0 .5px 0 var(--line); }
 
@@ -233,7 +235,7 @@
     <h3>About you</h3>
     <div class="group">
       <div class="row"><div class="t"><b>Name</b></div><input class="field" id="myname" maxlength="40" placeholder="What should Atticus call you?" aria-label="Your name"></div>
-      <div class="row" style="align-items:flex-start"><div class="t" style="flex:none;width:120px"><b>A line about you</b><span>Sent with every ask, so keep it short.</span></div><textarea class="field" id="myabout" maxlength="200" placeholder="Student in Cupertino. Uses Chrome and Spotify." aria-label="About you"></textarea><span class="count" id="abcount"></span></div>
+      <div class="row" style="align-items:flex-start"><div class="t" style="flex:none;width:120px"><b>A line about you</b><span>Sent with every ask, so keep it short.</span></div><textarea class="field" id="myabout" maxlength="200" placeholder="Student in Chicago. Uses Safari and Spotify." aria-label="About you"></textarea><span class="count" id="abcount"></span></div>
       <div class="row"><div class="t"><b>Learn about me</b><span>Picks up lasting facts you mention (your city, your apps), 8 at most. Never health, money or passwords.</span></div><label class="sw"><input type="checkbox" data-k="learnMe"></label></div>
       <div id="facts"></div>
     </div>
@@ -343,7 +345,7 @@
     s.innerHTML = SOUNDS.map(n => `<option>${n}</option>`).join('');
     s.onchange = () => { set(s.dataset.k, s.value); if (s.value !== 'None') post({ do: 'preview', sound: s.value }); };
   });
-  document.querySelectorAll('.seg').forEach(g => g.querySelectorAll('button').forEach(b => b.onclick = () => set(g.dataset.k, b.dataset.v)));
+  document.querySelectorAll('.seg[data-k]').forEach(g => g.querySelectorAll('button').forEach(b => b.onclick = () => set(g.dataset.k, b.dataset.v)));
   document.querySelectorAll('.sw input').forEach(i => i.onchange = () => set(i.dataset.k, i.checked));
   document.querySelectorAll('input[type=range]').forEach(r => {
     r.oninput = () => { P[r.dataset.k] = +r.value; paint(); };
@@ -355,7 +357,7 @@
   function paint() {
     if (!recording) showCaps(P.hotkeyLabel);
     $('reset').style.display = P.hotkeyLabel === '⌃⌥Space' ? 'none' : '';
-    document.querySelectorAll('.seg').forEach(g => g.querySelectorAll('button').forEach(b => b.classList.toggle('on', P[g.dataset.k] === b.dataset.v)));
+    document.querySelectorAll('.seg[data-k]').forEach(g => g.querySelectorAll('button').forEach(b => b.classList.toggle('on', P[g.dataset.k] === b.dataset.v)));
     document.querySelectorAll('.sw input').forEach(i => i.checked = !!P[i.dataset.k]);
     document.querySelectorAll('select').forEach(s => s.value = P[s.dataset.k]);
     document.querySelectorAll('input[type=range]').forEach(r => r.value = P[r.dataset.k]);
@@ -370,13 +372,14 @@
     $('stats').innerHTML = [['Today', s.today], ['7 days', s.week], ['All time', s.all]].map(([n, u]) =>
       `<div class="stat"><small>${n}</small><b>${u.asks}</b><span>asks · ${money(u.usd)}${u.asks ? ' · ' + u.secs + ' s avg' : ''}</span></div>`).join('');
     const esc = t => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const typed = $('newrule')?.value || '';
     $('rules').innerHTML = (s.rules.length ? s.rules.map((r, i) =>
       `<div class="row rule"><div class="t">${esc(r)}</div><button class="x" data-i="${i}" aria-label="Forget this rule">×</button></div>`).join('')
       : '<div class="empty">No rules yet.</div>') +
       '<div class="add"><input id="newrule" placeholder="When I say focus mode, close Slack and open Notes" aria-label="New rule"><button class="btn blue" id="addrule">Add</button></div>';
     document.querySelectorAll('.x').forEach(b => b.onclick = () => post({ do: 'forget', line: s.rules[+b.dataset.i] }));
     const add = () => { const v = $('newrule').value.trim(); if (v) post({ do: 'remember', line: v }); };
-    $('addrule').onclick = add; $('newrule').onkeydown = e => { if (e.key === 'Enter') add(); };
+    $('newrule').value = typed; $('addrule').onclick = add; $('newrule').onkeydown = e => { if (e.key === 'Enter') add(); };
     $('skills').innerHTML = (s.skills || []).length ? s.skills.map((k, i) =>
       `<div class="row rule"><div class="t"><b>“${esc(k.say)}”</b><span>${esc(k.reply)}</span></div><button class="x" data-u="${i}" aria-label="Forget this shortcut">×</button></div>`).join('')
       : '<div class="empty">None yet. Ask Atticus to do something; if it works, it lands here.</div>';

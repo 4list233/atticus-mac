@@ -141,7 +141,7 @@
   <p class="sub r">A few more things to try.</p>
   <div id="say" class="r"><span>“Open Chrome and snap it left”</span></div>
   <div class="tips r"><div><kbd>esc</kbd> stops an answer</div><div>Click away to close</div></div>
-  <button class="btn r" id="done">Start Using Atticus</button>
+  <button class="btn r" id="finish">Start Using Atticus</button>
 </section>
 
 <div id="dots"><i></i><i></i><i></i><i></i></div>
@@ -158,7 +158,7 @@
     [...$('dots').children].forEach((d, i) => d.classList.toggle('on', pages[i] === id));
   };
   document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => go(b.dataset.go));
-  $('done').onclick = () => post({ do: 'done' });
+  $('finish').onclick = () => post({ do: 'done' });
 
   // Permissions: icon color + SF-style glyph, why it's needed.
   const P = [
@@ -177,8 +177,8 @@
       <svg class="check" viewBox="0 0 22 22"><circle cx="11" cy="11" r="11"/><path d="M6.5 11.3l3 3 6-6.3"/></svg>
     </div>`).join('');
   document.querySelectorAll('.allow').forEach(b => b.onclick = () => {
-    b.classList.add('wait'); b.textContent = 'Waiting';
-    setTimeout(() => { b.classList.remove('wait'); b.textContent = 'Allow'; }, 12000);   // gave up in System Settings
+    const was = b.textContent; b.classList.add('wait'); b.textContent = 'Waiting';
+    setTimeout(() => { b.classList.remove('wait'); b.textContent = was; }, 12000);   // gave up in System Settings
     post({ do: 'grant', id: b.dataset.id });
   });
 

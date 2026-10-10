@@ -15,7 +15,7 @@
   canvas { width: 44px; height: 44px; flex: none; margin-left: -4px; transition: transform .35s var(--ease); }
   #status { flex: 1; min-width: 0; font-size: 12.5px; color: #a1a1a6; white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; }
-  #status span { display: inline-block; animation: in .35s var(--ease) both; }
+  #status span { display: inline-block; max-width: 100%; vertical-align: top; overflow: hidden; text-overflow: ellipsis; animation: in .35s var(--ease) both; }
   #status.live span { background: linear-gradient(90deg, #8e8e93 0%, #fff 45%, #8e8e93 90%); background-size: 200% 100%;
     -webkit-background-clip: text; color: transparent; animation: in .35s var(--ease) both, shimmer 1.5s linear infinite; }
 
@@ -212,14 +212,14 @@
       const d = document.createElement('div'); d.className = 'turn';
       d.innerHTML = '<div class="q live empty">Listening…</div><div class="steps"></div><div class="a"></div>';
       $('thread').append(d);
-      setState('listening'); boost = 1; status('Listening', true); fit();
+      setState('listening'); boost = 1; status('Listening…', true); fit();
     },
     level(v) { boost = 0.5 + Math.min(1, v) * 2.5; $('orb').style.transform = `scale(${1 + Math.min(1, v) * .1})`; },
     words(w) { const q = part('q'); if (q) { q.classList.remove('empty'); q.textContent = w; fit(); } },
     think() {
       listening = false;
       boost = 1; $('orb').style.transform = ''; setState('solving');
-      part('q')?.classList.remove('live'); status('Thinking', true); fit();
+      part('q')?.classList.remove('live'); status('Thinking…', true); fit();
     },
     line(l) {
       const tag = l[0], s = l.slice(2);
@@ -291,7 +291,7 @@
     },
     mode(safe) { $('mode').classList.toggle('on', !safe); },
     xhot(on) { $('x').classList.toggle('hot', on); },
-    copied() { status('Copied to clipboard'); setTimeout(() => status(''), 1400); },
+    copied() { status('Copied to clipboard'); setTimeout(() => $('status').textContent === 'Copied to clipboard' && status(''), 1400); },
   };
   fit(); post({ ready: 1 });
 </script>

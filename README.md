@@ -69,11 +69,11 @@ It checks your Mac, downloads Atticus to `~/.atticus`, builds `~/Applications/At
 Working on the code instead? Clone the repo anywhere and run `./build.sh` after each change.
 
 The first launch opens a setup window. It checks your Claude plan, then asks for each macOS permission.
-After that, Atticus lives in the menu bar. Open it from Spotlight (⌘Space, "Atticus") for Settings: hotkey, sounds, model, speed, screen, memory and usage.
+After that, Atticus lives in the menu bar. Open it from Spotlight (⌘Space, "Atticus") for Settings: shortcut, sounds, model, speed, screen, memory and usage.
 If you sign out of Claude later, the setup window comes back by itself.
 To see it again: `defaults delete com.atticus.app onboarded`, then restart the app.
 
-Test: `python3 atticus.py --selftest`. Remove: `launchctl bootout gui/$(id -u)/com.atticus.app`, then delete `~/Applications/Atticus.app`, `~/.atticus` and `~/Library/LaunchAgents/com.atticus.app.plist`.
+Test: `python3 atticus.py --selftest`. Remove: `launchctl bootout gui/$(id -u)/com.atticus.app`, then delete `~/Applications/Atticus.app`, `~/.atticus`, `~/.config/atticus` (your settings and history) and `~/Library/LaunchAgents/com.atticus.app.plist`.
 
 ## Files
 
