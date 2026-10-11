@@ -19,7 +19,7 @@ enum Prefs {
         "soundStart": "Pop", "soundDone": "Glass", "soundStop": "Tink", "volume": 0.16, "model": "haiku", "instant": true,
         "ahead": true, "aheadDelay": 0.7, "live": true, "screen": "auto", "openOn": "here",
         "speak": false, "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
-        "learn": true, "safe": true, "pointer": false, "learnMe": true, "stats": true, "tips": true, "input": "voice", "talkMode": "hold", "boxW": 460, "boxH": 360]
+        "learn": true, "safe": true, "pointer": false, "learnMe": true, "stats": true, "tips": true, "askMe": true, "input": "voice", "talkMode": "hold", "boxW": 460, "boxH": 360]
     static var d: [String: Any] = defaults.merging(
         (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path)))) as? [String: Any] ?? [:]) { $1 }
     static func set(_ k: String, _ v: Any) {
@@ -292,6 +292,7 @@ final class App: NSObject, WKScriptMessageHandler {
             if b["mic"] != nil && !busy && !engine.isRunning { clickTalk = true; start(); if !engine.isRunning { clickTalk = false } }
             if b["ready"] != nil { js("size", Prefs.num("boxH")) }
             if b["safe"] != nil { Prefs.set("safe", true); js("mode", true); Atticus.settings.push() }
+            if let i = b["pick"] as? String, !askFile.isEmpty { try? i.write(toFile: askFile, atomically: true, encoding: .utf8); askFile = "" }   // an index, or "" = none
             if let ok = b["allow"] as? Bool, !askFile.isEmpty { try? (ok ? "y" : "n").write(toFile: askFile, atomically: true, encoding: .utf8); askFile = "" }
             return
         }
@@ -650,6 +651,14 @@ final class App: NSObject, WKScriptMessageHandler {
                         guard p.count == 3 else { continue }
                         self.askFile = p[2]; self.show(); self.js("ask", [p[0], p[1]]); continue
                     }
+                    if line.hasPrefix("⚙ ") {   // "⚙ <key> <true|false>": the AI flips one of Atticus's switches; never safe mode or pause
+                        let p = line.split(separator: " ").map(String.init)
+                        if p.count == 3, Prefs.defaults[p[1]] is Bool, !["safe", "paused"].contains(p[1]) { Atticus.settings.apply(p[1], p[2] == "true"); Atticus.settings.push() }
+                        continue
+                    }
+                    if line.hasPrefix("◇ "), let j = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(2).utf8)) as? [String: Any] {   // "which one?": the choices card
+                        self.askFile = j["a"] as? String ?? ""; self.show(); self.js("pick", j); continue
+                    }
                     if line.hasPrefix("✓") { self.answer = line; self.deliver(String(line.dropFirst(2))) }
                     if line.hasPrefix("! ") { self.js("msg", String(line.dropFirst(2))) }
                     else { self.js("line", line) }
@@ -664,7 +673,7 @@ final class App: NSObject, WKScriptMessageHandler {
                 try? FileManager.default.removeItem(atPath: commit)
                 guard let self, self.proc === p else { return }   // a cancelled run ending late must not touch the next one
                 if !self.ahead.isEmpty { self.proc = nil; self.ahead = ""; self.busy = !self.engine.isRunning; return }
-                self.busy = false; self.proc = nil
+                self.busy = false; self.proc = nil; self.js("finished")
                 if !self.answer.isEmpty { self.lastDone = Date(); self.cue("soundDone") }
                 Apps.q.async { Apps.sync() }
                 self.hide(after: self.linger(max(6, min(30, Double(self.answer.count) / 12))))   // longer answers stay longer
@@ -1201,21 +1210,25 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
 
     func helper(_ args: [String]) { let p = py(args); try? p.run(); p.waitUntilExit() }
 
+    func apply(_ k: String, _ v: Any) {   // one setting changed, from this window or by voice (atticus.py --set)
+        Prefs.set(k, v)
+        if k == "speak" { if v as? Bool == true { siriVoice() } else { app.shush() } }
+        if k == "hideWhenSharing" { app.panel.sharingType = v as? Bool == true ? .none : .readOnly }
+        if k == "menuIcon" { bar.item.isVisible = v as? Bool == true }
+        if k == "paused" { if v as? Bool == true { app.close(clear: false) }; bar.paint() }
+        if k == "safe" { app.js("mode", v as? Bool == true) }
+        if k == "login" {   // the LaunchAgent build.sh installed: enabled = starts at login
+            let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            p.arguments = [v as? Bool == true ? "enable" : "disable", "gui/\(getuid())/com.atticus.app"]; try? p.run()
+        }
+    }
+
     func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
         guard let b = m.body as? [String: Any], let what = b["do"] as? String else { return }
         switch what {
         case "set":
             guard let k = b["k"] as? String, let v = b["v"] else { return }
-            Prefs.set(k, v)
-            if k == "speak" { if v as? Bool == true { siriVoice() } else { app.shush() } }
-            if k == "hideWhenSharing" { app.panel.sharingType = v as? Bool == true ? .none : .readOnly }
-            if k == "menuIcon" { bar.item.isVisible = v as? Bool == true }
-            if k == "paused" { if v as? Bool == true { app.close(clear: false) }; bar.paint() }
-            if k == "safe" { app.js("mode", v as? Bool == true) }
-            if k == "login" {   // the LaunchAgent build.sh installed: enabled = starts at login
-                let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-                p.arguments = [v as? Bool == true ? "enable" : "disable", "gui/\(getuid())/com.atticus.app"]; try? p.run()
-            }
+            apply(k, v)
         case "record": record()
         case "cancelRecord": if monitor != nil { done(nil) }
         case "unlearn":

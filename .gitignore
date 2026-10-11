@@ -18,21 +18,14 @@ memory.md
 license
 app.err
 
-# Only the shared product design skill/rule belongs in this repository
-!.agents/
-.agents/*
-!.agents/skills/
-.agents/skills/*
-!.agents/skills/atticus-design/
-.claude/*
-!.claude/
-!.claude/skills/
-.claude/skills/*
-!.claude/skills/atticus-design
-.cursor/*
-!.cursor/
-!.cursor/rules/
-.cursor/rules/*
-!.cursor/rules/atticus-design.mdc
+# GitHub holds just the app. Agent instructions, skills and the website stay on this Mac.
+AGENTS.md
+CLAUDE.md
 AGENTS.local.md
 CLAUDE.local.md
+.agents/
+.claude/
+.cursor/
+index.html
+docs/atticus-film.mp4
+docs/film-poster.png

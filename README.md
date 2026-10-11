@@ -113,6 +113,4 @@ MIT. See `LICENSE`. `ui/orbs.js` is from [thinking-orbs](https://github.com/Jaku
 
 ## Contributing
 
-UI contributors: read [the Atticus design skill](.agents/skills/atticus-design/SKILL.md). Codex uses the repository's `AGENTS.md`, Claude Code uses `CLAUDE.md` and its local skill link, and Cursor uses `.cursor/rules/atticus-design.mdc`. These instructions apply only to this project.
-
 Run regressions with a scratch `ATTICUS_DIR` and use `tests/ui.html` and `tests/settings.html` for mock-bridge UI checks. Keep personal agent settings, credentials and runtime state out of commits. Anonymous usage telemetry is disabled unless `ATTICUS_POSTHOG_KEY` is supplied through the environment; no key is embedded in the source.

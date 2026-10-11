@@ -10,7 +10,7 @@ import unittest
 class JavaScriptTests(unittest.TestCase):
     def test_embedded_scripts_parse(self):
         root = Path(__file__).resolve().parents[1]
-        files = list((root / 'ui').glob('*.html')) + list((root / 'tests').glob('*.html')) + [root / 'index.html']
+        files = list((root / 'ui').glob('*.html')) + list((root / 'tests').glob('*.html'))
         for path in files:
             for attrs, code in re.findall(r'<script([^>]*)>(.*?)</script>', path.read_text(), re.S):
                 if 'text/plain' in attrs or 'src=' in attrs:

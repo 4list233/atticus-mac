@@ -18,7 +18,7 @@ try {
   frame.srcdoc = html.replace('<head>', `<head><script>window.webkit = {messageHandlers: {st: {postMessage: m => parent.postMessage(m, '*')}}};<\/script>`);
   await loaded;
   const w = frame.contentWindow, d = w.document;
-  const prefs = {hotkeyLabel: '⌃⌥Space', input: 'voice', talkMode: 'hold', volume: .16, aheadDelay: .7, ahead: true, model: 'haiku', corner: 'top-left', linger: 'normal', login: true, menuIcon: true, instant: true, live: true, learn: true, safe: true, tips: true, soundStart: 'Pop', soundDone: 'Glass', soundStop: 'Tink'};
+  const prefs = {hotkeyLabel: '⌃⌥Space', input: 'voice', talkMode: 'hold', volume: .16, aheadDelay: .7, ahead: true, model: 'haiku', corner: 'top-left', linger: 'normal', login: true, menuIcon: true, instant: true, live: true, learn: true, safe: true, tips: true, askMe: true, soundStart: 'Pop', soundDone: 'Glass', soundStop: 'Tink'};
   const load = p => w.st.load({prefs: {...prefs, ...p}});
   load({});
   const mode = d.querySelector('[data-k="talkMode"]'), hold = mode.querySelector('[data-v="hold"]'), toggle = mode.querySelector('[data-v="toggle"]');

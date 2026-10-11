@@ -278,12 +278,30 @@ class WatchAndBudgetTests(unittest.TestCase):
             atticus.watch('', '', 'Orca', '', 'shows', 'done')
         self.assertIn("can't see its window", self.notes[-1])
 
+    def test_pick_prints_the_choice_the_box_sends_back(self):
+        for answer, printed in [('1', 'b.pdf'), ('', 'None of these'), (None, 'The user did not pick')]:   # None: no answer in time
+            with patch.dict(os.environ, {'ATTICUS_ASK': '/fake'}), patch.object(atticus, 'ask_user', return_value=answer) as ask, \
+                 patch('sys.stdout', new_callable=io.StringIO) as out:
+                atticus.pick('Which one?', ['a.pdf', 'b.pdf'])
+            self.assertEqual(ask.call_args.args[0]['options'], ['a.pdf', 'b.pdf'])
+            self.assertTrue(out.getvalue().startswith(printed))
+        self.assertEqual(atticus.label('Bash', {'command': f'{atticus.PICK} "Which?" "a" "b"'}), 'Asking you which one')
+        self.assertFalse(atticus.risky(f'{atticus.PICK} "Which file?" "~/delete-me.txt" "~/send.pdf"'))
+
+    def test_set_flips_a_switch_by_name_never_safe_mode(self):
+        self.assertIn('askMe', atticus.switches())
+        self.assertFalse({'safe', 'paused'} & set(atticus.switches()))
+        for words, key in [('the asking setting', 'askMe'), ('read answers aloud', 'speak'), ('safe mode', None)]:
+            with patch.dict(os.environ, {'ATTICUS_ASK': '/fake'}), patch.object(atticus, 'ask_user') as ask, patch('sys.stdout', new_callable=io.StringIO):
+                atticus.set_switch(words, 'off')
+            self.assertEqual(ask.call_args.args[0] if ask.called else None, key and {'set': key, 'value': False})
+
     def test_unknown_command_never_shows_raw_shell(self):
         self.assertEqual(atticus.label('Bash', {'command': 'cat > /private/var/folders/x/prompt.txt <<EOF'}), 'Working on it')
 
     def test_prompt_stays_under_budget(self):
         # Every ask pays for this prompt. Raising the cap is a decision: check `atticus.py --budget` first.
-        full = atticus.SYSTEM + atticus.POINTER + atticus.LEARN_ME + atticus.TEACH + atticus.ASK_FIRST
+        full = atticus.SYSTEM + atticus.ASK_ME + atticus.POINTER + atticus.LEARN_ME + atticus.TEACH + atticus.ASK_FIRST
         self.assertLessEqual(len(full), 10000)
 
 

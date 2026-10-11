@@ -14,6 +14,8 @@ tasks on the Mac. Output lines for the overlay: "· note", "▸ step", "✓ answ
   atticus.py --play "<playlist name>"     play one of the user's Spotify playlists, no clicks, focus stays put
   atticus.py --search <query>  |  --read <url>   free web search (DuckDuckGo) / one page as plain text
   atticus.py --watch <app> "<title words>" <gone|shows> "<phrase>" ["<request>"]   watch a window in the background, no AI, then notify (and run the request)
+  atticus.py --pick "<question>" <option>...   the user picks one in the box (files get a preview) -> prints it
+  atticus.py --set "<setting name>" on|off   flip one of Atticus's own switches (not safe mode or pause), no clicks
   atticus.py --unwatch                    stop every watch  |  --budget   is real use still under the cost and speed budget?
 Completed requests go to ~/.config/atticus/log.jsonl with their cost (live actions are marked).
 """
@@ -22,7 +24,7 @@ import atexit, base64, html, json, shutil, threading, os, re, signal, subprocess
 HOME = os.path.expanduser('~')
 DIR = os.environ.get('ATTICUS_DIR') or os.path.join(HOME, '.config/atticus')   # ATTICUS_DIR: tests keep off the user's chat and rules
 ME = os.path.abspath(__file__)   # inside Atticus.app once built, so the AI's helper commands point here
-PLACE, LOOK, SEARCH, READ, SHOW, REMEMBER, FORGET, TYPE, PLAY, ABOUT, SHORTCUT, FRONT, WATCH = (ME + f' --{c}' for c in ('place', 'look', 'search', 'read', 'show', 'remember', 'forget', 'type', 'play', 'me add', 'shortcut', 'front', 'watch'))
+PLACE, LOOK, SEARCH, READ, SHOW, REMEMBER, FORGET, TYPE, PLAY, ABOUT, SHORTCUT, FRONT, WATCH, PICK, SET = (ME + f' --{c}' for c in ('place', 'look', 'search', 'read', 'show', 'remember', 'forget', 'type', 'play', 'me add', 'shortcut', 'front', 'watch', 'pick', 'set'))
 MEMORY, RECENT = os.path.join(DIR, 'memory.md'), os.path.join(DIR, 'recent.jsonl')
 PREFS = os.path.join(DIR, 'settings.json')   # written by the Settings window
 # $5 once, sold on Gumroad. shortcut: the source is public, so a coder can delete this check; fine for a $5 app.
@@ -99,7 +101,7 @@ Tools:
 Earlier: the last few questions from the past 5 minutes, if any; use them for follow-ups ("open the second one", "and tomorrow?").
 Memory: the user's saved rules come under "Memory:" in the request; follow them. When the user says remember / from now on, save ONE short line with {REMEMBER} "<rule>". When the user says forget, run {FORGET} "<words from that line>".
 Shortcuts: "when I say X, open/do Y" or "make X a command" where Y is fixed actions (open apps, sites, files): run Y once, then save it with {SHORTCUT} "<X>" '<the one shell command>' (chain with ;). It then runs instantly with no AI; it is not a rule. A rule that is really a command: save the shortcut, then {FORGET} the rule.
-Atticus Settings (the user's rules, shortcuts, apps, permissions): open -a Atticus
+Atticus's own switches (tips, read aloud, ask me when unsure…): {SET} "<setting name>" on|off, never click in Settings. Show Settings: open -a Atticus
 Corrections: when the user says "no, I meant…", fix it, then save ONE short rule with {REMEMBER} so it won't happen again.
 Rules: "this", "it", "here" mean the front app/window in Context. Process names can differ from app names (VS Code is "Code").
 NEVER_RISKY
@@ -118,6 +120,11 @@ TEACH = """
 Tip: if you could not do it, or the user had to correct you or ask again a second way ("focus it", "no, …"), end your reply with
 [tip <the exact words the user can say so it works first time next time, e.g. Say "remember: open means bring it to the front">]."""
 
+# Settings → Ask me when unsure (on by default): a choices card in the box instead of a guess
+ASK_ME = f"""
+Ask, don't guess: unsure about anything that changes what you do (which file, app, song or person, which meaning, a missing detail)? Never choose
+yourself (not even the newest) and never ask in words: run {PICK} "<question>" "<option>"... (2-8 short options; full paths for files), then act on the one it prints."""
+
 POINTER = """
 Show me where (on): when the user asks where something is or how to do something on screen, answer in one line, then end with
 [point N X Y]: N = the screen number of the labeled picture, X Y = the pixel spot in that picture. A ring appears there."""
@@ -135,7 +142,7 @@ RISKY = [('Delete something?', r'\b(rm|rmdir|srm|unlink|shred|trash|mv)\s|\bdele
          ('Buy this?', r'\b(buy|purchase|checkout|check out|place (an |the )?order|pay)\b'),
          ('Change a file?', r'(?<![0-9&])>>?\s*(?!/dev/null|&|/tmp/)\S|\btee\s|curl\b.*\s(-o|--output|-O)\b'),
          ('Run a system command?', r'do shell script|\bsudo\b|\bkillall\b|\bdefaults write\b')]
-QUIET = (SEARCH, READ, LOOK, FRONT, SHOW, PLACE, PLAY, TYPE, REMEMBER, FORGET, ABOUT, 'open ', 'mdfind ', 'pbpaste')   # never delete, send or buy
+QUIET = (SEARCH, READ, LOOK, FRONT, SHOW, PLACE, PLAY, TYPE, REMEMBER, FORGET, ABOUT, PICK, SET, 'open ', 'mdfind ', 'pbpaste')   # never delete, send or buy
 
 
 def risky(cmd):
@@ -173,24 +180,84 @@ def gate():
         print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
                           'permissionDecisionReason': 'The request was cancelled before the transcript was confirmed.'}}))
         return
-    cmd, d = inp.get('command', ''), os.environ.get('ATTICUS_ASK', '')
+    cmd = inp.get('command', '')
     q = risky(cmd) or ('Run outside the safe folder?' if inp.get('dangerouslyDisableSandbox') else '')
-    if not q or not d:
+    if not q or not os.environ.get('ATTICUS_ASK') or not pref('safe', True):
         return
-    a, parent = os.path.join(d, 'a'), os.getppid()
-    with open(os.path.join(d, 'q.tmp'), 'w') as f:
-        f.write(json.dumps({'q': q, 'cmd': cmd[:800]}))
-    os.rename(os.path.join(d, 'q.tmp'), os.path.join(d, 'q'))
-    for _ in range(600):
-        if os.path.exists(a) or os.getppid() != parent:   # parent gone: the ask was cancelled
-            break
-        time.sleep(0.1)
-    ok = os.path.exists(a) and open(a).read().strip() == 'y'
-    if os.path.exists(a):
-        os.remove(a)
+    ok = ask_user({'q': q, 'cmd': cmd[:800]}, 60) == 'y'
     print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow', 'updatedInput': {**inp, 'dangerouslyDisableSandbox': True}}} if ok else
                      {'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
                                              'permissionDecisionReason': 'The user said no. Do not try another way; say it was not done.'}}))
+
+
+def ask_user(j, secs):
+    """Hands a question to relay() (the box, or a dialog) and waits for the answer. None: no answer in time, or cancelled."""
+    d, parent = os.environ['ATTICUS_ASK'], os.getppid()
+    a = os.path.join(d, 'a')
+    with open(os.path.join(d, 'q.tmp'), 'w') as f:
+        f.write(json.dumps(j))
+    os.rename(os.path.join(d, 'q.tmp'), os.path.join(d, 'q'))
+    for _ in range(secs * 10):
+        if os.path.exists(a) or os.getppid() != parent:   # parent gone: the ask was cancelled
+            break
+        time.sleep(0.1)
+    if not os.path.exists(a):
+        return None
+    s = open(a).read().strip()
+    os.remove(a)
+    return s
+
+
+def pick(question, options):
+    """{PICK}: the AI isn't sure which one the user means, so the user picks in the box. Prints the one picked."""
+    if not options:
+        return print('No options given.')
+    s = ask_user({'pick': question, 'options': options[:8]}, 110) if os.environ.get('ATTICUS_ASK') else None   # 110 s: under the AI's 2-minute tool limit
+    if s is None:
+        return print('The user did not pick. Do not guess; say you need them to pick one.')
+    print(options[int(s)] if s.isdigit() and int(s) < len(options) else 'None of these, the user said. Do not guess; say so in one line.')
+
+
+def switches():
+    """{key: label} for every on/off switch in Settings, read from the Settings page itself. Safe mode and pause stay manual."""
+    page = open(os.path.join(os.path.dirname(ME), 'ui', 'settings.html')).read()
+    return {k: html.unescape(b) for b, k in re.findall(r'<b[^>]*>([^<]+)</b>(?:<span[^>]*>.*?</span>)?</div><label class="sw"><input type="checkbox" data-k="(\w+)"', page)
+            if k not in ('safe', 'paused')}
+
+
+def set_switch(words, on):
+    """{SET}: the switch whose name shares the most words with what the user said (first 3 letters, so "asking" finds "Ask")."""
+    rows, stem = switches(), lambda t: {w[:3] for w in re.findall(r'[a-z]+', t.lower()) if w not in ('the', 'me', 'my', 'on', 'off', 'setting')}
+    k = max(rows, key=lambda k: len(stem(words) & stem(rows[k])))
+    if not stem(words) & stem(rows[k]) or on not in ('on', 'off'):
+        return print('No such switch. Switches: ' + ', '.join(rows.values()))
+    if os.environ.get('ATTICUS_ASK'):
+        ask_user({'set': k, 'value': on == 'on'}, 5)
+    print(f"{rows[k]} is now {on}.")
+
+
+def thumb(path):
+    """A Quick Look thumbnail (images, PDFs, documents, videos) as a data URL, or '' if macOS has none."""
+    out = tempfile.mkdtemp()   # one folder each: files with the same name must not share a thumbnail
+    try:
+        subprocess.run(['qlmanage', '-t', '-s', '480', '-o', out, path], capture_output=True, timeout=4)
+        png = os.path.join(out, os.path.basename(path) + '.png')
+        return 'data:image/png;base64,' + base64.b64encode(open(png, 'rb').read()).decode() if os.path.exists(png) else ''
+    except (OSError, subprocess.TimeoutExpired):
+        return ''
+    finally:
+        shutil.rmtree(out, True)
+
+
+def choices(options):
+    """What the box shows per option: a file gets its name, its folder and date, and a preview; anything else is just its text."""
+    from concurrent.futures import ThreadPoolExecutor
+    paths = [os.path.expanduser(o) for o in options]
+    imgs = list(ThreadPoolExecutor(len(paths)).map(lambda p: thumb(p) if os.path.isfile(p) else '', paths))   # Quick Look hangs on folders
+    return [{'label': os.path.basename(p.rstrip('/')) or p, 'sub': os.path.basename(os.path.dirname(p.rstrip('/'))) + time.strftime(' · %b %-d, %Y', time.localtime(os.path.getmtime(p))),
+             'path': os.path.dirname(p.rstrip('/')).replace(HOME, '~', 1), 'img': img,
+             'kind': 'Folder' if os.path.isdir(p) else os.path.splitext(p)[1][1:6].upper()}
+            if os.path.exists(p) else {'label': o, 'sub': '', 'path': '', 'img': '', 'kind': ''} for o, p, img in zip(options, paths, imgs)]
 
 
 def osa(script, *args):
@@ -595,6 +662,10 @@ def label(name, inp):
         return 'Saving your shortcut'
     if c.startswith(FORGET):
         return 'Forgetting that'
+    if c.startswith(PICK):
+        return 'Asking you which one'
+    if c.startswith(SET):
+        return 'Changing a setting'
     if c.startswith(PLAY):
         return 'Playing ' + c[len(PLAY):].strip(' "\'') + ' on Spotify'
     if c.startswith(LOOK):
@@ -764,13 +835,13 @@ def start_claude():
     """`claude -p` started ahead, waiting for the request on stdin: its ~1 s startup happens while the user is still talking."""
     if not shutil.which('claude'):
         return None
-    system = SYSTEM.replace('NEVER_RISKY', ASK_FIRST if pref('safe', True) else NEVER) + (POINTER if pref('pointer', False) else '') + (LEARN_ME if pref('learnMe', True) else '') + (TEACH if pref('tips', True) else '')
-    settings, ask = {}, ''
+    system = SYSTEM.replace('NEVER_RISKY', ASK_FIRST if pref('safe', True) else NEVER) + (ASK_ME if pref('askMe', True) else '') + (POINTER if pref('pointer', False) else '') + (LEARN_ME if pref('learnMe', True) else '') + (TEACH if pref('tips', True) else '')
+    settings = {}
+    ask = tempfile.mkdtemp(prefix='atticus-ask-')   # the Allow card (safe mode) and the choices card talk through it
+    atexit.register(shutil.rmtree, ask, True)   # however this run ends
     if pref('safe', True):
-        ask = tempfile.mkdtemp(prefix='atticus-ask-')
-        atexit.register(shutil.rmtree, ask, True)   # however this run ends
         settings['sandbox'] = {'enabled': True, 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': True, 'excludedCommands': SAFE_OUT}
-    if ask or os.environ.get('ATTICUS_COMMIT'):
+    if pref('safe', True) or os.environ.get('ATTICUS_COMMIT'):
         settings['hooks'] = {'PreToolUse': [{'matcher': '.*', 'hooks': [{'type': 'command', 'command': f'"{sys.executable}" "{ME}" --gate', 'timeout': 140}]}]}
     errors = tempfile.TemporaryFile(mode='w+')   # draining a pipe only after wait() can deadlock
     p = subprocess.Popen(['claude', '-p', '--input-format', 'stream-json', '--model', pref('model', 'haiku'), '--effort', 'low', '--system-prompt', system,
@@ -793,7 +864,20 @@ def relay(p):
             j = json.load(open(q))
             os.remove(q)
             a = os.path.join(p.ask, 'a')
-            if os.environ.get('ATTICUS_UI') == '1':
+            if 'set' in j:   # "⚙ <key> <true|false>": the app flips it, so the Settings window and the app agree
+                if os.environ.get('ATTICUS_UI') == '1':
+                    print(f"⚙ {j['set']} {'true' if j['value'] else 'false'}", flush=True)
+                else:   # no app running: it reads the file when it starts
+                    json.dump({**(json.load(open(PREFS)) if os.path.exists(PREFS) else {}), j['set']: j['value']}, open(PREFS, 'w'), indent=1)
+                open(a + '.tmp', 'w').write('ok')
+                os.rename(a + '.tmp', a)
+            elif 'pick' in j and os.environ.get('ATTICUS_UI') == '1':   # "◇ {json}": the choices card
+                print('◇ ' + json.dumps({'q': j['pick'], 'options': choices(j['options']), 'a': a}), flush=True)
+            elif 'pick' in j:
+                r = osa('on run argv\nset r to choose from list (rest of argv) with prompt (item 1 of argv)\nif r is false then return ""\nreturn item 1 of r\nend run', j['pick'], *j['options'])
+                open(a + '.tmp', 'w').write(str(j['options'].index(r)) if r in j['options'] else '')
+                os.rename(a + '.tmp', a)   # whole, or the waiting side reads it half-written
+            elif os.environ.get('ATTICUS_UI') == '1':
                 print(f"? {j['q']}\t{' '.join(j['cmd'].split())}\t{a}", flush=True)   # not say(): it would squash the tabs
             else:
                 yes = osa('on run argv\ndisplay dialog (item 2 of argv) with title (item 1 of argv) buttons {"Don\'t Allow", "Allow"}\n'
@@ -961,6 +1045,10 @@ def main():
         return sys.exit(0 if ok else 1)
     if args == ['--gate']:
         return gate()
+    if args[:1] == ['--set'] and len(args) == 3:
+        return set_switch(args[1], args[2].lower())
+    if args[:1] == ['--pick'] and len(args) > 1:
+        return pick(args[1], args[2:])
     if args[:1] == ['--place']:   # several moves joined with +: all at once, not one window after another
         moves = [m.split('\0') for m in '\0'.join(args[1:]).split('\0+\0') if m and m != '+']
         from concurrent.futures import ThreadPoolExecutor

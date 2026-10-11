@@ -16,6 +16,8 @@
   canvas { width: 44px; height: 44px; flex: none; margin-left: -4px; transition: transform .35s var(--ease); }
   #status { flex: 1; min-width: 0; font-size: 12.5px; color: #a1a1a6; white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; }
+  .elapsed { display: flex; align-items: baseline; gap: 6px; margin-top: 10px; color: #8e8e93; font-size: 10.5px; line-height: 16px; animation: in .25s var(--ease) both; }
+  .elapsed b { color: #a1a1a6; font-weight: 400; font-variant-numeric: tabular-nums; white-space: nowrap; }
   #status span { display: inline-block; max-width: 100%; vertical-align: top; overflow: hidden; text-overflow: ellipsis; animation: in .35s var(--ease) both; }
   #status.live span { background: linear-gradient(90deg, #8e8e93 0%, #fff 45%, #8e8e93 90%); background-size: 200% 100%;
     -webkit-background-clip: text; color: transparent; animation: in .35s var(--ease) both, shimmer 1.5s linear infinite; }
@@ -35,7 +37,8 @@
   .q.live { font-size: 15px; color: #fff; }
   .q.live::after { content: ""; display: inline-block; width: 1.5px; height: 1em; margin-left: 2px; vertical-align: -2px;
     background: #fff; animation: blink 1s steps(1) infinite; }
-  .q.empty { display: none; }
+  .q.empty:not(.hear) { display: none; }
+  .q.empty.hear { color: #8e8e93; } .q.empty.hear::before { content: "Listening…"; }   /* voice: the bubble waits for words */
 
   .steps { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
   .steps:empty { display: none; }
@@ -83,10 +86,36 @@
   .ok code.full { max-height: 165px; overflow-y: auto; color: #d1d1d6; }
   .ok code::-webkit-scrollbar { width: 0; }
   .ok div { display: flex; gap: 8px; margin-top: 11px; }
-  .ok button { flex: 1; height: 28px; border: 0; border-radius: 14px; font: 500 12.5px -apple-system, system-ui, sans-serif; color: #fff;
+  .ok button, .pk .bar button { flex: 1; height: 28px; border: 0; border-radius: 14px; font: 500 12.5px -apple-system, system-ui, sans-serif; color: #fff;
     cursor: pointer; background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.16); transition: transform .3s var(--spring), background .2s; }
-  .ok button.go { background: #0a84ff; box-shadow: none; }
-  .ok button:hover { transform: scale(1.03); } .ok button:active { transform: scale(.96); }
+  .ok button.go, .pk .bar button.go { background: #0a84ff; box-shadow: none; }
+  .ok button:hover, .pk .bar button:hover { transform: scale(1.03); } .ok button:active, .pk .bar button:active { transform: scale(.96); }
+
+  /* "which one?": the AI isn't sure, so it shows its choices. Click one to see it big; click outside it for all of them again */
+  .pk { margin-top: 10px; padding: 11px 12px 12px; border-radius: 14px; background: rgba(255,255,255,.07); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14);
+    animation: grow .32s var(--spring) both; overflow: hidden; max-height: 900px; cursor: default;
+    transition: max-height .34s var(--ease), opacity .25s, margin .34s var(--ease), padding .34s var(--ease); }
+  .pk.gone { max-height: 0; opacity: 0; margin-top: 0; padding-top: 0; padding-bottom: 0; }
+  .pk > b { display: block; margin-bottom: 10px; font-size: 13.5px; font-weight: 600; }
+  .pk .g { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+  .pk .g.list { grid-template-columns: 1fr; gap: 4px; }
+  .pk .c { display: flex; flex-direction: column; gap: 3px; min-width: 0; margin: 0; padding: 5px 5px 7px; border: 0; border-radius: 10px; text-align: left;
+    font: inherit; color: inherit; cursor: pointer; background: rgba(255,255,255,.04); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.08);
+    animation: in .35s var(--ease) both; transition: transform .3s var(--spring), background .2s; }
+  .pk .g.list .c { padding: 8px 11px; }
+  .pk .c:hover { background: rgba(255,255,255,.1); transform: scale(1.03); } .pk .c:active { transform: scale(.97); }
+  .pk .th { display: grid; place-items: center; aspect-ratio: 4 / 3; margin-bottom: 3px; border-radius: 6px; overflow: hidden; background: rgba(0,0,0,.28);
+    font-size: 11px; font-weight: 600; letter-spacing: .4px; color: #8e8e93; transition: height .34s var(--ease); }
+  .pk .th img { width: 100%; height: 100%; object-fit: contain; }
+  .pk .p { display: none; font-size: 10.5px; color: #636366; overflow-wrap: anywhere; } .pk.open .c.on .p:not(:empty) { display: block; }
+  .pk .n, .pk .s { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pk .n { font-size: 12px; color: #f5f5f7; } .pk .s { font-size: 10.5px; color: #8e8e93; } .pk .s:empty { display: none; }
+  .pk.open .c:not(.on) { display: none; }
+  .pk.open .c.on { grid-column: 1 / -1; transform: none; background: rgba(255,255,255,.06); animation: grow .32s var(--spring) both; }
+  .pk.open .c.on .th { aspect-ratio: auto; height: 200px; }
+  .pk.open .c.on .n { font-size: 13px; } .pk.open .c.on .n, .pk.open .c.on .s { white-space: normal; overflow-wrap: anywhere; }
+  .pk .bar { display: flex; gap: 8px; margin-top: 10px; }
+  .pk:not(.open) .bar :is(.back, .go), .pk.open .bar .none { display: none; }
 
   /* safe mode off: a small tag says so; clicking it turns safe mode back on */
   #mode { position: absolute; top: 12px; right: 42px; z-index: 2; display: none; align-items: center; gap: 5px; height: 22px; padding: 0 9px;
@@ -186,7 +215,7 @@
   };
   // Typing box. listening: the mic is on (clicking in drops it). Enter always sends; the app ignores it while an answer runs,
   // and the text stays in the box until the app takes it (ui.listen), so nothing typed is lost.
-  let listening = false, hover = false, working = false, listeningHint = '';
+  let listening = false, hover = false, working = false;
   let compFrame = 0;
   const comp = (on, focus) => {
     $('comp').inert = !on;
@@ -217,7 +246,7 @@
   };
   $('mic').onclick = () => { $('ask').value = ''; comp(false); post({ mic: 1 }); };
   const status = (s, live) => {
-    if (s && listening && listeningHint) s = 'Listening… ' + listeningHint;
+    if (s && listening) s = 'Listening…';   // early AI notes never replace it while the user talks
     $('status').className = live ? 'live' : '';
     $('status').innerHTML = '<span></span>'; $('status').firstChild.textContent = s;
   };
@@ -233,8 +262,27 @@
     });
   };
 
+  let clockStart = null, clockHeld = null, clockFrame = 0, clock = null;   // clockHeld: ms so far while a card waits for the user
+  const clockPaint = () => { clock.querySelector('b').textContent = ((performance.now() - clockStart) / 1000).toFixed(2) + ' s'; };
+  const clockTick = () => {
+    if (clockStart === null) return;
+    clockPaint();
+    clockFrame = requestAnimationFrame(clockTick);
+  };
+  const clockStop = () => { cancelAnimationFrame(clockFrame); if (clockStart !== null) clockPaint(); clockStart = clockHeld = null; };
+  const clockHold = () => { if (clockStart === null) return; cancelAnimationFrame(clockFrame); clockPaint(); clockHeld = performance.now() - clockStart; clockStart = null; };
+  const clockGo = () => { if (clockHeld === null) return; clockStart = performance.now() - clockHeld; clockHeld = null; clockTick(); };
+  const clockBegin = () => {
+    if (clockStart !== null || clockHeld !== null || !turn()) return;
+    clock = document.createElement('div'); clock.className = 'elapsed';
+    clock.title = 'Time Atticus spent working. Waiting for your pick or approval is not counted.';
+    clock.innerHTML = '<b></b>';
+    turn().append(clock); clockStart = performance.now(); clockTick();
+  };
+
   window.ui = {
-    visible(on) { visible = on; },
+    finished() { clockStop(); },
+    visible(on) { visible = on; if (!on) clockStop(); },
     limit(h) {
       const value = h + 'px';
       if ($('card').style.getPropertyValue('--screen-height') === value) return;
@@ -242,11 +290,11 @@
       if ($('card').classList.contains('held')) $('card').style.minHeight = Math.min(h, parseFloat($('card').style.minHeight) || 0) + 'px';
       fit(false);
     },
-    reset() { $('thread').innerHTML = ''; $('thread').style.maxHeight = ''; $('card').classList.remove('held'); $('card').style.minHeight = ''; $('card').classList.remove('again'); void $('card').offsetWidth; },
+    reset() { clockStop(); $('thread').innerHTML = ''; $('thread').style.maxHeight = ''; $('card').classList.remove('held'); $('card').style.minHeight = ''; $('card').classList.remove('again'); void $('card').offsetWidth; },
     listen(keep) {   // keep: a typed ask; the box stays for the next one
+      clockStop();
       hover = false;
       listening = !keep;
-      listeningHint = '';
       working = false;
       if (keep) $('ask').value = ''; else comp(false);
       if ($('thread').children.length) $('card').classList.add('again');
@@ -254,17 +302,19 @@
       while ($('thread').children.length > 5) $('thread').firstElementChild.remove();
       const d = document.createElement('div'); d.className = 'turn';
       d.innerHTML = '<div class="q live empty" title="Click to edit and ask again"></div><div class="steps"></div><div class="a" title="Click to copy this answer"></div>';
+      if (!keep) d.firstChild.classList.add('hear');
       $('thread').append(d);
       setState('listening'); boost = 1; status('Listening…', true); fit();
     },
-    shortcut(hint) { listeningHint = hint; if (listening) status('Listening…', true); },
+    shortcut() {},   // just "Listening…": the user found "Release keys to send" too wordy
     level(v) { boost = 0.5 + Math.min(1, v) * 2.5; $('orb').style.transform = `scale(${1 + Math.min(1, v) * .1})`; },
     words(w) { const q = part('q'); if (q) { q.classList.toggle('empty', !w.trim()); q.textContent = w; fit(); } },
     think() {
+      clockBegin();
       listening = false;
       working = true;
       boost = 1; $('orb').style.transform = ''; setState('solving');
-      part('q')?.classList.remove('live'); status('Thinking…', true); fit();
+      part('q')?.classList.remove('live', 'hear'); status('Thinking…', true); fit();
     },
     line(l) {
       const tag = l[0], s = l.slice(2);
@@ -277,6 +327,7 @@
         status(s, true);
         setState(/^(Searching|Reading|Looking|Taking|Checking)/.test(s) ? 'searching' : /^(Moving|Opening|Using)/.test(s) ? 'working' : 'connecting');
       } else if (tag === '✓') {
+        clockStop();
         working = false;
         settle(); part('q')?.classList.remove('live'); status('');
         const a = part('a'); if (a) { a.dataset.answer = s; reveal(a, s); } setState('breathing');
@@ -289,15 +340,17 @@
       fit();
     },
     msg(s) {
+      clockStop();
       listening = false; working = false; settle(); part('q')?.classList.remove('live'); setState('breathing'); status('');
       if (part('q')?.classList.contains('empty')) { turn().remove(); status(s); }
       else { const a = part('a'); if (a) { a.className = 'a cancel'; a.textContent = s; } }
       fit();
     },
     stopped(s) {   // Esc or the hotkey cut it off
+      clockStop();
       listening = false;
       working = false;
-      $('thread').querySelectorAll('.ok').forEach(e => e.remove());
+      $('thread').querySelectorAll('.ok, .pk').forEach(e => e.remove());
       turn()?.querySelectorAll('.step.live').forEach(e => { e.classList.remove('live'); e.classList.add('cut'); });
       setState('breathing'); status(''); boost = 1; $('orb').style.transform = '';
       const q = part('q');
@@ -314,7 +367,7 @@
     compose(on) { comp(on, on); },
     draft(t) { $('ask').value = t; comp(true, true); },
     tap([x, y]) {   // a click on the box, not a drag: on the answer = copy it, anywhere else = type
-      const el = document.elementFromPoint(x, y), b = el?.closest('.ok button, .ok');
+      const el = document.elementFromPoint(x, y), b = el?.closest('.ok button, .ok, .pk button, .pk');
       if (b) return b.click();
       if (el?.closest('#mode')) return post({ safe: true });
       if (el?.closest('.tip')) { el.closest('.tip').remove(); return fit(); }   // click a tip: it goes
@@ -344,14 +397,51 @@
       };
       d.querySelectorAll('button').forEach((b, i) => b.onclick = e => {
         e.stopPropagation(); if (d.classList.contains('gone')) return;
-        post({ allow: !!i }); status(i ? 'Allowed' : 'Not allowed', true); setState('solving');
+        post({ allow: !!i }); clockGo(); status(i ? 'Allowed' : 'Not allowed', true); setState('solving');
         d.classList.add('gone'); follow(360); setTimeout(() => { d.remove(); fit(); }, 360);
       });
-      (turn() || $('thread')).append(d); setState('breathing'); status('Waiting for you'); fit();
+      (turn() || $('thread')).append(d); setState('breathing'); status('Waiting for you'); clockHold(); fit();
       setTimeout(() => {
         if (!d.isConnected || d.classList.contains('gone')) return;
-        post({ allow: false }); d.remove(); status('Approval expired', true); setState('solving'); fit();
+        post({ allow: false }); clockGo(); d.remove(); status('Approval expired', true); setState('solving'); fit();
       }, 60000);
+    },
+    pick({ q, options }) {   // "which one?": the index picked (or "" = none of these) goes back to the app, then the card goes
+      $('thread').querySelectorAll('.pk').forEach(e => e.remove());
+      const d = document.createElement('div'); d.className = 'pk';
+      d.innerHTML = '<b></b><div class="g"></div><div class="bar"><button class="none">None of these</button><button class="back">All choices</button><button class="go">Use this</button></div>';
+      d.querySelector('b').textContent = q;
+      const g = d.querySelector('.g'), pics = options.some(o => o.img);
+      g.classList.toggle('list', !pics);   // nothing to preview (songs, people): one click picks
+      let on = null;
+      const view = c => { on?.classList.remove('on'); on = c; c?.classList.add('on'); d.classList.toggle('open', !!c); follow(360); };
+      const done = (i, s) => {
+        if (d.classList.contains('gone')) return;
+        post({ pick: i < 0 ? '' : String(i) }); clockGo();
+        if (i >= 0 && part('steps')) {
+          const st = document.createElement('div'); st.className = 'step done'; st.innerHTML = '<span></span>';
+          st.firstChild.textContent = 'Picked ' + options[i].label; part('steps').append(st);
+        }
+        status(s || (i < 0 ? 'None of these' : 'Picked'), true); setState('solving');
+        d.classList.add('gone'); follow(360); setTimeout(() => { d.remove(); fit(); }, 360);
+      };
+      options.forEach((o, i) => {
+        const c = document.createElement('button'); c.className = 'c'; c.style.animationDelay = i * 35 + 'ms';
+        c.innerHTML = (pics ? '<div class="th"></div>' : '') + '<div class="n"></div><div class="s"></div><div class="p"></div>';
+        if (pics && o.img) { const im = new Image(); im.alt = ''; im.draggable = false; im.onload = () => fit(); im.src = o.img; c.firstChild.append(im); }
+        else if (pics) c.firstChild.textContent = o.kind || '';   // no preview: its file type
+        c.querySelector('.n').textContent = o.label; c.querySelector('.s').textContent = o.sub; c.querySelector('.p').textContent = o.path || '';
+        c.onclick = e => { e.stopPropagation(); if (!pics) done(i); else view(on === c ? null : c); };
+        g.append(c);
+      });
+      d.onclick = () => view(null);   // a click outside the big one: all the choices again
+      d.onanimationend = e => { if (e.target === d) d.style.animation = 'none'; };   // so the shrink can transition
+      const [none, back, go] = d.querySelectorAll('.bar button');
+      none.onclick = e => { e.stopPropagation(); done(-1); };
+      back.onclick = e => { e.stopPropagation(); view(null); };
+      go.onclick = e => { e.stopPropagation(); done([...g.children].indexOf(on)); };
+      (turn() || $('thread')).append(d); setState('breathing'); status('Waiting for you'); clockHold(); fit();
+      setTimeout(() => d.isConnected && done(-1, 'Pick expired'), 105000);   // the brain stops waiting at 110 s
     },
     mode(safe) { $('mode').classList.toggle('on', !safe); },
     xhot(on) { $('x').classList.toggle('hot', on); },
