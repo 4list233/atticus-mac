@@ -28,6 +28,15 @@ try {
   const w = frame.contentWindow, d = w.document, ui = w.ui;
   const tap = el => { const r = el.getBoundingClientRect(); ui.tap([r.x + r.width / 2, r.y + r.height / 2]); };
   ui.listen();
+  assert(!d.getElementById('comp').classList.contains('open'), 'Voice starts with the typing box hidden');
+  ui.hover(true); assert(d.getElementById('comp').classList.contains('open'), 'Hover reveals the typing box');
+  ui.hover(false); await new Promise(resolve => setTimeout(resolve, 280));
+  assert(!d.getElementById('comp').classList.contains('open') && d.getElementById('comp').offsetHeight === 0, 'Leaving smoothly collapses an untouched composer');
+  ui.hover(true); d.getElementById('ask').focus(); ui.hover(false);
+  assert(d.getElementById('comp').classList.contains('open'), 'Focused typing stays open on mouse exit');
+  d.getElementById('ask').value = 'Keep my draft'; d.getElementById('ask').blur();
+  assert(d.getElementById('comp').classList.contains('open'), 'A typed draft survives mouse exit and blur');
+  d.getElementById('ask').value = ''; ui.reset(); ui.listen();
   assert(d.querySelectorAll('.turn').length === 1 && ((d.getElementById('status').textContent + d.getElementById('thread').textContent).match(/Listening…/g) || []).length === 1, 'Listening is shown once');
   assert(w.getComputedStyle(d.querySelector('.q')).display === 'none', 'No empty transcript bubble before speech');
   ui.words('');
@@ -58,7 +67,7 @@ try {
   assert(!d.querySelector('.ok'), 'Cancelling removes approval controls');
   ui.ask(['Send this?', 'echo preview']); w.expireApproval();
   assert(!d.querySelector('.ok'), 'Expired approval cannot be clicked');
-  ui.limit(280); ui.compose(true); ui.hold(1000);
+  ui.limit(280); ui.compose(true); await new Promise(resolve => setTimeout(resolve, 280)); ui.hold(1000);
   assert(d.getElementById('card').offsetHeight <= 280, 'Manual resize fits the available screen');
   assert(d.getElementById('comp').getBoundingClientRect().bottom <= 280, 'Composer remains reachable after resize');
   ui.reset();

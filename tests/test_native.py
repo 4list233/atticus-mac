@@ -155,6 +155,7 @@ toggle.shortcut(true); precondition(toggle.events == ["start", "send"], "second 
 toggle.shortcut(false); toggle.shortcut(true); precondition(toggle.events.contains("cancel"), "working shortcut did not cancel")
 let empty = Harness(); empty.text = ""; empty.shortcut(true); empty.shortcut(false); empty.shortcut(true); precondition(empty.events == ["start", "send"] && !empty.clickTalk && !empty.engine.isRunning, "empty toggle failed to finalize late speech or reopened typing")
 Prefs.toggle = false
+let tap = Harness(); tap.text = ""; tap.began = Date(); tap.shortcut(true); tap.shortcut(false); precondition(tap.events == ["start", "send"] && !tap.clickTalk, "quick voice tap opened typing")
 let hold = Harness(); hold.shortcut(true); hold.shortcut(false); precondition(hold.events == ["start", "send"], "hold release regressed")
 let voice = Harness(); voice.speaking = true; voice.busy = true; voice.shortcut(true); precondition(voice.events == ["quiet"] && !voice.engine.isRunning && voice.busy, "stopping voice started the mic")
 let click = Harness(); click.engine.isRunning = true; click.clickTalk = true; click.shortcut(false); precondition(click.events.isEmpty, "release sent click-to-talk")

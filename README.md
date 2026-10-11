@@ -58,7 +58,7 @@ Apple's final transcript confirms each voice request before AI tools or learned 
 
 You need:
 - **macOS 26** or later (Atticus uses Apple's new on-device speech)
-- **An [Atticus license](https://3370759087892.gumroad.com/l/atticus)** ($5 once). Tap the shortcut and type `key <your key>` from your receipt.
+- **An [Atticus license](https://3370759087892.gumroad.com/l/atticus)** ($5 once). Open Atticus, hover the box to type `key <your key>` from your receipt.
 - **A paid Claude plan** (Pro or Max) and [Claude Code](https://claude.com/claude-code). No Claude Code yet? The setup window installs it and signs you in.
 - Apple's command line tools: `xcode-select --install`
 - Optional: [Peekaboo](https://github.com/openclaw/Peekaboo) (see its install steps) so Atticus can click inside apps

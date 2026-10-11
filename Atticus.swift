@@ -113,9 +113,8 @@ final class App: NSObject, WKScriptMessageHandler {
     var ahead = "", aheadItem: DispatchWorkItem?   // words the AI already started on while the user was still holding the keys
     var stops = 0   // each key release; tells a late "words landed" from a current one
     var dragging = false, fromTop = false   // moving or resizing the box; fromTop: dragging the top edge, so the bottom stays put
-    var began = Date()   // when the shortcut went down: a quick tap opens the box to type, a hold talks
-    var wasUp = false   // the box was already up when the shortcut went down: a tap puts it away
-    var fresh = false   // opened by a tap and nothing said, typed or asked yet: the shortcut again puts it away
+    var began = Date()   // when recording began, for the recording limit
+    var fresh = false   // an untouched input session
     var composing = false, compH: CGFloat = 0, clickTalk = false, quiet: DispatchWorkItem?   // typing box focused / its height from the bottom; mic button = talk without keys
     var toggleTalk = false, shortcutDown = false
     var askFile = ""   // safe mode: where the Allow / Don't Allow answer goes (atticus.py's gate waits on it)
@@ -416,12 +415,11 @@ final class App: NSObject, WKScriptMessageHandler {
     func start() {
         guard !Prefs.bool("paused") else { return }
         shush()
-        if engine.isRunning { return dismiss() }   // listening with no keys held (tapped open, mic button): the shortcut stops it
+        if engine.isRunning { return dismiss() }   // the shortcut stops click-to-talk
         if busy {   // pressed again while it works = cancel
             return cancel()
         }
         if fresh && panel.isVisible { return dismiss() }
-        wasUp = panel.isVisible
         cancelFast()
         text = ""; ahead = ""; speechFailed = false; consumed = 0; consumedText = ""; liveRevised = false; did = []
         if !panel.isVisible && Date().timeIntervalSince(lastDone) > 30 { js("reset"); try? FileManager.default.removeItem(atPath: recent) }
@@ -435,6 +433,7 @@ final class App: NSObject, WKScriptMessageHandler {
         cue("soundStart")
         unwarm(); warm = spawn()
         onboarding.tried()
+        hovering = false
         js("listen")
         js("shortcut", toggleTalk ? "Press again to send" : clickTalk ? "" : "Release keys to send")
         show()
@@ -487,7 +486,7 @@ final class App: NSObject, WKScriptMessageHandler {
         }
         engine.prepare()
         do { try engine.start() } catch { hush(); js("msg", "Mic error: \(error.localizedDescription)"); hide(after: 3); return }
-        began = Date()   // after the mic is up: a slow mic start must not turn a tap into a hold
+        began = Date()   // measure the limit from when the mic is ready
         Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] t in
             guard let self, engine.isRunning else { return t.invalidate() }
             let f = hotkey().flags, held = Date().timeIntervalSince(began)
@@ -569,10 +568,6 @@ final class App: NSObject, WKScriptMessageHandler {
 
     func stop() {
         guard engine.isRunning, !clickTalk || text.isEmpty == false else { return }
-        if !toggleTalk && !clickTalk && text.isEmpty && Date().timeIntervalSince(began) < 0.4 {   // tapped, not held: like Spotlight
-            if wasUp { hush(); return close(clear: false) }   // the box was up: a tap puts it away
-            clickTalk = true; fresh = true; panel.makeKey(); panel.makeFirstResponder(web); js("compose", true); return
-        }
         engine.stop(); engine.inputNode.removeTap(onBus: 0); feed?.finish()
         clickTalk = false; toggleTalk = false; quiet?.cancel()
         busy = true
@@ -1222,6 +1217,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
                 p.arguments = [v as? Bool == true ? "enable" : "disable", "gui/\(getuid())/com.atticus.app"]; try? p.run()
             }
         case "record": record()
+        case "cancelRecord": if monitor != nil { done(nil) }
         case "unlearn":
             guard let say = b["say"] as? String else { return }
             DispatchQueue.global().async { [weak self] in self?.helper(["--unlearn", say]); DispatchQueue.main.async { self?.refresh() } }
@@ -1257,6 +1253,8 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         default: break
         }
     }
+
+    func windowDidResignKey(_ n: Notification) { if monitor != nil { done(nil) } }
 
     func windowWillClose(_ n: Notification) {
         if monitor != nil { done(nil) }   // closed mid-recording: keep the old shortcut

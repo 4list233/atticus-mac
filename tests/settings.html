@@ -37,6 +37,15 @@ try {
   load({input: 'type', talkMode: 'toggle'});
   assert(mode.closest('.group').hidden && d.getElementById('schint').textContent.includes('Return sends'), 'Typing mode shows its own shortcut interaction');
   load({talkMode: 'toggle'});
+  const change = d.getElementById('change');
+  change.click(); assert(change.textContent === 'Cancel Recording', 'Recording has a visible cancel action');
+  change.click(); await new Promise(resolve => setTimeout(resolve, 20));
+  assert(messages.some(m => m.do === 'cancelRecord') && d.getElementById('caps').textContent.includes('Space'), 'Cancel restores the original shortcut');
+  change.click(); d.querySelector('nav button[data-s="brain"]').click();
+  assert(!d.getElementById('shortcut').classList.contains('rec'), 'Switching tabs cancels recording');
+  d.querySelector('nav button[data-s="general"]').click(); change.click();
+  d.getElementById('talklabel').dispatchEvent(new w.Event('pointerdown', {bubbles: true}));
+  assert(change.textContent === 'Change Shortcut' && d.getElementById('caps').textContent.includes('Space'), 'Clicking away cancels without replacing the shortcut');
   results.textContent = checks.join('\n') + `\n\n${checks.length} checks passed.`; results.className = 'pass';
 } catch (error) { results.textContent = checks.join('\n') + '\n✗ ' + error.message; results.className = 'fail'; }
 </script></html>

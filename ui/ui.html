@@ -105,8 +105,8 @@
   .tip.gone { opacity: 0; transform: translateY(-4px); transition: opacity .4s, transform .4s; }
 
   /* typing box: grows in on hover (or the shortcut, in typing mode); the mic goes back to voice */
-  #comp { display: none; align-items: center; gap: 8px; margin-top: 12px; height: 36px; flex: none; }
-  #comp.open { display: flex; animation: grow .32s var(--spring) both; }   /* size is instant, so the box measures it right away */
+  #comp { display: flex; align-items: center; gap: 8px; margin-top: 0; height: 0; opacity: 0; overflow: hidden; flex: none; transition: height .24s var(--ease), margin-top .24s var(--ease), opacity .18s; }
+  #comp.open { height: 36px; margin-top: 12px; opacity: 1; }
   #ask { flex: 1; min-width: 0; height: 34px; box-sizing: border-box; padding: 0 13px; border: 0; outline: 0; border-radius: 17px;
     font: 13.5px -apple-system, system-ui, sans-serif; color: #fff; caret-color: #0a84ff; -webkit-user-select: text; cursor: text;
     background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14); transition: background .25s, box-shadow .25s; }
@@ -149,7 +149,7 @@
 <div id="card">
   <div id="head"><canvas id="orb"></canvas><div id="status"></div></div>
   <div id="thread"></div>
-  <div id="comp"><input id="ask" placeholder="Ask Atticus…" autocomplete="off" spellcheck="false" aria-label="Ask Atticus">
+  <div id="comp" inert><input id="ask" placeholder="Ask Atticus…" autocomplete="off" spellcheck="false" aria-label="Ask Atticus">
     <button id="mic" title="Talk instead" aria-label="Talk instead"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button></div>
 </div>
 <div class="e" id="eL"></div><div class="e" id="eR"></div><div class="e" id="eT"></div><div class="e" id="eB"></div>
@@ -187,8 +187,16 @@
   // Typing box. listening: the mic is on (clicking in drops it). Enter always sends; the app ignores it while an answer runs,
   // and the text stays in the box until the app takes it (ui.listen), so nothing typed is lost.
   let listening = false, hover = false, working = false, listeningHint = '';
+  let compFrame = 0;
   const comp = (on, focus) => {
-    if ($('comp').classList.contains('open') !== on) { $('comp').classList.toggle('open', on); fit(); }
+    $('comp').inert = !on;
+    if ($('comp').classList.contains('open') !== on) {
+      $('comp').classList.toggle('open', on); fit();
+      cancelAnimationFrame(compFrame);
+      const end = performance.now() + 250;
+      const resize = () => { fit(false); if (performance.now() < end) compFrame = requestAnimationFrame(resize); };
+      compFrame = requestAnimationFrame(resize);
+    }
     if (on && focus) $('ask').focus(); else if (!on) $('ask').blur();
   };
   // Clicking in or typing (not the cursor landing there from the shortcut): typing wins, so the mic stops and what was heard goes
@@ -236,6 +244,7 @@
     },
     reset() { $('thread').innerHTML = ''; $('thread').style.maxHeight = ''; $('card').classList.remove('held'); $('card').style.minHeight = ''; $('card').classList.remove('again'); void $('card').offsetWidth; },
     listen(keep) {   // keep: a typed ask; the box stays for the next one
+      hover = false;
       listening = !keep;
       listeningHint = '';
       working = false;

@@ -327,10 +327,11 @@
   const $ = id => document.getElementById(id);
   const post = m => window.webkit?.messageHandlers.st.postMessage(m);
   let P = {};
-  const shortcutHint = () => P.input === 'type' ? 'Press to type. Return sends.' : P.talkMode === 'toggle' ? 'Press to listen. Press again to send.' : 'Hold it, talk, let go. Tap to type.';
+  const shortcutHint = () => P.input === 'type' ? 'Press to type. Return sends.' : P.talkMode === 'toggle' ? 'Press to listen. Press again to send.' : 'Hold it, talk, let go. Hover the box to type.';
   const set = (k, v) => { P[k] = v; post({ do: 'set', k, v }); paint(); };
 
   document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+    cancelRecord();
     document.querySelectorAll('nav button, section').forEach(e => e.classList.remove('on'));
     b.classList.add('on'); $(b.dataset.s).classList.add('on');
     if (b.dataset.s === 'apps') post({ do: 'apps' });   // fresh list and statuses each visit
@@ -343,11 +344,18 @@
     + (hint ? `<span class="hint">${hint}</span>` : '');
   let recording = false;
   $('change').onclick = () => {
-    if (recording) return;
-    recording = true; $('shortcut').classList.add('rec'); $('change').textContent = 'Recording…';
-    showCaps('', 'Press your shortcut'); $('schint').textContent = 'Use ⌃, ⌥, ⇧ or ⌘ with a key, or an F-key. Esc cancels.'; $('schint').className = '';
+    if (recording) return cancelRecord();
+    recording = true; $('shortcut').classList.add('rec'); $('change').textContent = 'Cancel Recording';
+    showCaps('', 'Recording — press your shortcut'); $('schint').textContent = 'Use modifiers with a key, or an F-key. Esc or click away to cancel.'; $('schint').className = '';
     post({ do: 'record' });
   };
+
+  const cancelRecord = () => {
+    if (!recording) return;
+    recording = false; $('shortcut').classList.remove('rec'); $('change').textContent = 'Change Shortcut';
+    $('schint').className = ''; paint(); post({ do: 'cancelRecord' });
+  };
+  document.addEventListener('pointerdown', e => { if (!e.target.closest('#change')) cancelRecord(); });
 
   const SOUNDS = ['None', 'Pop', 'Tink', 'Glass', 'Ping', 'Purr', 'Bottle', 'Blow', 'Hero', 'Funk', 'Morse', 'Submarine', 'Frog', 'Sosumi', 'Basso'];
   document.querySelectorAll('select').forEach(s => {
@@ -370,7 +378,7 @@
       const on = P[g.dataset.k] === b.dataset.v; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
     }));
     if (!recording && $('schint').className !== 'warn') $('schint').textContent = shortcutHint();
-    $('talkhint').textContent = P.talkMode === 'toggle' ? 'Press once to listen, again to send. Pauses keep listening.' : 'Hold to listen. Release to send. Tap to type.';
+    $('talkhint').textContent = P.talkMode === 'toggle' ? 'Press once to listen, again to send. Pauses keep listening.' : 'Hold to listen. Release to send. Hover the box to type.';
     document.querySelector('[data-k=talkMode]').closest('.group').hidden = P.input === 'type';
     document.querySelectorAll('.sw input').forEach(i => i.checked = !!P[i.dataset.k]);
     document.querySelectorAll('select').forEach(s => s.value = P[s.dataset.k]);
