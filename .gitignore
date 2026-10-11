@@ -16,6 +16,8 @@ recent.jsonl
 log.jsonl
 memory.md
 license
+# the MIT license file: on macOS "license" above matches it too
+!LICENSE
 app.err
 
 # GitHub holds just the app. Agent instructions, skills and the website stay on this Mac.
