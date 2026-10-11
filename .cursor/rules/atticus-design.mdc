@@ -1,0 +1,6 @@
+---
+description: Atticus repository conventions and premium macOS UI design language
+alwaysApply: true
+---
+
+Read `AGENTS.md` for this repository's working rules. Before changing UI, copy, motion or shortcut interactions, read `.agents/skills/atticus-design/SKILL.md` and apply it. The design skill is scoped to this repository; no global agent configuration is required.

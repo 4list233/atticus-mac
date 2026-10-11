@@ -4,6 +4,10 @@ set -e; cd "$(dirname "$0")"
 [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 26 ] || { echo "Atticus needs macOS 26 or later (it uses Apple's new on-device speech)."; exit 1; }
 xcode-select -p >/dev/null 2>&1 || { echo "Needs Apple's command line tools. Run: xcode-select --install   then run ./build.sh again."; exit 1; }
 command -v claude >/dev/null || [ -x ~/.local/bin/claude ] || echo "Note: Claude Code is not installed yet. Atticus's setup window will install it and sign you in."
+STAGE=$(mktemp -d)
+trap 'rm -rf "$STAGE"' EXIT
+# A compiler error must leave the installed app and its resources alone.
+swiftc -O -target "$(uname -m)-apple-macos26.0" Atticus.swift -o "$STAGE/Atticus"
 APP=~/Applications/Atticus.app   # in Applications so System Settings can list it for permissions
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/ui"
 cp atticus.py "$APP/Contents/Resources/"
@@ -22,12 +26,12 @@ cat > "$APP/Contents/Info.plist" <<P
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>AtticusSource</key><string>$(pwd)</string>
 <key>LSUIElement</key><true/>
-<key>NSMicrophoneUsageDescription</key><string>Atticus listens while you hold Control+Option+Space.</string>
+<key>NSMicrophoneUsageDescription</key><string>Atticus listens when you use its shortcut or microphone button.</string>
 <key>NSAppleEventsUsageDescription</key><string>Atticus controls apps like Finder, Chrome and Music when you ask it to.</string>
 <key>NSSpeechRecognitionUsageDescription</key><string>Atticus turns your words into text on this Mac.</string>
 </dict></plist>
 P
-swiftc -O -target "$(uname -m)-apple-macos26.0" Atticus.swift -o "$APP/Contents/MacOS/Atticus"
+mv "$STAGE/Atticus" "$APP/Contents/MacOS/Atticus"
 # With a code-signing identity named "Atticus Local Signing" in the keychain, macOS keeps permissions across
 # rebuilds; without one it signs ad hoc, and permissions must be granted again after each build.
 ID=$(security find-identity -p codesigning | awk '/Atticus Local Signing/{print $2; exit}')
@@ -48,6 +52,9 @@ cat > "$AGENT" <<P
 </dict></plist>
 P
 [ -n "$ATTICUS_NO_RESTART" ] && exit 0   # the app's own updater restarts it when idle
-pkill -f "$APP/Contents/MacOS/Atticus$" 2>/dev/null && sleep 1   # a copy opened by hand holds the one-copy lock: stop it too
-launchctl kickstart -k gui/$(id -u)/com.atticus.app 2>/dev/null || launchctl bootstrap gui/$(id -u) "$AGENT"
+# Reload the job so launchd refreshes its executable signing requirement after a rebuild.
+launchctl bootout gui/$(id -u)/com.atticus.app 2>/dev/null || true
+pkill -f "$APP/Contents/MacOS/Atticus$" 2>/dev/null && sleep 1   # stop a copy opened by hand too
+# bootout can return before the job has finished unloading.
+launchctl bootstrap gui/$(id -u) "$AGENT" 2>/dev/null || { sleep 1; launchctl bootstrap gui/$(id -u) "$AGENT"; }
 echo "Atticus is running. Hold Control+Option+Space and talk."

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Atticus UI regression checks</title>
+<style>
+  body { background: #141416; color: #f5f5f7; font: 14px system-ui; margin: 32px; }
+  iframe { width: 460px; height: 540px; border: 0; border-radius: 18px; background: #262629; }
+  pre { white-space: pre-wrap; line-height: 1.8; } .pass { color: #30d158; } .fail { color: #ff453a; }
+</style>
+<h1>Atticus UI regression checks</h1><p>Local fixture. No microphone, Claude, clipboard, or Mac actions.</p>
+<pre id="results">Running…</pre><iframe id="preview" title="Atticus overlay preview"></iframe>
+<script type="module">
+const results = document.getElementById('results'), frame = document.getElementById('preview');
+const messages = [], checks = [];
+const assert = (condition, name) => { if (!condition) throw Error(name); checks.push('✓ ' + name); };
+try {
+  const html = await (await fetch('../ui/ui.html')).text(), orbs = await (await fetch('../ui/orbs.js')).text();
+  const ready = new Promise(resolve => window.addEventListener('message', e => {
+    if (e.source !== frame.contentWindow) return;
+    messages.push(e.data); if (e.data.ready) resolve();
+  }));
+  const bridge = `<script>
+    window.expireApproval = null;
+    const later = window.setTimeout;
+    window.setTimeout = (f, ms, ...args) => ms === 60000 ? (window.expireApproval = f, 0) : later(f, ms, ...args);
+    window.webkit = {messageHandlers: {c: {postMessage: m => parent.postMessage(m, '*')}, h: {postMessage: () => {}}}};
+  <\/script>`;
+  frame.srcdoc = html.replace('/*ORBS*/', () => orbs).replace('<head>', '<head>' + bridge);
+  await Promise.race([ready, new Promise((_, reject) => setTimeout(() => reject(Error('UI did not initialize')), 5000))]);
+  const w = frame.contentWindow, d = w.document, ui = w.ui;
+  const tap = el => { const r = el.getBoundingClientRect(); ui.tap([r.x + r.width / 2, r.y + r.height / 2]); };
+  ui.listen();
+  assert(d.querySelectorAll('.turn').length === 1 && ((d.getElementById('status').textContent + d.getElementById('thread').textContent).match(/Listening…/g) || []).length === 1, 'Listening is shown once');
+  assert(w.getComputedStyle(d.querySelector('.q')).display === 'none', 'No empty transcript bubble before speech');
+  ui.words('');
+  assert(w.getComputedStyle(d.querySelector('.q')).display === 'none', 'Empty speech updates keep the transcript hidden');
+  ui.shortcut('Press again to send');
+  assert(d.getElementById('status').textContent.includes('Press again to send'), 'Toggle listening explains how to send');
+  ui.line('· Preparing a response');
+  assert(d.getElementById('status').textContent.includes('Press again to send'), 'Early reasoning keeps the listening instruction');
+  ui.words('Open Notes');
+  assert(w.getComputedStyle(d.querySelector('.q')).display !== 'none', 'Speech reveals the transcript bubble');
+  ui.think();
+  assert(!d.getElementById('status').textContent.includes('Press again to send'), 'Sending clears the listening instruction');
+  ui.line('✓ Notes is open.');
+  ui.listen(true); ui.words('Open Safari'); ui.think(); ui.line('✓ Safari is open.');
+  tap(d.querySelector('.a'));
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert(messages.some(m => m.copy === 'Notes is open.'), 'Copying an older answer copies that answer');
+  tap(d.querySelector('.q'));
+  assert(d.getElementById('ask').value === 'Open Notes', 'Click a transcript to edit it');
+  d.getElementById('ask').value = '';
+  d.getElementById('ask').dispatchEvent(new w.KeyboardEvent('keydown', {key: 'ArrowUp', bubbles: true}));
+  assert(d.getElementById('ask').value === 'Open Safari', 'Up arrow recalls the latest request');
+  ui.draft('Please check these partial words');
+  assert(d.getElementById('ask').value === 'Please check these partial words' && d.activeElement === d.getElementById('ask'), 'Unconfirmed speech is editable and focused');
+  ui.ask(['Send this?', 'echo preview']);
+  assert(!!d.querySelector('.ok'), 'Approval card is visible');
+  ui.stopped('Answer stopped');
+  assert(!d.querySelector('.ok'), 'Cancelling removes approval controls');
+  ui.ask(['Send this?', 'echo preview']); w.expireApproval();
+  assert(!d.querySelector('.ok'), 'Expired approval cannot be clicked');
+  ui.limit(280); ui.compose(true); ui.hold(1000);
+  assert(d.getElementById('card').offsetHeight <= 280, 'Manual resize fits the available screen');
+  assert(d.getElementById('comp').getBoundingClientRect().bottom <= 280, 'Composer remains reachable after resize');
+  ui.reset();
+  assert(d.getElementById('thread').style.maxHeight === '', 'New conversation clears stale resize constraints');
+  ui.listen(true); ui.words('A'.repeat(400)); ui.think(); ui.line('✓ ' + 'https://example.com/' + 'a'.repeat(400));
+  assert(d.getElementById('card').scrollWidth <= 460, 'Long URLs and transcripts do not overflow the card');
+  ui.reset(); ui.listen(true); ui.words('Put Notes on the left.'); ui.think();
+  ui.line('▸ Moving Notes → left'); ui.line('✓ Notes is on the left.'); ui.compose(true);
+  results.textContent = checks.join('\n') + `\n\n${checks.length} checks passed.`; results.className = 'pass';
+} catch (error) { results.textContent = checks.join('\n') + '\n✗ ' + error.message; results.className = 'fail'; }
+</script></html>

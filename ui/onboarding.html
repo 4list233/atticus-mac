@@ -93,10 +93,20 @@
   #done.on #done-check circle { animation: pop .55s .1s var(--spring) forwards; }
   #done.on #done-check path { animation: draw .4s .4s var(--ease) forwards; }
   /* try it */
-  #say { height: 28px; margin-top: 22px; font: 400 19px/28px system-ui; letter-spacing: -.01em; color: var(--fg); position: relative; width: 100%; }
-  #say span { position: absolute; inset: 0; transition: opacity .5s var(--ease), transform .6s var(--out), filter .5s var(--ease); }
-  #say span.out { opacity: 0; transform: translateY(-10px); filter: blur(4px); }
-  #say span.in { opacity: 0; transform: translateY(10px); filter: blur(4px); }
+  /* done: a practice area, so the first tries are the real features */
+  .tries { width: 100%; max-width: 400px; margin-top: 22px; display: grid; gap: 10px; text-align: left; }
+  .try { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 26px; font-size: 14px; color: var(--fg); }
+  .try span { flex: none; font-size: 12px; color: var(--fg3); }
+  #pad { box-sizing: border-box; width: 100%; height: 58px; margin: -2px 0 4px; resize: none; padding: 9px 12px; border: 0; border-radius: 10px;
+    font: 13px/1.4 system-ui; color: var(--fg); background: var(--card); box-shadow: inset 0 0 0 .5px var(--line);
+    outline: none; -webkit-user-select: text; cursor: text; caret-color: var(--accent); transition: box-shadow .2s; }
+  #pad::placeholder { color: var(--fg3); }
+  #pad:focus { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px rgba(10,132,255,.18); }
+  #timer { flex: none; height: 26px; padding: 0 12px; border: 0; border-radius: 13px; font: 500 12px system-ui; font-variant-numeric: tabular-nums;
+    color: var(--fg); background: var(--card); box-shadow: inset 0 0 0 .5px var(--line); cursor: pointer; transition: color .3s, box-shadow .3s; }
+  #timer:hover { filter: brightness(1.08); } #timer:active { transform: scale(.97); }
+  #timer:focus-visible { outline: 3px solid rgba(10,132,255,.45); outline-offset: 2px; }
+  #timer.done { color: var(--green); box-shadow: inset 0 0 0 .5px var(--green); }
   .tips { display: flex; gap: 18px; justify-content: center; margin-top: 20px; font-size: 12px; color: var(--fg3); }
   .tips kbd { font: 500 11px system-ui; padding: 1px 6px; border-radius: 4px; background: var(--card); box-shadow: inset 0 0 0 .5px var(--line); color: var(--fg2); }
 
@@ -114,7 +124,7 @@
 <section class="page" id="welcome">
   <div id="orbwrap" class="r"><canvas id="orb"></canvas></div>
   <h1 class="r">Meet Atticus</h1>
-  <p class="sub r">Hold two keys, say what you need, let go. Your Mac does the rest.</p>
+  <p class="sub r" id="welcome-talk">Hold the shortcut, say what you need, let go. Your Mac does the rest. $5 once, plus your Claude plan.</p>
   <div class="keys r"><div class="key" id="k1">⌃</div><div class="key" id="k2">⌥</div><div class="key wide" id="k3">Space</div></div>
   <button class="btn r" data-go="perms">Get Started</button>
 </section>
@@ -129,7 +139,7 @@
 
 <section class="page" id="try">
   <h2 class="r">Try it now</h2>
-  <p class="sub r">Hold the keys anywhere, say anything, then let go.</p>
+  <p class="sub r" id="try-talk">Hold the keys anywhere, say anything, then let go. Simple commands can run as you speak; AI actions wait for confirmed words.</p>
   <div class="keys big r"><div class="key" id="t1">⌃</div><div class="key" id="t2">⌥</div><div class="key wide" id="t3">Space</div></div>
   <div id="hint" class="r">Waiting for you…</div>
   <button class="btn quiet r" data-go="done">Skip</button>
@@ -138,8 +148,13 @@
 <section class="page" id="done">
   <svg id="done-check" class="r" viewBox="0 0 22 22"><circle cx="11" cy="11" r="11"/><path d="M6.5 11.3l3 3 6-6.3"/></svg>
   <h2 class="r">You’re all set</h2>
-  <p class="sub r">A few more things to try.</p>
-  <div id="say" class="r"><span>“Open Chrome and snap it left”</span></div>
+  <p class="sub r" id="practice-talk">Try a few. Hold the keys, say it, let go.</p>
+  <div class="tries r">
+    <div class="try">“Open Chrome and snap it left”<span>Instant, no AI</span></div>
+    <div class="try">“Type a haiku about Mondays”<span>Click the box first</span></div>
+    <textarea id="pad" placeholder="Practice box" aria-label="Practice box"></textarea>
+    <div class="try">“Tell me when the timer is done”<button id="timer">Start a 20 s timer</button></div>
+  </div>
   <div class="tips r"><div><kbd>esc</kbd> stops an answer</div><div>Click away to close</div></div>
   <button class="btn r" id="finish">Start Using Atticus</button>
 </section>
@@ -163,7 +178,7 @@
   // Permissions: icon color + SF-style glyph, why it's needed.
   const P = [
     ['claude', 'Claude Plan', 'Checking your Claude sign-in…', '#d97757', '<path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/>'],
-    ['mic', 'Microphone', 'Hears you while you hold the keys.', '#ff9f0a', '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>'],
+    ['mic', 'Microphone', 'Listens when you start a voice request.', '#ff9f0a', '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>'],
     ['speech', 'Speech Recognition', 'Turns your words into text, on this Mac.', '#8e8e93', '<path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/>'],
     ['ax', 'Accessibility', 'Moves windows and clicks buttons for you.', '#0a84ff', '<circle cx="12" cy="4.5" r="1.6"/><path d="M5 8.5l7 1.5 7-1.5M12 10v4.5M12 14.5l-3 6M12 14.5l3 6"/>'],
     ['screen', 'Screen Recording', 'Looks at your screen when you say “this”.', '#bf5af2', '<rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/>'],
@@ -184,6 +199,11 @@
 
   let planOK = false, last = null;
   window.ob = {
+    mode(toggle) {
+      $('welcome-talk').textContent = (toggle ? 'Press the shortcut, speak, press again to send.' : 'Hold the shortcut, speak, release to send.') + ' Your Mac does the rest. $5 once, plus your Claude plan.';
+      $('try-talk').textContent = (toggle ? 'Press the shortcut anywhere. Say what you need, then press again to send.' : 'Hold the keys anywhere, say what you need, then let go.') + ' Simple commands can run as you speak; AI actions wait for confirmed words.';
+      $('practice-talk').textContent = toggle ? 'Try a few. Press to talk, press again to send. Esc cancels.' : 'Try a few. Hold the keys, say it, let go. Esc cancels.';
+    },
     keys(ctrl, opt) {   // live modifier state, many times a second
       const k = KEYS[cur];
       if (!k || $(k[2]).classList.contains('yes')) return;
@@ -207,7 +227,8 @@
       let n = 0;
       for (const [id] of P) {
         const row = $('p-' + id);
-        if (s[id]) { n++; if (!row.classList.contains('ok')) row.classList.add('ok'); }
+        row.classList.toggle('ok', !!s[id]);
+        if (s[id]) n++;
       }
       $('count').textContent = n === P.length ? 'All set' : `${n} of ${P.length} allowed`;
       $('count').classList.toggle('all', n === P.length);
@@ -227,17 +248,13 @@
   };
   setTimeout(press, 1200);
 
-  // Example asks swap with a soft blur.
-  const asks = ['“Open Chrome and snap it left”', '“What’s the weather tomorrow?”', '“What’s using all my RAM?”',
-                '“Remember: study mode opens Notes”', '“Move this to my monitor”'];
-  let ai = 0;
-  setInterval(() => {
-    if (cur !== 'done') return;
-    const old = $('say').firstElementChild, s = document.createElement('span');
-    s.className = 'in'; s.textContent = asks[ai = (ai + 1) % asks.length]; $('say').append(s);
-    old.classList.add('out'); requestAnimationFrame(() => requestAnimationFrame(() => s.classList.remove('in')));
-    setTimeout(() => old.remove(), 600);
-  }, 2800);
+  // Something to watch: "seconds left" goes away when it ends, so a watch has a clear thing to wait for.
+  let tick;
+  $('timer').onclick = () => {
+    let n = 20; clearInterval(tick);
+    const show = () => { $('timer').textContent = n > 0 ? `${n} seconds left` : 'Timer done'; $('timer').classList.toggle('done', n <= 0); };
+    show(); tick = setInterval(() => { n--; show(); if (n <= 0) clearInterval(tick); }, 1000);
+  };
 
   go('welcome');
 

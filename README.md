@@ -37,9 +37,9 @@ https://github.com/user-attachments/assets/e3444422-02e8-4dd7-bb44-d39f2b0f2bef
 
 <table>
 <tr>
-<td width="33%" valign="top"><h3>No API key</h3>Runs on the Claude plan you already have, through <code>claude -p</code>. Nothing new to pay for.</td>
-<td width="33%" valign="top"><h3>~700 asks for $1</h3>About 0.14¢ per ask in real use, priced at API list rates. Every ask is logged with its cost in the menu bar.</td>
-<td width="33%" valign="top"><h3>Instant when it can be</h3>Opening apps and sites, moving windows, web searches and music skip the AI entirely. Everything else starts while you are still talking.</td>
+<td width="33%" valign="top"><h3>No API key</h3>Runs on the Claude plan you already have, through <code>claude -p</code>. Atticus is $5 once; AI usage uses your existing Claude plan.</td>
+<td width="33%" valign="top"><h3>~700 asks for $1</h3>About 0.14¢ per ask in real use, priced at API list rates. Completed requests are logged with their cost in Settings → Usage.</td>
+<td width="33%" valign="top"><h3>Instant when it can be</h3>Opening apps and sites, moving windows, web searches and music skip the AI entirely. With Start while I’m talking on, reasoning can start during pauses; AI tools wait for confirmed words.</td>
 </tr>
 <tr>
 <td valign="top"><h3>Private ears</h3>Apple's on-device speech turns your voice into text. Audio never leaves your Mac.</td>
@@ -48,12 +48,17 @@ https://github.com/user-attachments/assets/e3444422-02e8-4dd7-bb44-d39f2b0f2bef
 </tr>
 </table>
 
-Esc stops an answer. Pressing the keys again cancels it.
+Choose **Hold to talk** or **Press to toggle** in Settings → General → Shortcut behavior. Hold mode sends when you release. Toggle mode starts on the first press and sends on the second; pauses keep listening. Pressing the shortcut while Atticus answers stops it; during spoken playback it stops the voice. Esc cancels listening without sending. Toggle recordings reach a review screen after 60 seconds, rather than sending automatically. Closing the overlay or pausing Atticus stops its microphone, workers and voice.
+
+Click any answer to copy it, including earlier answers still shown in the box. Click your request to edit and ask again, or press ↑ in an empty typing box to recall the latest request. The overlay stays within your display when resized and respects Reduce Motion.
+
+Apple's final transcript confirms each voice request before AI tools or learned shortcuts run. AI reasoning can start during a pause, but its tools wait for confirmation. If speech finalization takes too long, Atticus offers the partial text for review. Instant commands still skip the AI entirely. Supported built-in commands run mid-sentence, before you send, with Instant commands and Act while I’m talking on (Settings → Intelligence). Learned shortcuts wait for confirmed words.
 
 ## Install
 
 You need:
 - **macOS 26** or later (Atticus uses Apple's new on-device speech)
+- **An [Atticus license](https://3370759087892.gumroad.com/l/atticus)** ($5 once). Tap the shortcut and type `key <your key>` from your receipt.
 - **A paid Claude plan** (Pro or Max) and [Claude Code](https://claude.com/claude-code). No Claude Code yet? The setup window installs it and signs you in.
 - Apple's command line tools: `xcode-select --install`
 - Optional: [Peekaboo](https://github.com/openclaw/Peekaboo) (see its install steps) so Atticus can click inside apps
@@ -73,7 +78,22 @@ After that, Atticus lives in the menu bar. Open it from Spotlight (⌘Space, "At
 If you sign out of Claude later, the setup window comes back by itself.
 To see it again: `defaults delete com.atticus.app onboarded`, then restart the app.
 
-Test: `python3 atticus.py --selftest`. Remove: `launchctl bootout gui/$(id -u)/com.atticus.app`, then delete `~/Applications/Atticus.app`, `~/.atticus`, `~/.config/atticus` (your settings and history) and `~/Library/LaunchAgents/com.atticus.app.plist`.
+Test: `python3 atticus.py --selftest` on macOS, plus `python3 -m unittest discover -s tests -v` for offline regressions. After building, `~/Applications/Atticus.app/Contents/MacOS/Atticus --selftest` checks native transcript matching without opening the app. Node, when installed, also checks embedded JavaScript syntax. For the UI interaction checks, run `python3 -m http.server 8765 --bind 127.0.0.1` from the repo and open `http://127.0.0.1:8765/tests/ui.html`; it uses a mock native bridge and makes no Mac actions or AI calls.
+
+Remove: `launchctl bootout gui/$(id -u)/com.atticus.app`, then delete `~/Applications/Atticus.app`, `~/.atticus`, `~/.config/atticus` (your settings and history) and `~/Library/LaunchAgents/com.atticus.app.plist`.
+
+## Watch for me
+
+Say "tell me when Codex is done" or "watch this page until it says shipped". Atticus sets it up once, then checks every 5 seconds on your Mac with no AI, so waiting is free. When it fires you get a notification, and it runs a follow-up if you asked for one. A window must stay open on this desktop (covered is fine). Coding agents like Codex are watched through their own log, with no screen at all. Say "stop watching" to cancel.
+
+## Budget
+
+Atticus has to stay fast and nearly free, so new features must fit under these limits:
+
+- Instant commands: no AI, $0.
+- AI asks: median under $0.002 and 6 s over the last 50 (Oct 10, 2026: $0.00095, 5.0 s). Check with `python3 atticus.py --budget`.
+- System prompt: under 10,000 characters with every option on. Every ask pays for it, and a test enforces it.
+- Anything that waits or runs in the background: $0 while it waits. AI only to set it up and to act at the end.
 
 ## Usage count
 
@@ -90,3 +110,9 @@ Once a day, Atticus sends one random ID (made on your Mac, not tied to you) to P
 ## License
 
 MIT. See `LICENSE`. `ui/orbs.js` is from [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs), also MIT.
+
+## Contributing
+
+UI contributors: read [the Atticus design skill](.agents/skills/atticus-design/SKILL.md). Codex uses the repository's `AGENTS.md`, Claude Code uses `CLAUDE.md` and its local skill link, and Cursor uses `.cursor/rules/atticus-design.mdc`. These instructions apply only to this project.
+
+Run regressions with a scratch `ATTICUS_DIR` and use `tests/ui.html` and `tests/settings.html` for mock-bridge UI checks. Keep personal agent settings, credentials and runtime state out of commits. Anonymous usage telemetry is disabled unless `ATTICUS_POSTHOG_KEY` is supplied through the environment; no key is embedded in the source.

@@ -13,22 +13,24 @@ tasks on the Mac. Output lines for the overlay: "· note", "▸ step", "✓ answ
   atticus.py --fast "<words>"            run it instantly with no AI if it is a simple command (exit 1 if not)
   atticus.py --play "<playlist name>"     play one of the user's Spotify playlists, no clicks, focus stays put
   atticus.py --search <query>  |  --read <url>   free web search (DuckDuckGo) / one page as plain text
-Every run goes to ~/.config/atticus/log.jsonl with its cost.
+  atticus.py --watch <app> "<title words>" <gone|shows> "<phrase>" ["<request>"]   watch a window in the background, no AI, then notify (and run the request)
+  atticus.py --unwatch                    stop every watch  |  --budget   is real use still under the cost and speed budget?
+Completed requests go to ~/.config/atticus/log.jsonl with their cost (live actions are marked).
 """
 import atexit, base64, html, json, shutil, threading, os, re, signal, subprocess, sys, tempfile, time, urllib.parse, urllib.request
 
 HOME = os.path.expanduser('~')
 DIR = os.environ.get('ATTICUS_DIR') or os.path.join(HOME, '.config/atticus')   # ATTICUS_DIR: tests keep off the user's chat and rules
 ME = os.path.abspath(__file__)   # inside Atticus.app once built, so the AI's helper commands point here
-PLACE, LOOK, SEARCH, READ, SHOW, REMEMBER, FORGET, TYPE, PLAY, ABOUT, SHORTCUT, FRONT = (ME + f' --{c}' for c in ('place', 'look', 'search', 'read', 'show', 'remember', 'forget', 'type', 'play', 'me add', 'shortcut', 'front'))
+PLACE, LOOK, SEARCH, READ, SHOW, REMEMBER, FORGET, TYPE, PLAY, ABOUT, SHORTCUT, FRONT, WATCH = (ME + f' --{c}' for c in ('place', 'look', 'search', 'read', 'show', 'remember', 'forget', 'type', 'play', 'me add', 'shortcut', 'front', 'watch'))
 MEMORY, RECENT = os.path.join(DIR, 'memory.md'), os.path.join(DIR, 'recent.jsonl')
 PREFS = os.path.join(DIR, 'settings.json')   # written by the Settings window
 # $5 once, sold on Gumroad. shortcut: the source is public, so a coder can delete this check; fine for a $5 app.
-GUMROAD_PRODUCT = ''   # Gumroad product ID; empty = free
-BUY = 'https://saarthurr.gumroad.com/l/atticus'
+GUMROAD_PRODUCT = '4o1C13Q132kPu-TW7b-sAA=='   # Gumroad product ID; empty = free
+BUY = 'https://3370759087892.gumroad.com/l/atticus'
 KEY_FILE = os.path.join(DIR, 'license')
 # Daily-user count: once a day, a random ID (no name, no asks) goes to PostHog. Off in Settings → Safety. Empty key = off.
-POSTHOG_KEY = 'phc_mGpLLzJtYTToBF8uSkqkUxMMG9ANmQWKDBnpsRDmzy6P'
+POSTHOG_KEY = os.environ.get('ATTICUS_POSTHOG_KEY', '')   # optional; no embedded API keys
 
 
 # About the user: name, one line they wrote, up to 8 short facts Atticus picked up. Capped at 300 characters
@@ -72,7 +74,7 @@ APP = os.environ.get('ATTICUS_APP') or os.path.join(HOME, 'Applications/Atticus.
 
 SYSTEM = f"""You are Atticus, a Mac helper. The user holds a hotkey, talks, lets go; your reply shows in a small box on the user's screen.
 Requests are questions (find the answer and give it), tasks (do it on the Mac), or both ("find this author's bio on Google and open it" = look at the screen, search, open the best page).
-Speed matters most; every extra round costs the user a second. Answer without a tool when you can. Do the whole task in ONE Bash call when you can (chain with ;). Need several things? Ask for them all in the same turn, not one after another. Answer from the first good source; don't double-check.
+Speed matters; every extra round costs the user a second. Answer stable facts without a tool. For current facts (news, prices, schedules, weather), search once and prefer a dated primary source. Never invent details missing from the screen or search results. Do the whole task in ONE Bash call when you can (chain with ;). Need several things? Ask for them all in the same turn, not one after another.
 Before EACH tool call write a 3-8 word note of what you are doing; it shows live. Plain words only, never tool or command names (no peekaboo, screenshot, osascript): "Looking at your screen", "Clicking Play".
 Do, don't describe: "make a list / add / remind me / note this" means create it in the app, never only list it back or offer to.
 Final reply: plain text, no markdown, at most 3 short sentences, answer first. For a done task, one sentence saying it's done; no "but I didn't check".
@@ -87,7 +89,9 @@ Tools:
 - Papers: curl -s "http://export.arxiv.org/api/query?search_query=all:<q>&max_results=5"
 - Move, snap or resize a window (does the math): {PLACE} "<process>" <left|right|full|center> <laptop|monitor|current|exact screen name from Context> ["part of title"]. Use it for EVERY window move. "Move to my laptop/monitor" = center. Several windows (side by side, a layout) = ONE call, moves joined with +: {PLACE} "Google Chrome" right current + "Terminal" left current; they all move at the same moment. Never sleep between steps: the helpers wait for windows themselves.
 - Window names: osascript -e 'tell application "System Events" to get name of every window of process "Safari"'. Raise one: ... to perform action "AXRaise" of (first window whose name contains "x"), then activate the app.
-- Type text into the box the user is in (search bar, chat box, doc): {TYPE} "<text>". It goes back to the user's app and pastes; one call, done. Never use peekaboo for typing.
+- Type text into the box the user is in (search bar, chat box, doc): {TYPE} "<text>". It goes back to the user's app and pastes. Never use peekaboo for typing.
+- Filling a box that is not already the focused one, or several boxes (a form, a title and a description, a chat in another pane or tab): click that exact box first (peekaboo click), then {TYPE}; never Tab between boxes on a web page. Copy text with pbpaste or from the page, never retype it from a picture. Before you say it is filled, pasted or sent, {LOOK} once and check it landed in the right place; fix it if not.
+- "Tell me when / watch / monitor X" (a reply finishes, a build or download ends, a page shows something): look once, pick a short phrase on screen that shows the state, then ONE call: {WATCH} "<app>" "<window title words or empty>" <gone|shows> "<phrase>" ["<what to do then, as a request>"]. gone = done when the phrase disappears (e.g. "esc to interrupt" while a coding agent works); shows = done when it appears. It reads that window on this Mac every 5 s with no AI (it must stay on this desktop), notifies the user, then runs the request. Without the screen: {WATCH} cmd '<shell test, exit 0 = done>' ["<request>"]; a Codex task is done when: tail -n 2 "$(ls -t ~/.codex/sessions/*/*/*/*.jsonl | head -1)" | grep -q task_complete. Prefer cmd when it fits. Reply that you are watching. "Stop watching": {ME} --unwatch.
 - Last resort, only when nothing above works (it moves the user's real mouse and pulls the app forward) — click or read buttons/menus inside an app: peekaboo see --app "<App>" --json --no-remote | head -c 3000 (always cut it; lists elements with IDs), then peekaboo click --on <ID> --no-remote, peekaboo type "text" --no-remote, peekaboo menu click --app "<App>" --path "File > New" --no-remote. Run peekaboo <cmd> --help if unsure.
 - Spotify: play any song, album, artist or the user's own playlist: {PLAY} "<name, plus artist if known>" (no clicks, the user's focus stays). Music requests mean Spotify unless the user names another app. Pause/skip: osascript -e 'tell application "Spotify" to playpause' (or next track). Never click in Spotify unless those fail.
 - Task list, to-do, "remind me": Reminders, all items in one call: osascript -e 'tell application "Reminders"' -e 'repeat with t in {{"A", "B"}}' -e 'make new reminder with properties {{name:t}}' -e 'end repeat' -e 'end tell' (for a time add due date:(current date) + <seconds>). "Note this": osascript -e 'tell application "Notes" to make new note with properties {{body:"<h1>Title</h1>A<br>B"}}'. "Where is my list/note" = {SHOW} "Reminders" (or "Notes").
@@ -146,10 +150,29 @@ def risky(cmd):
     return ''
 
 
+def wait_commit():
+    """Early reasoning is allowed; tools and the final answer wait for the confirmed transcript."""
+    path = os.environ.get('ATTICUS_COMMIT')
+    if not path:
+        return True
+    parent = os.getppid()
+    for _ in range(900):   # 60 s recording + finalization + an in-flight instant action
+        if os.getppid() != parent:
+            break
+        if os.path.exists(path):
+            return True
+        time.sleep(0.1)
+    return False
+
+
 def gate():
     """Claude Code's PreToolUse hook in safe mode: a risky command waits for the user's Allow (60 s, then no).
     Allowed = it runs for real, outside the sandbox. The AI asking to leave the sandbox by itself asks too."""
     inp = json.load(sys.stdin).get('tool_input', {})
+    if not wait_commit():
+        print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
+                          'permissionDecisionReason': 'The request was cancelled before the transcript was confirmed.'}}))
+        return
     cmd, d = inp.get('command', ''), os.environ.get('ATTICUS_ASK', '')
     q = risky(cmd) or ('Run outside the safe folder?' if inp.get('dangerouslyDisableSandbox') else '')
     if not q or not d:
@@ -202,6 +225,16 @@ def front():
     # Atticus.app passes the app the user was in when the user pressed the keys (its own windows can take focus, e.g. onboarding)
     app = os.environ.get('ATTICUS_FRONT') or osa('tell application "System Events" to get name of first process whose frontmost is true')
     return app, osa(f'tell application "System Events" to tell process "{app}" to get name of front window')
+
+
+def restore_focus(app, task, cmds):
+    if re.search(r'\b(switch|focus|go to|bring|full ?screen|close|quit|exit)\b', task.lower()) or any(
+            FRONT in c or (SHOW in c and pref('openOn', 'here') == 'here') for c in cmds):
+        return
+    # Address a running process, never `activate` an app: that can relaunch it or reopen its closed window.
+    osa('on run argv\ntell application "System Events"\n'
+        'if exists process (item 1 of argv) then\nset frontmost of process (item 1 of argv) to true\n'
+        'end if\nend tell\nend run', app)
 
 
 def place(proc, where='full', screen='current', title=''):
@@ -365,11 +398,11 @@ def plain(text):
     """Spoken request -> its core words: "Hey Atticus, can you open Spotify please?" -> "open spotify"."""
     t = re.sub(r"^(hey |ok |okay )?(atticus,? )?(please |can you |could you |would you )?", '', text.lower().strip(' .!?'))
     t = re.sub(r'^(also |and |now |then )+', '', re.sub(r'\s+please$', '', t))
-    return re.sub(r'[,;:.!?]', '', t)   # the speech model adds punctuation
+    return re.sub(r'[,;!?]|:(?!//)|(?<!\w)\.|\.(?!\w)', '', t)   # keep domain dots; speech also adds punctuation
 
 
 # Learned shortcuts: an action the AI got right is saved as the exact commands it ran; the same words later replay
-# them with no AI (free, under a second). Kept in a file, never sent to the AI, so they cost nothing as they grow.
+# them after confirmation with no AI (free). Kept in a file, never sent to the AI, so they cost nothing as they grow.
 SKILLS = os.path.join(DIR, 'skills.json')
 DEICTIC = re.compile(r'\b(this|that|these|those|it|here|there|them|him|her)\b')   # "close this" depends on the moment: never learned
 
@@ -411,6 +444,8 @@ def replay(k):
     s = skills().get(k)
     if not s:
         return None
+    if pref('safe', True) and any(risky(c) for c in s['cmds']):
+        return None   # the AI's tool gate can show the Allow card; direct replay cannot
     for c in s['cmds']:   # any failure: hand it to the AI instead
         try:
             if subprocess.run(['/bin/zsh', '-c', c], capture_output=True, timeout=20).returncode:
@@ -427,6 +462,8 @@ def fast(text):
     if t in ('no', 'yes', 'ok', 'okay', 'nevermind', 'never mind', 'cancel', 'nothing', 'thanks', 'thank you'):
         return 'Okay.'   # stray word after a turn: no AI call
     if pref('learn', True) and t in skills():
+        if os.environ.get('ATTICUS_LIVE') == '1':
+            return None   # even a shortcut named "open Spotify" waits for confirmed words
         r = replay(t)
         if r:
             return r
@@ -452,8 +489,10 @@ def fast(text):
         return None
     if m:
         target = m[1]
-        if re.fullmatch(r'[\w-]+(\.[\w-]+)+(/\S*)?', target.replace(' dot ', '.')) and not re.search(r'\.(pdf|docx?|xlsx?|pptx?|txt|csv|png|jpe?g|heic|key|pages|numbers|zip|mp[34]|mov|md|py|java)$', target):
-            subprocess.run(['open', 'https://' + target.replace(' dot ', '.')])
+        site = target.replace(' dot ', '.')
+        site = next((w.rstrip('.,!') for w in text.split() if plain(w) == target), site)
+        if re.fullmatch(r'(?:https?://)?[\w-]+(\.[\w-]+)+(/\S*)?', site) and not re.search(r'\.(pdf|docx?|xlsx?|pptx?|txt|csv|png|jpe?g|heic|key|pages|numbers|zip|mp[34]|mov|md|py|java)$', target):
+            subprocess.run(['open', site if site.startswith(('https://', 'http://')) else 'https://' + site])
             return f'Opened {target}.'
         app = app_named(target)
         if not app:
@@ -490,9 +529,10 @@ def look():
     """Every display, at once, 1280 px wide (≈1.5K tokens each) -> [(path, label)]. "My monitor" needs the right one."""
     scr = screens()
     def one(i):
-        path = f'{SHOT}-{i}.jpg'
-        if os.path.exists(path):
-            os.remove(path)
+        fd, path = tempfile.mkstemp(prefix=f'atticus-screen-{i}-', suffix='.jpg')
+        os.close(fd)
+        os.remove(path)
+        atexit.register(lambda: os.path.exists(path) and os.remove(path))
         # Atticus.app takes it, leaving its own box out; plain screencapture is the fallback (box included)
         if subprocess.run([APP, '--look', str(i), path], capture_output=True).returncode:
             subprocess.run(['screencapture', '-x', '-D', str(i), '-t', 'jpg', path])
@@ -500,7 +540,7 @@ def look():
         s = scr[i - 1]
         return path, f'Screen {i}: "{s[0]}" ({"built-in laptop screen" if s[5] else "external monitor"})'
     from concurrent.futures import ThreadPoolExecutor
-    return [r for r in ThreadPoolExecutor(len(scr)).map(one, range(1, len(scr) + 1)) if os.path.exists(r[0])]
+    return [r for r in ThreadPoolExecutor(len(scr) or 1).map(one, range(1, len(scr) + 1)) if os.path.exists(r[0])]
 
 
 def get(url, timeout=10):
@@ -584,7 +624,37 @@ def label(name, inp):
             return fmt.format(*m.groups())
     if c.startswith('open '):
         return 'Opening ' + os.path.basename(c[5:].strip('"\' '))
-    return c[:60]
+    return 'Working on it'   # never show the raw command
+
+
+WATCHING = os.path.join(DIR, 'watching')
+BUDGET = {'usd': 0.002, 'secs': 6}   # median of the last 50 AI asks must stay under this (Oct 10, 2026: $0.0009, 4.7 s)
+
+
+def notify(text):
+    osa('on run argv\ndisplay notification (item 1 of argv) with title "Atticus" sound name "Glass"\nend run', text)
+
+
+def watch(what, then, app='', words='', mode='', phrase=''):
+    """Free while it waits: every 5 s, a shell test (`what`, exit 0 = done) or one window's text read on this Mac. No AI;
+    the AI runs again only for `then`."""
+    norm = lambda s: ' '.join(s.lower().split())
+    phrase, hits, misses, end = norm(phrase), 0, 0, time.time() + 3 * 3600
+    while time.time() < end:
+        if app:
+            r = subprocess.run([APP, '--text', app, words], capture_output=True, text=True)
+            misses = misses + 1 if r.returncode else 0
+            if misses >= 3:
+                return notify(f"Stopped watching {app}: can't see its window. It must stay open on this desktop (covered is fine, minimized is not).")
+            done = not r.returncode and (phrase in norm(r.stdout)) == (mode == 'shows')
+        else:
+            done = subprocess.run(['/bin/sh', '-c', what], capture_output=True).returncode == 0
+        hits = hits + 1 if done else 0
+        if hits >= 2:   # twice in a row: one bad read or a flicker between steps must not fire it
+            notify(f'{app or what[:40]}: done.' + (f' Now: {then}' if then else ''))
+            return then and subprocess.run([sys.executable, ME, then])
+        time.sleep(5)
+    notify('Stopped watching after 3 hours.')
 
 
 def licensed():
@@ -624,6 +694,13 @@ def ping():
 
 def say(tag, text):
     print(f'{tag} {" ".join(text.split())}', flush=True)
+
+
+def log_turn(task, reply, started, cost=0, steps=0, ran=()):
+    with open(os.path.join(DIR, 'log.jsonl'), 'a') as f:
+        f.write(json.dumps({'at': time.strftime('%Y-%m-%d %H:%M:%S'), 'task': task, 'reply': reply,
+                            'usd': round(cost, 5), 'secs': round(time.time() - started, 1), 'steps': steps,
+                            'ran': list(ran), 'live': os.environ.get('ATTICUS_LIVE') == '1'}) + '\n')
 
 
 TIPS = ['Say "remember …" and Atticus keeps it as a rule.',
@@ -669,25 +746,42 @@ def plan():
     return {'ok': True, 'need': '', 'text': f'Using your Claude {sub.title()} plan.'}
 
 
+def stop_claude(p):
+    try:
+        os.killpg(p.pid, signal.SIGKILL)   # includes running tools and permission hooks
+    except OSError:   # already gone, or its group is out of reach (EPERM): nothing left to stop
+        pass
+
+
+def stop_workers(*_):
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    if os.getpgrp() == os.getpid():
+        os.killpg(os.getpid(), signal.SIGTERM)
+    sys.exit(0)
+
+
 def start_claude():
     """`claude -p` started ahead, waiting for the request on stdin: its ~1 s startup happens while the user is still talking."""
     if not shutil.which('claude'):
         return None
     system = SYSTEM.replace('NEVER_RISKY', ASK_FIRST if pref('safe', True) else NEVER) + (POINTER if pref('pointer', False) else '') + (LEARN_ME if pref('learnMe', True) else '') + (TEACH if pref('tips', True) else '')
-    safe, ask = [], ''
+    settings, ask = {}, ''
     if pref('safe', True):
         ask = tempfile.mkdtemp(prefix='atticus-ask-')
         atexit.register(shutil.rmtree, ask, True)   # however this run ends
-        safe = ['--settings', json.dumps({
-            'sandbox': {'enabled': True, 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': True, 'excludedCommands': SAFE_OUT},
-            'hooks': {'PreToolUse': [{'matcher': 'Bash', 'hooks': [{'type': 'command', 'command': f'"{sys.executable}" "{ME}" --gate', 'timeout': 70}]}]}})]
+        settings['sandbox'] = {'enabled': True, 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': True, 'excludedCommands': SAFE_OUT}
+    if ask or os.environ.get('ATTICUS_COMMIT'):
+        settings['hooks'] = {'PreToolUse': [{'matcher': '.*', 'hooks': [{'type': 'command', 'command': f'"{sys.executable}" "{ME}" --gate', 'timeout': 140}]}]}
+    errors = tempfile.TemporaryFile(mode='w+')   # draining a pipe only after wait() can deadlock
     p = subprocess.Popen(['claude', '-p', '--input-format', 'stream-json', '--model', pref('model', 'haiku'), '--effort', 'low', '--system-prompt', system,
-                          '--tools', 'Bash,Read,WebSearch,WebFetch', '--permission-mode', 'bypassPermissions', '--disallowedTools', *DENY, *safe,
+                          '--tools', 'Bash,Read,WebSearch,WebFetch', '--permission-mode', 'bypassPermissions', '--disallowedTools', *DENY, '--settings', json.dumps(settings),
                           '--setting-sources', '', '--no-session-persistence', '--strict-mcp-config', '--disable-slash-commands', '--output-format', 'stream-json', '--verbose'],
-                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=tempfile.gettempdir(),
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors, text=True, cwd=tempfile.gettempdir(), start_new_session=True,
                          env={**os.environ, 'ATTICUS_ASK': ask})
-    p.ask = ask
-    signal.signal(signal.SIGTERM, lambda *_: (p.kill(), sys.exit(0)))   # the hotkey pressed again = cancel
+    p.ask, p.errors = ask, errors
+    atexit.register(errors.close)
+    atexit.register(stop_claude, p)
+    signal.signal(signal.SIGTERM, lambda *_: (stop_claude(p), stop_workers()))
     return p
 
 
@@ -711,6 +805,7 @@ def relay(p):
 def run(task, p=None, shots=()):
     """One request through `claude -p --model haiku` (the user's plan), streaming notes and steps. shots: [(path, label)] sent with it."""
     run.cmds = run.ran = []
+    run.ok = False
     p = p or start_claude()
     if not p:
         say('!', 'setup')   # Atticus.app opens its setup window
@@ -721,7 +816,7 @@ def run(task, p=None, shots=()):
     p.stdin.close()
     if getattr(p, 'ask', ''):
         threading.Thread(target=relay, args=(p,), daemon=True).start()
-    reply, cost, steps, cmds, failed = '', 0, [], [], False
+    reply, cost, steps, cmds, failed, completed, result_error = '', 0, [], [], False, False, False
     for line in p.stdout:
         try:
             j = json.loads(line)
@@ -740,6 +835,8 @@ def run(task, p=None, shots=()):
         elif j.get('type') == 'user':   # tool results
             failed |= any(isinstance(b, dict) and b.get('is_error') for b in j.get('message', {}).get('content', []))
         elif j.get('type') == 'result':
+            completed = True
+            result_error = bool(j.get('is_error'))
             reply, cost = (j.get('result') or '').strip(), j.get('total_cost_usd', 0)
     p.wait()
     run.ran = cmds   # the exact commands, for the ask log
@@ -747,9 +844,11 @@ def run(task, p=None, shots=()):
         c = plan()   # the usual cause: not installed, signed out, or no paid plan
         if not c['ok']:
             say('!', 'setup')
-        reply = c['text'] + ' Atticus setup is open to fix it.' if not c['ok'] else f'Claude failed: {p.stderr.read()[:200]}'
-    run.cmds = [] if failed or p.returncode else cmds   # what learn() may save
-    return reply or 'Done.', cost, steps
+        p.errors.seek(0)
+        reply = c['text'] + ' Atticus setup is open to fix it.' if not c['ok'] else f'Claude failed: {p.errors.read(200)}'
+    run.cmds = [] if failed or result_error or p.returncode or not completed or not reply else cmds
+    run.ok = bool(completed and reply and not result_error and not p.returncode)
+    return reply or 'No answer came back. Please try again.', cost, steps
 
 
 def screen_for(task, snap, fx=None):   # snap.shots: what look() returned; fx: x of the front window
@@ -757,10 +856,10 @@ def screen_for(task, snap, fx=None):   # snap.shots: what look() returned; fx: x
     if pref('screen', 'auto') == 'never' or not re.search(r"\b(screen|this|these|that|here|it|reading|looking|see|says?|shown?|page|tab|window|error|question|problem|where|how do i|button|click)\b", task.lower()):
         return None
     snap.join(5)
-    if len(snap.shots) < 2 or fx is None or re.search(r"\b(monitor|laptop|other|second|both|all|external|built.in|screens)\b", task.lower()):
+    if fx is None or re.search(r"\b(monitor|laptop|other|second|both|all|external|built.in|screens)\b", task.lower()):
         return snap.shots
     on = next((i for i, s in enumerate(screens()) if s[1] <= fx < s[1] + s[3]), 0)   # just the one the user is on: half the cost
-    return [snap.shots[on]] if on < len(snap.shots) else snap.shots
+    return [shot for shot in snap.shots if shot[1].startswith(f'Screen {on + 1}:')]
 
 
 STOP = set('a an the to of in on and or for my me i you it is be do can could would please with at this that what how'.split())
@@ -790,11 +889,25 @@ def point(reply):
     return (reply[:m.start()] + reply[m.end():]).strip()
 
 
-def recent():
+def read_rows(path):
     try:
-        return [json.loads(l) for l in open(RECENT)]
-    except (OSError, ValueError):   # missing, or cut short by a kill mid-write: start a fresh chat
+        with open(path) as f:
+            rows = []
+            for line in f:
+                try:
+                    row = json.loads(line)
+                    if isinstance(row, dict):
+                        rows.append(row)
+                except ValueError:
+                    continue   # a cancelled write must not hide the rest of the history
+            return rows
+    except OSError:
         return []
+
+
+def recent():
+    return [r for r in read_rows(RECENT) if isinstance(r.get('t'), (int, float)) and
+            isinstance(r.get('q'), str) and isinstance(r.get('a'), str)]
 
 
 def remember_turn(q, a):
@@ -812,6 +925,40 @@ def ask():
 
 def main():
     args = sys.argv[1:]
+    if args == ['--wait'] or args[:1] == ['--fast']:
+        os.setpgrp()   # cancellation also stops the worker's own helper processes
+        signal.signal(signal.SIGTERM, stop_workers)
+    if args[:1] == ['--watch'] and (len(args) in (5, 6) and args[3] in ('gone', 'shows') or len(args) in (3, 4) and args[1] == 'cmd'):
+        os.makedirs(WATCHING, exist_ok=True)   # the watcher runs on after this ask ends
+        w = subprocess.Popen([sys.executable, ME, '--watching', *args[1:]], start_new_session=True,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        open(os.path.join(WATCHING, str(w.pid)), 'w').write(' '.join(args[1:]))
+        return print(f'watching {args[1]} (free until it fires)')
+    if args[:1] == ['--watching']:
+        try:
+            if args[1] == 'cmd':
+                return watch(args[2], args[3] if len(args) > 3 else '')
+            return watch('', args[5] if len(args) > 5 else '', *args[1:5])
+        finally:
+            f = os.path.join(WATCHING, str(os.getpid()))
+            os.path.exists(f) and os.remove(f)
+    if args == ['--unwatch']:
+        pids = os.listdir(WATCHING) if os.path.isdir(WATCHING) else []
+        for pid in pids:
+            try:
+                os.kill(int(pid), signal.SIGTERM)
+            except (OSError, ValueError):
+                pass
+            os.remove(os.path.join(WATCHING, pid))
+        return print(f'stopped {len(pids)} watch(es)')
+    if args == ['--budget']:
+        ai = [r for r in read_rows(os.path.join(DIR, 'log.jsonl')) if r.get('usd', 0) > 0][-50:]
+        if not ai:
+            return print('no AI asks yet')
+        med = lambda k: sorted(r.get(k, 0) for r in ai)[len(ai) // 2]
+        ok = med('usd') <= BUDGET['usd'] and med('secs') <= BUDGET['secs']
+        print(f"{'OK' if ok else 'OVER BUDGET'}: last {len(ai)} AI asks, median ${med('usd')} (max ${BUDGET['usd']}), {med('secs')} s (max {BUDGET['secs']} s)")
+        return sys.exit(0 if ok else 1)
     if args == ['--gate']:
         return gate()
     if args[:1] == ['--place']:   # several moves joined with +: all at once, not one window after another
@@ -857,18 +1004,21 @@ def main():
         keep = [l for l in lines if not all(w in l.lower() for w in words)]
         open(MEMORY, 'w').writelines(keep)
         return print(f'forgot {len(lines) - len(keep)} line(s)')
-    if args[:1] == ['--fast']:   # Atticus.app calls this mid-speech; exit 1 = not a simple command
+    if args[:1] == ['--fast']:   # explicit CLI action; exit 1 = not a simple command
         os.makedirs(DIR, exist_ok=True)
+        started = time.time()
         ping()
         r = licensed() and fast(' '.join(args[1:]))
         if not r:
             sys.exit(1)
         remember_turn(' '.join(args[1:]), r)
+        log_turn(' '.join(args[1:]), r, started)
         return print('✓ ' + r, flush=True)
     if args[:1] == ['--play']:
         return print(play(' '.join(args[1:])) or 'nothing found on Spotify by that name')
     if args == ['--state']:   # the Settings window: usage, saved rules, Claude plan
-        rows = [json.loads(l) for l in open(os.path.join(DIR, 'log.jsonl'))] if os.path.exists(os.path.join(DIR, 'log.jsonl')) else []
+        rows = [r for r in read_rows(os.path.join(DIR, 'log.jsonl')) if isinstance(r.get('at'), str) and
+                isinstance(r.get('usd', 0), (int, float)) and isinstance(r.get('secs', 0), (int, float))]
         def use(since):
             r = [x for x in rows if x['at'] >= since]
             return {'asks': len(r), 'usd': round(sum(x.get('usd', 0) for x in r), 4),
@@ -907,9 +1057,32 @@ def main():
     snap.shots = shots
     atexit.register(lambda: [os.remove(p) for p, _ in shots if os.path.exists(p)])   # private: no screenshot left in /tmp
     snap.start()
-    if warm:   # "<app the user is in now>\t<request>": the user may have switched apps mid-sentence ("open Chrome and…")
+    if args == ['--wait']:   # "<app the user is in now>\t<request>", even if Claude could not start
         front_now, _, task = sys.stdin.readline().strip().rpartition('\t')
         os.environ['ATTICUS_FRONT'] = front_now or os.environ.get('ATTICUS_FRONT', '')
+    task = task if args == ['--wait'] else ' '.join(a for a in args if a != '--plan') or ask()
+    if not task:
+        return warm and stop_claude(warm)
+    ping()
+    key = re.fullmatch(r'\W*(?:my )?(?:license )?key\W+([\w-]{8,})\W*', task, re.I)
+    if key or not licensed():
+        if not wait_commit():
+            return
+        if warm:
+            stop_claude(warm)
+        if key:
+            return say('✓', activate(key[1]))
+        subprocess.run(['open', BUY])
+        return say('✓', f'Atticus is $5, once. Buy a key on the page that just opened, then type: key <your key>')
+    t = time.time()
+    commit = os.environ.get('ATTICUS_COMMIT')
+    quick = (not commit or os.path.exists(commit)) and pref('instant', True) and fast(task)
+    if quick:
+        if warm:
+            stop_claude(warm)
+        remember_turn(task, quick)
+        log_turn(task, quick, t)
+        return say('✓', quick)
     app, win = front()   # before anything else takes focus, so "this window" still means the user's window
     try:
         fx = int(osa(f'tell application "System Events" to tell process "{app}" to get position of window 1').split(', ')[0]) + 50
@@ -921,31 +1094,17 @@ def main():
     url = url and osa(f'tell application "{app}" to get {url}')   # "articles on what I'm reading" needs the page
     you = me_line()
     ctx = (f'About the user: {you} ' if you else '') + f'Front app: {app}. Front window: {win or "?"}.' + (f' Page: {url}.' if url else '') + f' Screens: {scr}. Now: {time.strftime("%a %b %d %Y %I:%M %p")}.'
-    task = task if warm else ' '.join(a for a in args if a != '--plan') or ask()
-    if not task:
-        return warm and warm.kill()
-    ping()
-    key = re.fullmatch(r'\W*(?:my )?(?:license )?key\W+([\w-]{8,})\W*', task, re.I)
-    if key or not licensed():
-        if warm:
-            warm.kill()
-        if key:
-            return say('✓', activate(key[1]))
-        subprocess.run(['open', BUY])
-        return say('✓', f'Atticus is $5, once. Buy a key on the page that just opened, then type: key <your key>')
-    t = time.time()
-    quick = pref('instant', True) and fast(task)
-    if quick:
-        if warm:
-            warm.kill()
-        remember_turn(task, quick)
-        return say('✓', quick)
     mem = relevant_rules(task)
     turns = recent()
     turns = [r for r in turns if time.time() - r['t'] < 600][-3:]   # this chat only (Atticus.app clears it for a new one); 10 min cap for typed asks
     earlier = ''.join(f'Q: {r["q"]}\nA: {r["a"][:300]}\n' for r in turns)
+    images = screen_for(task, snap, fx)
+    if images == []:
+        ctx += ' Screen capture unavailable. Do not guess screen contents; explain how to enable Screen Recording for Atticus.'
     reply, cost, steps = run(f'Context: {ctx}\n' + (f'Earlier:\n{earlier}' if earlier else '') +
-                      (f'Memory:\n{mem}\n' if mem else '') + f'Request: {task}', warm, screen_for(task, snap, fx) or ())
+                      (f'Memory:\n{mem}\n' if mem else '') + f'Request: {task}', warm, images or ())
+    if not wait_commit():
+        return
     reply = point(re.sub(r'\s*\n\s*Sources?:.*\Z', '', reply, flags=re.S | re.I))
     taught = re.search(r'\[tip ([^\]]+)\]', reply)
     reply = (reply[:taught.start()] + reply[taught.end():]).strip() if taught else reply
@@ -957,13 +1116,10 @@ def main():
         if fix:
             learn(turns[-1]['q'], run.cmds, reply)   # and the fix becomes the shortcut for the original words
     remember_turn(task, reply)
-    with open(os.path.join(DIR, 'log.jsonl'), 'a') as f:
-        f.write(json.dumps({'at': time.strftime('%Y-%m-%d %H:%M:%S'), 'task': task, 'reply': reply,
-                            'usd': round(cost, 5), 'secs': round(time.time() - t, 1), 'steps': steps, 'ran': run.ran}) + '\n')
+    log_turn(task, reply, t, cost, steps, run.ran)
     # clicks inside an app pull it forward; give the user back the app the user was in unless the user asked to go somewhere
-    if not re.search(r'\b(switch|focus|go to|bring|full ?screen)\b', task.lower()) and not any(FRONT in c or (SHOW in c and pref('openOn', 'here') == 'here') for c in run.ran) and osa('tell application "System Events" to get name of first process whose frontmost is true') != app:
-        osa(f'tell application "{app}" to activate')
-    say('✓', reply)
+    restore_focus(app, task, run.ran)
+    say('✓' if run.ok else '!', reply)
     learned = [r for c in run.ran for r in re.findall(r'--remember\s+["\']([^"\']+)', c)]   # it taught itself: say so, so the user sees it improve
     tip(reply, f'Learned: {learned[-1]}' if learned else taught[1].strip() if taught else '')
     if os.environ.get('ATTICUS_UI') != '1':   # typed from the menu bar: no overlay, so a notification

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Atticus — your whole Mac, one sentence away</title>
-<meta name="description" content="Hold control, option, space. Say what you need. Atticus runs your Mac. Free, open source, on the Claude plan you already have.">
+<meta name="description" content="Hold control, option, space. Say what you need. Atticus runs your Mac. $5 once, open source, on the Claude plan you already have.">
 <meta property="og:title" content="Atticus">
 <meta property="og:description" content="Your whole Mac, one sentence away.">
 <meta property="og:type" content="website">
@@ -300,8 +300,8 @@
     <div class="card wide rv">
       <div><h3>It learns your shortcuts.</h3><p>Ask once. Next time it skips the AI.</p></div>
       <div class="vis">
-        <div class="race"><span>First time</span><div class="track"><i></i></div><b>5.5 s</b></div>
-        <div class="race fast"><span>After that</span><div class="track"><i></i></div><b>0.4 s · free</b></div>
+        <div class="race"><span>First time</span><div class="track"><i></i></div><b>AI assisted</b></div>
+        <div class="race fast"><span>After that</span><div class="track"><i></i></div><b>no AI · free</b></div>
       </div>
     </div>
     <div class="card rv" style="--i:1">
@@ -345,7 +345,7 @@
     <code><i>$</i> curl -fsSL https://raw.githubusercontent.com/SaarthurR/atticus-mac/main/install.sh | bash</code>
     <button class="copy">Copy</button>
   </div>
-  <ul class="needs rv" style="--i:3"><li>macOS 26 or later</li><li>Claude Pro or Max</li><li>Free and open source (MIT)</li></ul>
+  <ul class="needs rv" style="--i:3"><li>macOS 26 or later</li><li>Claude Pro or Max</li><li>$5 once · open source (MIT)</li></ul>
 </section>
 
 <footer>Made by <a href="https://github.com/SaarthurR">SaarthurR</a> · Orb by <a href="https://github.com/Jakubantalik/thinking-orbs">thinking-orbs</a></footer>
@@ -437,14 +437,14 @@
   const split = { code: 'full', web: 'lapL', term: 'lapR' };
   const asks = [
     { q: 'Open Spotify.', from: { code: 'full', web: 'lapFull' },
-      act: () => lay({ code: 'full', web: 'lapFull', spot: 'pop' }), a: 'Opened Spotify.', time: '0.08 s', note: 'no AI · free' },
+      act: () => lay({ code: 'full', web: 'lapFull', spot: 'pop' }), a: 'Opened Spotify.', time: 'demo', note: 'no AI · free' },
     { q: 'Code on my big screen, Chrome and Terminal on the laptop.', from: { code: 'messA', web: 'messB', term: 'messC' }, step: 'Arranging 3 windows',
-      act: () => lay(split), a: 'Done. Three windows, two screens.', time: '~2 s', note: 'Claude Haiku · a fraction of a cent' },
+      act: () => lay(split), a: 'Done. Three windows, two screens.', time: 'demo', note: 'Claude Haiku · a fraction of a cent' },
     { q: "What's wrong with this code?", from: split, step: 'Looking at your screen',
       act: async () => { $('desk').classList.add('scanning'); await wait(1000); W.code.classList.add('flag'); },
-      a: 'Line 11 adds a number to a string. Wrap total in str().', time: '~2 s', note: 'reads your screen · Claude Haiku' },
+      a: 'Line 11 adds a number to a string. Wrap total in str().', time: 'demo', note: 'reads your screen · Claude Haiku' },
     { q: 'Play my late night coding playlist on Spotify.', from: split,
-      act: () => { lay({ ...split, spot: 'lapFull' }); W.spot.classList.add('playing'); }, a: 'Playing “late night coding.”', time: '~1 s', note: 'no AI · free' },
+      act: () => { lay({ ...split, spot: 'lapFull' }); W.spot.classList.add('playing'); }, a: 'Playing “late night coding.”', time: 'demo', note: 'no AI · free' },
   ];
   // the box grows and shrinks smoothly to fit what is inside it
   new ResizeObserver(() => $('box').style.height = $('inner').offsetHeight + 28 + 'px').observe($('inner'));

@@ -1,4 +1,4 @@
-// Atticus overlay: hold Control+Option+Space to talk, let go to run.
+// Atticus overlay: hold to talk and release to send, or press to start and press again to send.
 // A box in the top left (ui/ui.html, with the thinking-orbs orb) shows your words live (Apple on-device speech),
 // then Atticus's notes and steps while `atticus.py` works, then the answer. It never takes focus.
 // Build: ./build.sh. Kept running by ~/Library/LaunchAgents/com.atticus.app.plist
@@ -8,6 +8,7 @@ import AVFoundation
 import Speech
 import WebKit
 import ScreenCaptureKit
+import Vision
 
 let dir = Bundle.main.resourcePath!   // build.sh copies atticus.py and ui/ in here
 
@@ -16,15 +17,15 @@ enum Prefs {
     static let path = NSString(string: "~/.config/atticus/settings.json").expandingTildeInPath
     static let defaults: [String: Any] = ["hotkeyCode": 49, "hotkeyMods": controlKey | optionKey, "hotkeyLabel": "⌃⌥Space", "login": true, "paused": false, "corner": "top-left", "linger": "normal",
         "soundStart": "Pop", "soundDone": "Glass", "soundStop": "Tink", "volume": 0.16, "model": "haiku", "instant": true,
-        "ahead": true, "aheadDelay": 0.7, "screen": "auto", "openOn": "here",
+        "ahead": true, "aheadDelay": 0.7, "live": true, "screen": "auto", "openOn": "here",
         "speak": false, "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
-        "learn": true, "safe": true, "pointer": false, "learnMe": true, "tips": true, "stats": true, "input": "voice", "boxW": 460, "boxH": 360]
+        "learn": true, "safe": true, "pointer": false, "learnMe": true, "stats": true, "tips": true, "input": "voice", "talkMode": "hold", "boxW": 460, "boxH": 360]
     static var d: [String: Any] = defaults.merging(
         (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path)))) as? [String: Any] ?? [:]) { $1 }
     static func set(_ k: String, _ v: Any) {
         d[k] = v
         try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-        if let j = try? JSONSerialization.data(withJSONObject: d, options: [.prettyPrinted, .sortedKeys]) { try? j.write(to: URL(fileURLWithPath: path)) }
+        if let j = try? JSONSerialization.data(withJSONObject: d, options: [.prettyPrinted, .sortedKeys]) { try? j.write(to: URL(fileURLWithPath: path), options: .atomic) }
     }
     static func bool(_ k: String) -> Bool { d[k] as? Bool ?? false }
     static func str(_ k: String) -> String { d[k] as? String ?? "" }
@@ -59,6 +60,10 @@ func hotkey() -> (code: Int, mods: Int, flags: NSEvent.ModifierFlags) {
     if m & cmdKey != 0 { f.insert(.command) }; if m & shiftKey != 0 { f.insert(.shift) }
     if m & optionKey != 0 { f.insert(.option) }; if m & controlKey != 0 { f.insert(.control) }
     return (Int(Prefs.num("hotkeyCode")), m, f)
+}
+
+func transcriptKey(_ s: String) -> String {
+    s.lowercased().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").trimmingCharacters(in: CharacterSet(charactersIn: " .,!?:;"))
 }
 
 // atticus.py with whatever python3 this Mac has (Homebrew's first, else Apple's).
@@ -100,9 +105,11 @@ final class App: NSObject, WKScriptMessageHandler {
     // Speech: Apple's SpeechAnalyzer (macOS 26+), on-device and free; punctuates and capitalizes.
     var feed: AsyncStream<AnalyzerInput>.Continuation?, analyzer: SpeechAnalyzer?, reading: Task<Void, Never>?
     var speechFormat: AVAudioFormat?   // what the model wants (found once at launch)
-    var text = "", answer = "", busy = false, gen = 0
-    var proc: Process?, escRef: EventHotKeyRef?, warm: (p: Process, input: FileHandle)?
-    var consumed = 0, fastBusy = false, did: [String] = [], pause: DispatchWorkItem?   // commands done while still talking
+    var text = "", answer = "", busy = false, speechFailed = false, gen = 0
+    var proc: Process?, escRef: EventHotKeyRef?, warm: (p: Process, input: FileHandle, commit: String)?
+    var commit = "", listenID = 0
+    var consumed = 0, fastBusy = false, did: [String] = [], pause: DispatchWorkItem?   // "Act while I'm talking": commands done mid-sentence
+    var fastProc: Process?, consumedText = "", liveRevised = false
     var ahead = "", aheadItem: DispatchWorkItem?   // words the AI already started on while the user was still holding the keys
     var stops = 0   // each key release; tells a late "words landed" from a current one
     var dragging = false, fromTop = false   // moving or resizing the box; fromTop: dragging the top edge, so the bottom stays put
@@ -110,11 +117,25 @@ final class App: NSObject, WKScriptMessageHandler {
     var wasUp = false   // the box was already up when the shortcut went down: a tap puts it away
     var fresh = false   // opened by a tap and nothing said, typed or asked yet: the shortcut again puts it away
     var composing = false, compH: CGFloat = 0, clickTalk = false, quiet: DispatchWorkItem?   // typing box focused / its height from the bottom; mic button = talk without keys
+    var toggleTalk = false, shortcutDown = false
     var askFile = ""   // safe mode: where the Allow / Don't Allow answer goes (atticus.py's gate waits on it)
     var hovering = false, xHot = false, pinned = false, stuck = false, lastDone = Date.distantPast   // pinned: the user clicked the box, so only Esc / click-out / ✕ close it; stuck: the user dragged it, so only ✕
     var mine = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""   // the app the user's in, never Atticus itself
     let recent = NSString(string: "~/.config/atticus/recent.jsonl").expandingTildeInPath
-    func frame(_ f: NSRect) { panel.setFrame(f, display: true); panel.invalidateShadow() }   // instant: animating a window around a web view jitters
+    func frame(_ requested: NSRect) {   // keep the close button and composer reachable on every display
+        let screen = NSScreen.screens.max { a, b in
+            let x = a.visibleFrame.intersection(requested), y = b.visibleFrame.intersection(requested)
+            return x.width * x.height < y.width * y.height
+        } ?? NSScreen.main
+        guard let screen else { return }
+        let bounds = screen.visibleFrame.insetBy(dx: 8, dy: 8)
+        var f = requested
+        f.size.width = min(f.width, bounds.width); f.size.height = min(f.height, bounds.height)
+        f.origin.x = min(max(f.minX, bounds.minX), bounds.maxX - f.width)
+        f.origin.y = min(max(f.minY, bounds.minY), bounds.maxY - f.height)
+        panel.setFrame(f, display: true); panel.invalidateShadow()
+        js("limit", bounds.height)
+    }
     // Which edges the point is on (window coordinates): 6 px edges, 14 px corners.
     func edges(_ p: NSPoint) -> (l: Bool, r: Bool, t: Bool, b: Bool)? {
         let w = panel.frame.width, h = panel.frame.height, c: CGFloat = 14
@@ -124,19 +145,30 @@ final class App: NSObject, WKScriptMessageHandler {
     }
     func overX(_ p: NSPoint) -> Bool { p.x > panel.frame.width - 42 && p.y > panel.frame.height - 42 }
     // Words the recognizer should expect: the user's app names plus a few of the user's own (free, on-device).
-    lazy var hints: [String] = Array((["Atticus", "Chrome", "VS Code", "Peekaboo", "split screen", "study mode"] +
-        ["/Applications", "/System/Applications", "/System/Applications/Utilities"].flatMap {
+    var hints: [String] {
+        let config = (Prefs.path as NSString).deletingLastPathComponent
+        let shortcuts = (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: config + "/skills.json")))) as? [String: Any] ?? [:]
+        let user = (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: config + "/me.json")))) as? [String: Any] ?? [:]
+        var seen = Set<String>()
+        return Array((["Atticus", "Chrome", "VS Code", "Peekaboo", "split screen", "study mode", user["name"] as? String ?? ""] + shortcuts.keys.sorted() +
+        [NSHomeDirectory() + "/Applications", "/Applications", "/System/Applications", "/System/Applications/Utilities"].flatMap {
             ((try? FileManager.default.contentsOfDirectory(atPath: $0)) ?? []).filter { $0.hasSuffix(".app") }.map { String($0.dropLast(4)) }
-        }).prefix(100))
+        }).filter { !$0.isEmpty && seen.insert($0).inserted }.prefix(100))
+    }
     func sound(_ name: String, _ v: Float) { let s = NSSound(named: name); s?.volume = v; s?.play() }
     func cue(_ k: String) { let n = Prefs.str(k); if n != "None" { sound(n, Float(Prefs.num("volume"))) } }   // soundStart / soundDone / soundStop
     var voice: Process?   // `say`: the Mac's system voice (a Siri voice if picked in Spoken Content); AVSpeechSynthesizer can't use Siri voices
-    @discardableResult func shush() -> Bool { guard let v = voice, v.isRunning else { return false }; v.terminate(); return true }
+    @discardableResult func shush() -> Bool {
+        guard let v = voice else { return false }; voice = nil
+        guard v.isRunning else { return false }; v.terminate(); return true
+    }
     func deliver(_ a: String) {   // Settings: read answers aloud, copy them
         if Prefs.bool("autoCopy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(a, forType: .string) }
         if Prefs.bool("speak") {
             shush(); let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/say"); p.arguments = ["--", a]
-            p.terminationHandler = { [weak self] _ in DispatchQueue.main.async { self?.hide(after: 2) } }   // the box waits for the voice
+            p.terminationHandler = { [weak self] _ in DispatchQueue.main.async {
+                guard let self, self.voice === p else { return }; self.voice = nil; self.hide(after: 2)
+            } }
             try? p.run(); voice = p
         }
     }
@@ -231,6 +263,9 @@ final class App: NSObject, WKScriptMessageHandler {
             if let a = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication, a != .current { self?.mine = a.localizedName ?? "" }
         }
         SFSpeechRecognizer.requestAuthorization { _ in }
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }; frame(panel.frame)
+        }
         Task { [weak self] in   // make sure the speech model is installed, and learn its audio format
             let tr = SpeechTranscriber(locale: Locale(identifier: "en-US"), preset: .progressiveTranscription)
             if let r = try? await AssetInventory.assetInstallationRequest(supporting: [tr]) { try? await r.downloadAndInstall() }
@@ -250,8 +285,8 @@ final class App: NSObject, WKScriptMessageHandler {
                 if !f && !hovering && !busy { hide(after: 3) }
             }
             if b["type"] != nil { fresh = false; if engine.isRunning { hush() } }   // clicked or typed in the box while listening: stop the mic quietly
-            if b["copy"] != nil && !answer.isEmpty {
-                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(String(answer.dropFirst(2)), forType: .string); js("copied")
+            if let a = b["copy"] as? String, !a.isEmpty {
+                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(a, forType: .string); js("copied")
             }
             if let t = b["send"] as? String { typed(t, keep: true) }
             if b["mic"] != nil { fresh = false }
@@ -278,7 +313,7 @@ final class App: NSObject, WKScriptMessageHandler {
     }
 
     func show() {
-        gen += 1; js("mode", Prefs.bool("safe"))
+        gen += 1; js("visible", true); js("mode", Prefs.bool("safe"))
         if panel.isVisible {   // still up: stay where the user dragged it
             NSAnimationContext.runAnimationGroup { $0.duration = 0.18; panel.animator().alphaValue = 1 }
             return
@@ -286,6 +321,7 @@ final class App: NSObject, WKScriptMessageHandler {
         let vf = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
         let x = Prefs.str("corner") == "top-right" ? vf.maxX - panel.frame.width - 14 : vf.minX + 14
         panel.setFrameOrigin(NSPoint(x: x, y: vf.maxY - panel.frame.height - 10))
+        frame(panel.frame)
         panel.alphaValue = 0
         panel.orderFrontRegardless()
         if escRef == nil {
@@ -304,7 +340,7 @@ final class App: NSObject, WKScriptMessageHandler {
     }
 
     func gone() {
-        panel.orderOut(nil); fresh = false; pinned = false; stuck = false; composing = false; js("compose", false)
+        panel.orderOut(nil); fresh = false; pinned = false; stuck = false; composing = false; js("compose", false); js("visible", false)
         if let r = escRef { UnregisterEventHotKey(r); escRef = nil }
     }
 
@@ -315,15 +351,18 @@ final class App: NSObject, WKScriptMessageHandler {
             hush(); cue("soundStop"); js("stopped", "Stopped listening"); hide(after: 1.5)
         } else if busy {
             cancel()
-        } else if panel.isVisible && !stuck {
+        } else if panel.isVisible {
             close(clear: false)
         }
     }
 
     func hush() {   // stop listening, drop what was heard, say nothing
         engine.stop(); engine.inputNode.removeTap(onBus: 0); feed?.finish(); reading?.cancel(); pause?.cancel(); unwarm()
-        clickTalk = false; quiet?.cancel(); stops += 1   // stops: a late "words landed" from this listen does nothing
+        clickTalk = false; toggleTalk = false; quiet?.cancel(); stops += 1   // stops: a late "words landed" from this listen does nothing
+        listenID += 1
+        cancelFast()
         aheadItem?.cancel(); dropAhead()
+        proc?.terminate(); proc = nil; askFile = ""
         let an = analyzer; Task { await an?.cancelAndFinishNow() }
         busy = false   // an early start dropped above never reports back (its exit handler sees proc changed)
     }
@@ -335,18 +374,43 @@ final class App: NSObject, WKScriptMessageHandler {
     }
 
     func cancel() {
-        proc?.terminate(); proc = nil; busy = false
+        hush(); shush()
         cue("soundStop"); js("stopped", "Answer stopped"); hide(after: 1.5)
     }
 
     // ✕ also ends the conversation; clicking away or timing out keeps it for 5 minutes.
     func close(clear: Bool) {
-        shush(); if engine.isRunning || busy { hush(); proc?.terminate(); proc = nil }   // gone means quiet: no mic, no voice, no answer on the way
+        shush(); hush()   // gone means quiet: no mic, no voice, no answer on the way
         if clear { try? FileManager.default.removeItem(atPath: recent); lastDone = .distantPast }
         gen += 1
         let g = gen
         NSAnimationContext.runAnimationGroup({ $0.duration = 0.2; panel.animator().alphaValue = 0 },
                                              completionHandler: { [self] in if g == gen { gone() } })
+    }
+
+    func shortcut(_ pressed: Bool) {
+        if !pressed {
+            shortcutDown = false
+            if engine.isRunning && !toggleTalk && !clickTalk { stop() }
+            return
+        }
+        guard !shortcutDown else { return }   // one action per physical press, including key repeat
+        shortcutDown = true
+        guard !Prefs.bool("paused") else { return }
+        if shush() { return }
+        if engine.isRunning { return toggleTalk ? stop() : dismiss() }
+        if busy { return cancel() }
+        start()
+    }
+
+    func review(_ message: String) {
+        hush(); js("msg", message)
+        pinned = true; panel.makeKey(); panel.makeFirstResponder(web); js("draft", text)
+    }
+
+    func recordingLimit() {
+        if toggleTalk { review("Recording paused after 60 seconds. Review your words and press Return to send.") }
+        else { stop() }
     }
 
     func start() {
@@ -358,7 +422,8 @@ final class App: NSObject, WKScriptMessageHandler {
         }
         if fresh && panel.isVisible { return dismiss() }
         wasUp = panel.isVisible
-        text = ""; consumed = 0; did = []; ahead = ""
+        cancelFast()
+        text = ""; ahead = ""; speechFailed = false; consumed = 0; consumedText = ""; liveRevised = false; did = []
         if !panel.isVisible && Date().timeIntervalSince(lastDone) > 30 { js("reset"); try? FileManager.default.removeItem(atPath: recent) }
         if Prefs.str("input") == "type" && !clickTalk {   // Settings: the shortcut opens the box ready to type
             if composing && panel.isVisible { return dismiss() }   // pressed again = put it away
@@ -366,11 +431,17 @@ final class App: NSObject, WKScriptMessageHandler {
             panel.makeKey(); panel.makeFirstResponder(web); js("compose", true)
             return
         }
+        toggleTalk = !clickTalk && Prefs.str("talkMode") == "toggle"
         cue("soundStart")
         unwarm(); warm = spawn()
         onboarding.tried()
         js("listen")
+        js("shortcut", toggleTalk ? "Press again to send" : clickTalk ? "" : "Release keys to send")
         show()
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+            hush(); js("msg", "Allow Atticus in System Settings → Privacy & Security → Microphone."); hide(after: 6); return
+        }
+        listenID += 1; let listeningID = listenID
         let tr = SpeechTranscriber(locale: Locale(identifier: "en-US"), preset: .progressiveTranscription)
         let (stream, cont) = AsyncStream<AnalyzerInput>.makeStream()
         let an = SpeechAnalyzer(modules: [tr])
@@ -384,11 +455,14 @@ final class App: NSObject, WKScriptMessageHandler {
                     let piece = String(r.text.characters)
                     if r.isFinal { done += piece }
                     let now = r.isFinal ? done : done + piece
-                    await MainActor.run { self?.heard(now) }
+                    await MainActor.run { if self?.listenID == listeningID { self?.heard(now) } }
                 }
-            } catch {}
+            } catch { await MainActor.run { if self?.listenID == listeningID { self?.speechFailed = true } } }
         }
         let input = engine.inputNode, natural = input.outputFormat(forBus: 0)
+        guard natural.sampleRate > 0, natural.channelCount > 0 else {
+            hush(); js("msg", "No microphone is available. Connect one and try again."); hide(after: 6); return
+        }
         let want = speechFormat ?? natural
         let conv = want == natural ? nil : AVAudioConverter(from: natural, to: want)
         input.removeTap(onBus: 0)
@@ -409,16 +483,17 @@ final class App: NSObject, WKScriptMessageHandler {
             var sum: Float = 0
             for i in 0..<Int(buf.frameLength) { sum += ch[i] * ch[i] }
             let v = Double(min(1, sqrt(sum / Float(buf.frameLength)) * 14))
-            DispatchQueue.main.async { self?.js("level", v) }
+            DispatchQueue.main.async { if self?.listenID == listeningID { self?.js("level", v) } }
         }
         engine.prepare()
-        do { try engine.start() } catch { js("msg", "Mic error: \(error.localizedDescription)"); hide(after: 3); return }
+        do { try engine.start() } catch { hush(); js("msg", "Mic error: \(error.localizedDescription)"); hide(after: 3); return }
         began = Date()   // after the mic is up: a slow mic start must not turn a tap into a hold
         Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] t in
             guard let self, engine.isRunning else { return t.invalidate() }
             let f = hotkey().flags, held = Date().timeIntervalSince(began)
             if clickTalk && text.isEmpty && held > 8 { t.invalidate(); hush(); js("stopped", ""); return hide(after: 3) }   // nothing said: stop the mic quietly
-            if (!clickTalk && !f.isEmpty && NSEvent.modifierFlags.isDisjoint(with: f)) || held > 60 { t.invalidate(); stop() }
+            if held > 60 { t.invalidate(); recordingLimit(); return }
+            if !toggleTalk && !clickTalk && !f.isEmpty && !NSEvent.modifierFlags.isSuperset(of: f) { t.invalidate(); stop() }
         }
     }
 
@@ -426,16 +501,18 @@ final class App: NSObject, WKScriptMessageHandler {
         guard engine.isRunning || busy else { return }
         text = now; if !now.trimmingCharacters(in: .whitespaces).isEmpty { fresh = false }
         js("words", text)
-        tryFast()   // every new word: "can you open Spotify and then…" opens Spotify mid-sentence
-        pause?.cancel()   // a short pause in speech = try what was said so far as an instant command
-        let item = DispatchWorkItem { [weak self] in self?.tryFast() }
-        pause = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: item)
+        if consumed > 0 && transcriptKey(words().prefix(consumed).joined(separator: " ")) != consumedText { liveRevised = true }
+        if Prefs.bool("live") {   // instant commands (open, move, search, play) run mid-sentence; the AI still waits for confirmed words
+            tryFast(); pause?.cancel()
+            let item = DispatchWorkItem { [weak self] in self?.tryFast() }
+            pause = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: item)
+        }
         if clickTalk {   // no keys to let go of: a 1.3 s pause ends it
             quiet?.cancel(); let q = DispatchWorkItem { [weak self] in self?.stop() }; quiet = q
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.3, execute: q)
         }
-        if !ahead.isEmpty && key(rest()) != key(ahead) { dropAhead() }   // the user kept talking: that start was for half a sentence
+        if !ahead.isEmpty && transcriptKey(rest()) != transcriptKey(ahead) { dropAhead() }   // the user kept talking: that start was for half a sentence
         aheadItem?.cancel()   // a longer pause = the user is probably done: start the AI now, keys still held
         guard Prefs.bool("ahead") else { return }
         let go = DispatchWorkItem { [weak self] in self?.startAhead() }
@@ -443,47 +520,87 @@ final class App: NSObject, WKScriptMessageHandler {
         DispatchQueue.main.asyncAfter(deadline: .now() + Prefs.num("aheadDelay"), execute: go)
     }
 
+    func words() -> [Substring] { text.split(separator: " ") }
     func rest() -> String { let w = words(); return w.count > consumed ? w[consumed...].joined(separator: " ") : "" }
-    func key(_ s: String) -> String { s.lowercased().filter { $0.isLetter || $0.isNumber } }   // ignores the punctuation speech adds later
 
     func startAhead() {
         let r = rest()
-        guard engine.isRunning, !fastBusy, !r.isEmpty, key(r) != key(ahead) else { return }
+        guard engine.isRunning, !fastBusy, !liveRevised, !r.isEmpty, transcriptKey(r) != transcriptKey(ahead) else { return }
+        let core = r.lowercased().replacingOccurrences(of: #"^(?:(?:hey|ok|okay|atticus|please|can you|could you|would you|also|and|now|then)[,\s]+)+"#, with: "", options: .regularExpression)
+        if ["open", "launch", "start", "pull up", "bring up", "focus", "switch to", "go to", "snap", "move", "put", "throw", "send", "make", "play", "search", "google", "look up"].contains(where: { core.hasPrefix($0 + " ") }) || hints.contains(where: { transcriptKey($0) == transcriptKey(r) }) { return }
         dropAhead()
         ahead = r
-        run(r)
+        run(r, speculative: true)
         warm = spawn()   // ready again in case the user keeps talking
     }
 
-    func dropAhead() { if !ahead.isEmpty { proc?.terminate(); proc = nil; ahead = "" } }
+    // Runs `atticus.py --fast` on the words not yet used; exit 0 means it was a simple command and it is done.
+    func cancelFast() { fastProc?.terminate(); fastProc = nil; fastBusy = false }
+
+    func tryFast() {
+        let w = words()
+        guard Prefs.bool("live"), Prefs.bool("instant"), engine.isRunning, !fastBusy, !liveRevised, w.count > consumed else { return }
+        let seg = w[consumed...].joined(separator: " "), n = w.count, prefix = transcriptKey(w.joined(separator: " "))
+        let p = py(["--fast", seg], ["ATTICUS_FRONT": mine, "ATTICUS_LIVE": "1"]), out = Pipe()
+        p.standardOutput = out
+        do { try p.run() } catch { return }
+        fastProc = p
+        fastBusy = true
+        DispatchQueue.global().async { [weak self] in
+            let line = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            p.waitUntilExit()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, fastProc === p else { return }
+                fastProc = nil; fastBusy = false
+                if p.terminationStatus == 0 && line.hasPrefix("✓") {
+                    consumed = n; consumedText = prefix
+                    if transcriptKey(words().prefix(n).joined(separator: " ")) != prefix { liveRevised = true }
+                    did.append(String(line.dropFirst(2)))
+                    js("line", "▸ " + line.dropFirst(2))
+                }
+            }
+        }
+    }
+
+    func dropAhead() {
+        if !ahead.isEmpty { proc?.terminate(); proc = nil; ahead = ""; if engine.isRunning { busy = false } }
+    }
 
     func stop() {
         guard engine.isRunning, !clickTalk || text.isEmpty == false else { return }
-        if !clickTalk && text.isEmpty && Date().timeIntervalSince(began) < 0.4 {   // tapped, not held: like Spotlight
+        if !toggleTalk && !clickTalk && text.isEmpty && Date().timeIntervalSince(began) < 0.4 {   // tapped, not held: like Spotlight
             if wasUp { hush(); return close(clear: false) }   // the box was up: a tap puts it away
             clickTalk = true; fresh = true; panel.makeKey(); panel.makeFirstResponder(web); js("compose", true); return
         }
         engine.stop(); engine.inputNode.removeTap(onBus: 0); feed?.finish()
-        clickTalk = false; quiet?.cancel()
+        clickTalk = false; toggleTalk = false; quiet?.cancel()
         busy = true
         js("think")   // keys are up: stop saying Listening now, not when the last words land
         let an = analyzer, rd = reading
         stops += 1
         let g = stops
-        let once = { [weak self] in   // whichever comes first (words landed, or 2 s) goes on; the other does nothing
+        let once: (Bool) -> Void = { [weak self] confirmed in
             guard let self, g == stops else { return }
-            stops += 1; pause?.cancel(); finish()
+            stops += 1; listenID += 1; pause?.cancel()
+            if confirmed { finish() }
+            else {
+                review("Couldn’t confirm your words. Check them and press Return.")
+            }
         }
         Task {   // let the model finish the last words, then act
-            try? await an?.finalizeAndFinishThroughEndOfInput()
-            await rd?.value
-            await MainActor.run { once() }
+            guard let an else { return await MainActor.run { once(false) } }
+            do {
+                try await an.finalizeAndFinishThroughEndOfInput()
+                await rd?.value
+                await MainActor.run { once(!speechFailed) }
+            } catch { await MainActor.run { once(false) } }
         }
-        // finalizing can hang (seen Oct 9): after 2 s go with what was heard
+        // Finalizing can hang: offer the partial transcript for review instead of executing it.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             guard let self, g == stops else { return }
             rd?.cancel(); Task { await an?.cancelAndFinishNow() }
-            once()
+            once(false)
         }
     }
 
@@ -492,39 +609,22 @@ final class App: NSObject, WKScriptMessageHandler {
         fresh = false; js("listen", keep); show(); js("words", t); run(t)
     }
 
-    func words() -> [Substring] { text.split(separator: " ") }
-
-    // Runs `atticus.py --fast` on the words not yet used; exit 0 means it was a simple command and it is done.
-    func tryFast() {
-        let w = words()
-        guard Prefs.bool("instant"), engine.isRunning, !fastBusy, w.count > consumed else { return }
-        let seg = w[consumed...].joined(separator: " "), n = w.count, front = mine
-        fastBusy = true
-        DispatchQueue.global().async { [weak self] in
-            let p = py(["--fast", seg], ["ATTICUS_FRONT": front]), out = Pipe()
-            p.standardOutput = out
-            try? p.run(); p.waitUntilExit()
-            let line = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                fastBusy = false
-                if p.terminationStatus == 0 && line.hasPrefix("✓") {
-                    consumed = n; did.append(String(line.dropFirst(2)))
-                    js("line", "▸ " + line.dropFirst(2))
-                }
-            }
-        }
-    }
-
     func finish() {
         guard busy else { return }   // cancelled while the last words landed
-        if fastBusy { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [self] in finish() }; return }
+        if fastBusy {
+            let g = stops
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [self] in if g == stops { finish() } }; return
+        }
         aheadItem?.cancel()
+        if liveRevised {
+            hush(); js("msg", "Words changed after an instant command. Review before sending another request.")
+            pinned = true; panel.makeKey(); panel.makeFirstResponder(web); js("draft", text); return
+        }
         let rest = rest()
-        if !rest.isEmpty && key(rest) == key(ahead) {   // already started on exactly this while the user talked
+        if !rest.isEmpty && transcriptKey(rest) == transcriptKey(ahead), proc?.isRunning == true {   // already started on exactly this while the user talked
             ahead = ""; unwarm()
-            if proc == nil { busy = false; hide(after: linger(max(6, min(30, Double(answer.count) / 12)))) }   // and already done
+            do { try "go".write(toFile: commit, atomically: true, encoding: .utf8) }
+            catch { cancel(); js("msg", "Could not confirm the request. Please try again.") }
             return
         }
         dropAhead()
@@ -532,16 +632,19 @@ final class App: NSObject, WKScriptMessageHandler {
         busy = false; unwarm()   // nothing left for the AI
         if did.isEmpty { js("msg", "Didn't catch that."); return hide(after: 1.2) }
         answer = "✓ " + did.joined(separator: " ")
+        deliver(did.joined(separator: " "))
         js("line", answer); lastDone = Date(); cue("soundDone"); hide(after: linger(5))
     }
 
     // atticus.py --wait, started at key-down so Claude is up by the time the user lets go; run() hands it the words.
-    func spawn() -> (p: Process, input: FileHandle)? {
-        let p = py(["--wait"], ["ATTICUS_UI": "1", "ATTICUS_FRONT": mine])
+    func spawn() -> (p: Process, input: FileHandle, commit: String)? {
+        let commit = NSTemporaryDirectory() + "atticus-commit-" + UUID().uuidString
+        let p = py(["--wait"], ["ATTICUS_UI": "1", "ATTICUS_FRONT": mine, "ATTICUS_COMMIT": commit])
         let pipe = Pipe(), inp = Pipe(); p.standardOutput = pipe; p.standardInput = inp
         var buffer = Data()
         let feed = { [weak self] (d: Data) in
             DispatchQueue.main.async {
+                guard let self, self.proc === p else { return }   // buffered output from a cancelled request stays cancelled
                 buffer += d
                 while let i = buffer.firstIndex(of: 10) {
                     let line = String(decoding: buffer[..<i], as: UTF8.self); buffer.removeSubrange(...i)
@@ -549,11 +652,12 @@ final class App: NSObject, WKScriptMessageHandler {
                     if line.hasPrefix("@ ") { pointAt(line); continue }   // experimental "show me where"
                     if line.hasPrefix("? ") {   // safe mode: "? <question>\t<command>\t<answer file>"
                         let p = line.dropFirst(2).components(separatedBy: "\t")
-                        guard p.count == 3, let self else { continue }
+                        guard p.count == 3 else { continue }
                         self.askFile = p[2]; self.show(); self.js("ask", [p[0], p[1]]); continue
                     }
-                    if line.hasPrefix("✓") { self?.answer = line; self?.deliver(String(line.dropFirst(2))) }
-                    self?.js("line", line)
+                    if line.hasPrefix("✓") { self.answer = line; self.deliver(String(line.dropFirst(2))) }
+                    if line.hasPrefix("! ") { self.js("msg", String(line.dropFirst(2))) }
+                    else { self.js("line", line) }
                 }
             }
         }
@@ -562,7 +666,9 @@ final class App: NSObject, WKScriptMessageHandler {
             pipe.fileHandleForReading.readabilityHandler = nil
             feed(pipe.fileHandleForReading.readDataToEndOfFile())   // the answer may still be in the pipe
             DispatchQueue.main.async {
+                try? FileManager.default.removeItem(atPath: commit)
                 guard let self, self.proc === p else { return }   // a cancelled run ending late must not touch the next one
+                if !self.ahead.isEmpty { self.proc = nil; self.ahead = ""; self.busy = !self.engine.isRunning; return }
                 self.busy = false; self.proc = nil
                 if !self.answer.isEmpty { self.lastDone = Date(); self.cue("soundDone") }
                 Apps.q.async { Apps.sync() }
@@ -570,17 +676,24 @@ final class App: NSObject, WKScriptMessageHandler {
             }
         }
         do { try p.run() } catch { return nil }
-        return (p, inp.fileHandleForWriting)
+        return (p, inp.fileHandleForWriting, commit)
     }
 
     func unwarm() { warm?.p.terminate(); warm = nil }
 
-    func run(_ t: String) {
+    func run(_ t: String, speculative: Bool = false) {
         busy = true; answer = ""
-        js("think")
+        if !speculative { js("think") }
+        if let w = warm, !w.p.isRunning { try? w.input.close(); warm = nil }
         guard let w = warm ?? spawn() else { busy = false; js("msg", "Could not start atticus.py"); return hide(after: 3) }
-        warm = nil; proc = w.p
-        try? w.input.write(contentsOf: Data((mine + "\t" + t.replacingOccurrences(of: "\n", with: " ") + "\n").utf8)); try? w.input.close()
+        warm = nil; proc = w.p; commit = w.commit
+        if !speculative {
+            do { try "go".write(toFile: commit, atomically: true, encoding: .utf8) }
+            catch { cancel(); js("msg", "Could not confirm the request. Please try again."); return }
+        }
+        do {
+            try w.input.write(contentsOf: Data((mine + "\t" + t.replacingOccurrences(of: "\n", with: " ") + "\n").utf8)); try w.input.close()
+        } catch { cancel(); js("msg", "The request worker stopped. Please try again.") }
     }
 }
 
@@ -626,6 +739,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
             DispatchQueue.main.async {
                 guard let d = try? JSONSerialization.data(withJSONObject: s), let j = String(data: d, encoding: .utf8) else { return }
                 self?.web?.evaluateJavaScript("ob.set(\(j))")
+                self?.web?.evaluateJavaScript("ob.mode(\(Prefs.str("talkMode") == "toggle"))")
             }
         }
     }
@@ -737,6 +851,33 @@ if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--look" {
     exit(FileManager.default.fileExists(atPath: a[3]) ? 0 : 1)
 }
 
+// `Atticus --text <app> [title words]` (atticus.py --watch): the text in that app's window, read on this Mac, even when covered.
+if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--text" {
+    let a = CommandLine.arguments, words = a.count > 3 ? a[3].lowercased() : "", done = DispatchSemaphore(value: 0)
+    var found = false
+    _ = NSApplication.shared   // ScreenCaptureKit needs a window-server connection
+    Task {
+        defer { done.signal() }
+        guard let all = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false) else { return }
+        // apps keep hidden helper windows: real ones first (normal layer, on screen, biggest), next one if a capture reads nothing
+        let ws = all.windows.filter { ($0.owningApplication?.applicationName ?? "").localizedCaseInsensitiveContains(a[2]) && $0.windowLayer == 0 &&
+                (words.isEmpty || ($0.title ?? "").lowercased().contains(words)) && $0.frame.width > 200 && $0.frame.height > 150 }
+            .sorted { ($0.isOnScreen ? 1 : 0, $0.frame.width * $0.frame.height) > ($1.isOnScreen ? 1 : 0, $1.frame.width * $1.frame.height) }
+        for w in ws.prefix(4) {
+            let cfg = SCStreamConfiguration()
+            cfg.width = Int(w.frame.width * 2); cfg.height = Int(w.frame.height * 2)   // full detail: small terminal text must read right
+            guard let img = try? await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: w), configuration: cfg) else { continue }
+            let req = VNRecognizeTextRequest(); req.usesLanguageCorrection = false
+            try? VNImageRequestHandler(cgImage: img).perform([req])
+            let text = (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+            if text.isEmpty { continue }
+            print(text.joined(separator: "\n")); found = true; return
+        }
+    }
+    done.wait()
+    exit(found ? 0 : 1)
+}
+
 // "Show me where": a soft pulsing ring at a spot on screen for a few seconds. "@ x y" in top-left screen points.
 var ring: NSPanel?
 func pointAt(_ line: String) {
@@ -765,9 +906,10 @@ func jsonString(_ s: String) -> String { String(data: try! JSONSerialization.dat
 // Restart Atticus (Screen Recording only takes effect in a new process); works under launchd or when opened by hand.
 func relaunchSoon() {
     let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/sh")
-    p.arguments = ["-c", "sleep 1; open \"$0\"", Bundle.main.bundlePath]
+    p.arguments = ["-c", "sleep 1; launchctl bootout gui/\(getuid())/com.atticus.app >/dev/null 2>&1; sleep 1; launchctl bootstrap gui/\(getuid()) \"$1\" 2>/dev/null || open \"$0\"",
+                   Bundle.main.bundlePath, NSHomeDirectory() + "/Library/LaunchAgents/com.atticus.app.plist"]
     try? p.run()
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { exit(0) }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { NSApp.terminate(nil) }
 }
 
 // Updates: build.sh records the source folder (a git clone); Atticus pulls and rebuilds itself from it, then
@@ -791,6 +933,7 @@ enum Updater {
         DispatchQueue.global().async {
             let r = sh(#"""
                 cd "$0" 2>/dev/null || exit 3
+                [ -z "$(git status --porcelain)" ] || exit 5
                 git fetch -q 2>/dev/null || exit 4
                 [ "$(git rev-parse HEAD)" = "$(git rev-parse '@{u}')" ] && exit 0
                 git pull -q --ff-only 2>/dev/null || exit 5
@@ -807,7 +950,7 @@ enum Updater {
         }
     }
     static func restartWhenIdle() {
-        if app.busy || app.engine.isRunning || settings.win?.isKeyWindow == true {
+        if app.busy || app.engine.isRunning || app.voice?.isRunning == true || settings.win?.isKeyWindow == true || onboarding.win != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 30) { restartWhenIdle() }
         } else { relaunchSoon() }
     }
@@ -819,7 +962,7 @@ enum Updater {
 
 // Opening Atticus again (Spotlight, Finder, Dock) while it runs: setup the first time, Settings after.
 final class Delegate: NSObject, NSApplicationDelegate {
-    func applicationWillTerminate(_ n: Notification) { app.proc?.terminate(); app.unwarm(); app.voice?.terminate() }
+    func applicationWillTerminate(_ n: Notification) { app.hush(); app.shush() }
     func applicationShouldHandleReopen(_ s: NSApplication, hasVisibleWindows: Bool) -> Bool {
         UserDefaults.standard.bool(forKey: "onboarded") ? settings.open() : onboarding.open()
         return false
@@ -840,7 +983,8 @@ final class MenuBar: NSObject, NSMenuDelegate {
     func menuNeedsUpdate(_ m: NSMenu) {
         m.removeAllItems()
         let keys = Prefs.str("hotkeyLabel")
-        let head = NSMenuItem(title: Prefs.bool("paused") ? "Atticus is paused" : "Hold \(keys) and talk", action: nil, keyEquivalent: "")
+        let hint = Prefs.str("input") == "type" ? "Press \(keys) to type" : Prefs.str("talkMode") == "toggle" ? "Press \(keys) to talk · again to send" : "Hold \(keys) and talk"
+        let head = NSMenuItem(title: Prefs.bool("paused") ? "Atticus is paused" : hint, action: nil, keyEquivalent: "")
         head.isEnabled = false; m.addItem(head)
         m.addItem(.separator())
         add(m, "Ask Atticus", #selector(ask), "")
@@ -863,7 +1007,7 @@ final class MenuBar: NSObject, NSMenuDelegate {
         return "Today: \(rows.count) ask\(rows.count == 1 ? "" : "s") · " + (usd < 1 ? String(format: "%.2f¢", usd * 100) : String(format: "$%.2f", usd))
     }
     @objc func ask() { app.clickTalk = true; app.start(); if !app.engine.isRunning { app.clickTalk = false } }   // the same box as the shortcut, like its mic button
-    @objc func pause() { Prefs.set("paused", !Prefs.bool("paused")); paint(); settings.push() }
+    @objc func pause() { Prefs.set("paused", !Prefs.bool("paused")); if Prefs.bool("paused") { app.close(clear: false) }; paint(); settings.push() }
     @objc func openSettings() { settings.open() }
     @objc func openSetup() { onboarding.open() }
     @objc func quit() { NSApp.terminate(nil) }
@@ -1068,10 +1212,10 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         case "set":
             guard let k = b["k"] as? String, let v = b["v"] else { return }
             Prefs.set(k, v)
-            if k == "speak", v as? Bool == true { siriVoice() }
+            if k == "speak" { if v as? Bool == true { siriVoice() } else { app.shush() } }
             if k == "hideWhenSharing" { app.panel.sharingType = v as? Bool == true ? .none : .readOnly }
             if k == "menuIcon" { bar.item.isVisible = v as? Bool == true }
-            if k == "paused" { bar.paint() }
+            if k == "paused" { if v as? Bool == true { app.close(clear: false) }; bar.paint() }
             if k == "safe" { app.js("mode", v as? Bool == true) }
             if k == "login" {   // the LaunchAgent build.sh installed: enabled = starts at login
                 let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
@@ -1123,6 +1267,13 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
 }
 
 // One Atticus at a time: a lock the system drops when the process ends (opened by hand + started by launchd = two)
+if CommandLine.arguments.dropFirst() == ["--selftest"] {
+    precondition(transcriptKey(" Open   Notes. ") == transcriptKey("open notes"))
+    precondition(transcriptKey("calculate 1.5") != transcriptKey("calculate 15"))
+    precondition(transcriptKey("search a b") != transcriptKey("search ab"))
+    precondition(transcriptKey("open a-b.com") != transcriptKey("open ab.com"))
+    print("native selftest ok"); exit(0)
+}
 let lockFD = open(NSString(string: "~/.config/atticus/app.lock").expandingTildeInPath, O_CREAT | O_RDWR, 0o644)
 if lockFD >= 0 && flock(lockFD, LOCK_EX | LOCK_NB) != 0 {
     for _ in 0..<15 where flock(lockFD, LOCK_EX | LOCK_NB) != 0 { usleep(100_000) }   // a restart: the old one is exiting
@@ -1139,7 +1290,7 @@ InstallEventHandler(GetApplicationEventTarget(), { _, ev, _ in
     let pressed = GetEventKind(ev) == UInt32(kEventHotKeyPressed)
     var hk = EventHotKeyID()
     GetEventParameter(ev, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil, MemoryLayout<EventHotKeyID>.size, nil, &hk)
-    DispatchQueue.main.async { hk.id == 2 ? (pressed ? app.escape() : ()) : pressed ? app.start() : app.stop() }
+    DispatchQueue.main.async { hk.id == 2 ? (pressed ? app.escape() : ()) : app.shortcut(pressed) }
     return noErr
 }, 2, &specs, nil, nil)
 var ref: EventHotKeyRef?

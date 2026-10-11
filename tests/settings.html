@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Atticus Settings checks</title>
+<style>
+  body { background: #ececf0; color: #1d1d1f; font: 14px system-ui; margin: 24px; }
+  iframe { width: 780px; height: 532px; border: 0; border-radius: 12px; background: #f4f4f7; box-shadow: 0 16px 48px #0002; }
+  pre { white-space: pre-wrap; line-height: 1.6; } .pass { color: #168445; } .fail { color: #c22; }
+  @media (prefers-color-scheme: dark) { body { background: #1c1c1e; color: #f5f5f7; } iframe { background: #29292c; } }
+</style>
+<h1>Atticus Settings checks</h1><p>Mock bridge: no settings files, microphone or app actions.</p>
+<pre id="results">Running…</pre><iframe id="preview" title="Atticus Settings preview"></iframe>
+<script type="module">
+const frame = document.getElementById('preview'), results = document.getElementById('results'), messages = [], checks = [];
+const assert = (condition, name) => { if (!condition) throw Error(name); checks.push('✓ ' + name); };
+window.addEventListener('message', e => { if (e.source === frame.contentWindow) messages.push(e.data); });
+try {
+  const html = await (await fetch('../ui/settings.html')).text();
+  const loaded = new Promise(resolve => frame.onload = resolve);
+  frame.srcdoc = html.replace('<head>', `<head><script>window.webkit = {messageHandlers: {st: {postMessage: m => parent.postMessage(m, '*')}}};<\/script>`);
+  await loaded;
+  const w = frame.contentWindow, d = w.document;
+  const prefs = {hotkeyLabel: '⌃⌥Space', input: 'voice', talkMode: 'hold', volume: .16, aheadDelay: .7, ahead: true, model: 'haiku', corner: 'top-left', linger: 'normal', login: true, menuIcon: true, instant: true, live: true, learn: true, safe: true, tips: true, soundStart: 'Pop', soundDone: 'Glass', soundStop: 'Tink'};
+  const load = p => w.st.load({prefs: {...prefs, ...p}});
+  load({});
+  const mode = d.querySelector('[data-k="talkMode"]'), hold = mode.querySelector('[data-v="hold"]'), toggle = mode.querySelector('[data-v="toggle"]');
+  assert(hold.getAttribute('aria-pressed') === 'true', 'Hold remains the default');
+  toggle.click(); await new Promise(resolve => setTimeout(resolve, 20));
+  assert(messages.some(m => m.do === 'set' && m.k === 'talkMode' && m.v === 'toggle'), 'Toggle choice persists through the native bridge');
+  assert(toggle.getAttribute('aria-pressed') === 'true' && hold.getAttribute('aria-pressed') === 'false', 'Selected mode is accessible');
+  assert(d.getElementById('schint').textContent.includes('again to send'), 'Shortcut hint follows toggle mode');
+  assert(d.getElementById('talkhint').textContent.includes('Pauses keep listening'), 'Toggle explains what a pause does');
+  toggle.focus(); assert(d.activeElement === toggle, 'Mode buttons can receive keyboard focus');
+  assert(d.documentElement.scrollWidth <= 780 && mode.scrollWidth <= mode.clientWidth, 'Controls fit the native Settings width');
+  const row = mode.closest('.row'); assert(row.scrollWidth <= row.clientWidth, 'Mode row does not overflow');
+  frame.style.width = '700px'; await new Promise(resolve => requestAnimationFrame(resolve));
+  assert(d.documentElement.scrollWidth <= 700 && row.scrollWidth <= row.clientWidth, 'Controls fit a narrower window');
+  frame.style.width = '780px';
+  load({input: 'type', talkMode: 'toggle'});
+  assert(mode.closest('.group').hidden && d.getElementById('schint').textContent.includes('Return sends'), 'Typing mode shows its own shortcut interaction');
+  load({talkMode: 'toggle'});
+  results.textContent = checks.join('\n') + `\n\n${checks.length} checks passed.`; results.className = 'pass';
+} catch (error) { results.textContent = checks.join('\n') + '\n✗ ' + error.message; results.className = 'fail'; }
+</script></html>

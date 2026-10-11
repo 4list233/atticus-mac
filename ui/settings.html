@@ -62,6 +62,7 @@
   .seg button.on { background: var(--card); box-shadow: 0 1px 3px rgba(0,0,0,.15), inset 0 0 0 .5px var(--line); }
   @media (prefers-color-scheme: dark) { .seg button.on { background: #636366; } }
   .seg button:focus-visible { outline: 2px solid rgba(10,132,255,.5); }
+  .shortcut + .group { margin-top: 12px; }
 
   select { font: 13px system-ui; color: var(--fg); background: var(--card); border: 0; border-radius: 6px; padding: 3px 6px;
     box-shadow: inset 0 0 0 .5px var(--line), 0 1px 1px rgba(0,0,0,.05); }
@@ -167,12 +168,16 @@
 <main>
   <section id="general" class="on">
     <h1>General</h1>
-    <p class="lede">Hold the keys, say what you need, let go.</p>
+    <p class="lede">Your shortcut. Your way to talk.</p>
     <h3>Shortcut</h3>
     <div class="shortcut" id="shortcut">
       <div class="caps" id="caps" aria-live="polite"></div>
       <small id="schint">Hold it, talk, let go.</small>
       <div class="acts"><button class="btn blue" id="change">Change Shortcut</button><button class="btn" data-do="resetHotkey" id="reset">Use Default</button></div>
+    </div>
+    <div class="group">
+      <div class="row"><div class="t"><b id="talklabel">Shortcut behavior</b><span id="talkhint">Hold to listen. Release to send.</span></div><div class="seg" data-k="talkMode" role="group" aria-labelledby="talklabel"><button data-v="hold">Hold to talk</button><button data-v="toggle">Press to toggle</button></div></div>
+      <div class="row"><div class="t"><span>While answering, press the shortcut to stop. Esc cancels without sending.</span></div></div>
     </div>
     <h3>Atticus</h3>
     <div class="group">
@@ -214,9 +219,10 @@
     </div>
     <h3>Speed</h3>
     <div class="group">
-      <div class="row"><div class="t"><b>Instant commands</b><span>Opening apps, moving windows, searches and music run with no AI, in under a second.</span></div><label class="sw"><input type="checkbox" data-k="instant"></label></div>
-      <div class="row"><div class="t"><b>Learn shortcuts</b><span>When the AI does something new and it works, Atticus saves the steps. Say the same thing again: instant, and free.</span></div><label class="sw"><input type="checkbox" data-k="learn"></label></div>
-      <div class="row"><div class="t"><b>Start while I’m talking</b><span>When you pause, Atticus starts on what you said. Often done the moment you let go.</span></div><label class="sw"><input type="checkbox" data-k="ahead"></label></div>
+      <div class="row"><div class="t"><b>Instant commands</b><span>Opening apps, moving windows, searches and music run locally with no AI.</span></div><label class="sw"><input type="checkbox" data-k="instant"></label></div>
+      <div class="row"><div class="t"><b>Act while I’m talking</b><span>With Instant commands on, supported commands run mid-sentence. Learned shortcuts wait for confirmed words.</span></div><label class="sw"><input type="checkbox" data-k="live"></label></div>
+      <div class="row"><div class="t"><b>Learn shortcuts</b><span>When the AI does something new and it works, Atticus saves the steps. Say the same thing again: no AI cost, after your words are confirmed.</span></div><label class="sw"><input type="checkbox" data-k="learn"></label></div>
+      <div class="row"><div class="t"><b>Start while I’m talking</b><span>Starts thinking during a pause. AI tools wait until you send and your words are confirmed.</span></div><label class="sw"><input type="checkbox" data-k="ahead"></label></div>
       <div class="row"><div class="t"><b>Pause before starting</b><span>Shorter is faster. Longer waits more if you pause mid-sentence.</span></div><input type="range" min="0.4" max="1.5" step="0.1" data-k="aheadDelay"><span class="val" id="delayv"></span></div>
     </div>
   </section>
@@ -254,7 +260,7 @@
     <div class="stats" id="stats"></div>
     <h3>History</h3>
     <div class="group">
-      <div class="row"><div class="t"><b>Ask log</b><span>Every ask, its answer, steps and cost.</span></div><button class="btn" data-do="openLog">Open</button></div>
+      <div class="row"><div class="t"><b>Ask log</b><span>Completed requests, answers and cost. Live commands are marked; instant actions cost $0.</span></div><button class="btn" data-do="openLog">Open</button></div>
       <div class="row"><div class="t"><b>Forget this conversation</b><span>Follow-ups like “open the second one” start fresh.</span></div><button class="btn red" data-do="clearRecent">Forget</button></div>
     </div>
   </section>
@@ -278,7 +284,7 @@
     </div>
     <h3>Safety</h3>
     <div class="group">
-      <div class="row"><div class="t"><b>Safe mode</b><span>The AI can only change files in its own scratch folder, and asks you before it deletes, sends or buys anything.</span></div><label class="sw"><input type="checkbox" data-k="safe"></label></div>
+      <div class="row"><div class="t"><b>Safe mode</b><span>AI commands use a scratch folder. Deletes, sends, purchases and commands requesting access outside it need your approval.</span></div><label class="sw"><input type="checkbox" data-k="safe"></label></div>
       <div class="row"><div class="t"><b>Count me as a user</b><span>Once a day, sends a random ID so the maker knows how many people use Atticus. Never your name, your asks or your screen.</span></div><label class="sw"><input type="checkbox" data-k="stats"></label></div>
     </div>
     <h3>Permissions</h3>
@@ -321,6 +327,7 @@
   const $ = id => document.getElementById(id);
   const post = m => window.webkit?.messageHandlers.st.postMessage(m);
   let P = {};
+  const shortcutHint = () => P.input === 'type' ? 'Press to type. Return sends.' : P.talkMode === 'toggle' ? 'Press to listen. Press again to send.' : 'Hold it, talk, let go. Tap to type.';
   const set = (k, v) => { P[k] = v; post({ do: 'set', k, v }); paint(); };
 
   document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
@@ -359,7 +366,12 @@
   function paint() {
     if (!recording) showCaps(P.hotkeyLabel);
     $('reset').style.display = P.hotkeyLabel === '⌃⌥Space' ? 'none' : '';
-    document.querySelectorAll('.seg[data-k]').forEach(g => g.querySelectorAll('button').forEach(b => b.classList.toggle('on', P[g.dataset.k] === b.dataset.v)));
+    document.querySelectorAll('.seg[data-k]').forEach(g => g.querySelectorAll('button').forEach(b => {
+      const on = P[g.dataset.k] === b.dataset.v; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
+    }));
+    if (!recording && $('schint').className !== 'warn') $('schint').textContent = shortcutHint();
+    $('talkhint').textContent = P.talkMode === 'toggle' ? 'Press once to listen, again to send. Pauses keep listening.' : 'Hold to listen. Release to send. Tap to type.';
+    document.querySelector('[data-k=talkMode]').closest('.group').hidden = P.input === 'type';
     document.querySelectorAll('.sw input').forEach(i => i.checked = !!P[i.dataset.k]);
     document.querySelectorAll('select').forEach(s => s.value = P[s.dataset.k]);
     document.querySelectorAll('input[type=range]').forEach(r => r.value = P[r.dataset.k]);
@@ -463,9 +475,8 @@
     },
     allowDone() { asking = 0; post({ do: 'apps' }); },
     load(d) {
-      P = d.prefs; recording = false;
+      P = {talkMode: 'hold', ...d.prefs}; recording = false;
       $('shortcut').classList.remove('rec'); $('change').textContent = 'Change Shortcut';
-      if ($('schint').className !== 'warn') $('schint').textContent = 'Hold it, talk, let go.';
       if (d.icon) $('icon').src = $('bigicon').src = d.icon;
       $('ver').textContent = $('aboutver').textContent = d.version ? 'Version ' + d.version : 'Atticus';
       if (d.update) $('upstatus').textContent = d.update;
@@ -473,7 +484,7 @@
     },
     rec(m) { if (recording) /^Add/.test(m) ? showCaps('', m) : showCaps(m, m ? '' : 'Press your shortcut'); },   // held modifiers, live
     taken() { $('schint').textContent = 'Another app already uses that shortcut. Kept your old one.'; $('schint').className = 'warn';
-              setTimeout(() => { $('schint').className = ''; $('schint').textContent = 'Hold it, talk, let go.'; }, 4000); },
+              setTimeout(() => { $('schint').className = ''; $('schint').textContent = shortcutHint(); }, 4000); },
     state,
   };
 </script>
