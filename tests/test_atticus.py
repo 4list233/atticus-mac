@@ -288,6 +288,18 @@ class WatchAndBudgetTests(unittest.TestCase):
         self.assertEqual(atticus.label('Bash', {'command': f'{atticus.PICK} "Which?" "a" "b"'}), 'Asking you which one')
         self.assertFalse(atticus.risky(f'{atticus.PICK} "Which file?" "~/delete-me.txt" "~/send.pdf"'))
 
+    def test_place_by_title_never_falls_back_to_the_front_window(self):
+        calls = []
+        def osa(script, *args):   # System Events can't see it, so the app's own window list answers
+            calls.append(script)
+            return '0, 0, 800, 600' if 'get bounds' in script else ''
+        with patch.object(atticus, 'osa', side_effect=osa), patch.object(atticus.subprocess, 'run') as run, \
+             patch.object(atticus, 'screens', return_value=[('Built-in', 0, 0, 1470, 956, True), ('Acer', 1470, 0, 1920, 1080, False)]):
+            run.return_value.returncode = 0
+            atticus.place('Preview', 'full', 'laptop', 'Ch4-Study-Guide copy.pdf')
+        app = [c for c in calls if 'get bounds' in c] + [run.call_args.args[0][2]]
+        self.assertTrue(all('whose name contains "Ch4-Study-Guide copy"' in c and 'window 1' not in c for c in app))
+
     def test_set_flips_a_switch_by_name_never_safe_mode(self):
         self.assertIn('askMe', atticus.switches())
         self.assertFalse({'safe', 'paused'} & set(atticus.switches()))

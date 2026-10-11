@@ -308,8 +308,10 @@ def place(proc, where='full', screen='current', title=''):
     """Move a window with the math done here: where = left|right|full|center, screen = laptop|monitor|current."""
     if where not in ('left', 'right', 'full', 'center'):
         return 'where must be left, right, full or center'
+    title = re.sub(r'\.[a-z0-9]{2,4}$', '', title, flags=re.I)   # "notes.pdf" must find a window titled "notes" (macOS hides extensions)
     # the real window: Chrome's window 1 can be a hidden popup bar
     win = f'(first window whose name contains "{title}")' if title else '(first window whose subrole is "AXStandardWindow")'
+    aw = f'(first window whose name contains "{title}")' if title else 'window 1'   # never just the front window when a title was given
     tell = f'tell application "System Events" to tell process "{proc}" to '
     for tries in range(4):   # a window just opened (--show right before) can take a moment to appear
         # full screen (or split view) windows can't move; checked each try, since it only shows once the app is forward
@@ -323,7 +325,7 @@ def place(proc, where='full', screen='current', title=''):
             break
         except ValueError:   # System Events can't see it (another Space): scriptable apps (Notes, Finder…) answer for their own windows, fast
             try:
-                l, t, r, b = map(int, osa(f'tell application "{proc}" to get bounds of window 1').split(', '))
+                l, t, r, b = map(int, osa(f'tell application "{proc}" to get bounds of {aw}').split(', '))
                 px, py, ww, wh, app_mode = l, t, r - l, b - t, True
                 break
             except ValueError:   # not scriptable, or not open yet: bring it forward, look again
@@ -343,7 +345,7 @@ def place(proc, where='full', screen='current', title=''):
                       'center': (x + (w - cw) // 2, y + (h - ch) // 2, cw, ch)}[where]
     # One step via the app when it is scriptable (Finder, Safari, Chrome…): after a window moves to the other
     # display, System Events often can't see it any more, so a later resize would miss.
-    one = f'tell application "{proc}" to set bounds of window 1 to {{{bx}, {by}, {bx + bw}, {by + bh}}}'
+    one = f'tell application "{proc}" to set bounds of {aw} to {{{bx}, {by}, {bx + bw}, {by + bh}}}'
     if (title and not app_mode) or subprocess.run(['osascript', '-e', one], capture_output=True).returncode:
         osa(tell + f'set size of {win} to {{{bw}, {bh}}}')   # size first, then move, then size again
         osa(tell + f'set position of {win} to {{{bx}, {by}}}')
