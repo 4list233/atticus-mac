@@ -37,7 +37,7 @@ https://github.com/user-attachments/assets/e3444422-02e8-4dd7-bb44-d39f2b0f2bef
 
 <table>
 <tr>
-<td width="33%" valign="top"><h3>No API key</h3>Runs on the Claude plan you already have, through <code>claude -p</code>. Atticus is $5 once; AI usage uses your existing Claude plan.</td>
+<td width="33%" valign="top"><h3>No API key</h3>Runs on the Claude plan you already have, through <code>claude -p</code>. Atticus is free.</td>
 <td width="33%" valign="top"><h3>~700 asks for $1</h3>About 0.14¢ per ask in real use, priced at API list rates. Completed requests are logged with their cost in Settings → Usage.</td>
 <td width="33%" valign="top"><h3>Instant when it can be</h3>Opening apps and sites, moving windows, web searches and music skip the AI entirely. With Start while I’m talking on, reasoning can start during pauses; AI tools wait for confirmed words.</td>
 </tr>
@@ -58,7 +58,6 @@ Apple's final transcript confirms each voice request before AI tools or learned 
 
 You need:
 - **macOS 26** or later (Atticus uses Apple's new on-device speech)
-- **An [Atticus license](https://3370759087892.gumroad.com/l/atticus)** ($5 once). Open Atticus, hover the box to type `key <your key>` from your receipt.
 - **A paid Claude plan** (Pro or Max) and [Claude Code](https://claude.com/claude-code). No Claude Code yet? The setup window installs it and signs you in.
 - Apple's command line tools: `xcode-select --install`
 - Optional: [Peekaboo](https://github.com/openclaw/Peekaboo) (see its install steps) so Atticus can click inside apps

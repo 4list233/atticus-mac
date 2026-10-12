@@ -28,7 +28,7 @@ PLACE, LOOK, SEARCH, READ, SHOW, REMEMBER, FORGET, TYPE, PLAY, ABOUT, SHORTCUT, 
 MEMORY, RECENT = os.path.join(DIR, 'memory.md'), os.path.join(DIR, 'recent.jsonl')
 PREFS = os.path.join(DIR, 'settings.json')   # written by the Settings window
 # $5 once, sold on Gumroad. shortcut: the source is public, so a coder can delete this check; fine for a $5 app.
-GUMROAD_PRODUCT = '4o1C13Q132kPu-TW7b-sAA=='   # Gumroad product ID; empty = free
+GUMROAD_PRODUCT = ''   # Gumroad product ID; empty = free
 BUY = 'https://3370759087892.gumroad.com/l/atticus'
 KEY_FILE = os.path.join(DIR, 'license')
 # Daily-user count: once a day, a random ID (no name, no asks) goes to PostHog. Off in Settings → Safety. Empty key = off.

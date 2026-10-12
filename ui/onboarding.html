@@ -124,7 +124,7 @@
 <section class="page" id="welcome">
   <div id="orbwrap" class="r"><canvas id="orb"></canvas></div>
   <h1 class="r">Meet Atticus</h1>
-  <p class="sub r" id="welcome-talk">Hold the shortcut, say what you need, let go. Your Mac does the rest. $5 once, plus your Claude plan.</p>
+  <p class="sub r" id="welcome-talk">Hold the shortcut, say what you need, let go. Your Mac does the rest.</p>
   <div class="keys r"><div class="key" id="k1">⌃</div><div class="key" id="k2">⌥</div><div class="key wide" id="k3">Space</div></div>
   <button class="btn r" data-go="perms">Get Started</button>
 </section>
@@ -200,7 +200,7 @@
   let planOK = false, last = null;
   window.ob = {
     mode(toggle) {
-      $('welcome-talk').textContent = (toggle ? 'Press the shortcut, speak, press again to send.' : 'Hold the shortcut, speak, release to send.') + ' Your Mac does the rest. $5 once, plus your Claude plan.';
+      $('welcome-talk').textContent = (toggle ? 'Press the shortcut, speak, press again to send.' : 'Hold the shortcut, speak, release to send.') + ' Your Mac does the rest.';
       $('try-talk').textContent = (toggle ? 'Press the shortcut anywhere. Say what you need, then press again to send.' : 'Hold the keys anywhere, say what you need, then let go.') + ' Simple commands can run as you speak; AI actions wait for confirmed words.';
       $('practice-talk').textContent = toggle ? 'Try a few. Press to talk, press again to send. Esc cancels.' : 'Try a few. Hold the keys, say it, let go. Esc cancels.';
     },
