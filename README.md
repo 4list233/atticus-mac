@@ -6,6 +6,14 @@
 </p>
 
 <p align="center">
+  <b>⚡ Fast</b> &nbsp;·&nbsp; <b>🔑 No API key</b> &nbsp;·&nbsp; <b>🧠 Remembers you</b> &nbsp;·&nbsp; <b>Free and open source</b>
+</p>
+
+- **Fast.** Simple asks skip the AI: an app opens in 0.08 s. Ask for an action once and Atticus learns it, so next time it runs in a blink, with no AI and for free.
+- **No API key.** It runs on the Claude Pro or Max plan you already have, through Claude Code. Nothing to sign up for, no key to paste, no extra bill.
+- **Remembers you.** Say "remember…" and every ask after that knows it. It picks up who you are (your name, your apps) and fixes its own mistakes when you correct it.
+
+<p align="center">
   <img alt="macOS" src="https://img.shields.io/badge/macOS-1d1d1f?style=for-the-badge&logo=apple&logoColor=white">
   <img alt="Swift" src="https://img.shields.io/badge/Swift-1d1d1f?style=for-the-badge&logo=swift&logoColor=white">
   <img alt="Claude" src="https://img.shields.io/badge/Claude_Haiku-1d1d1f?style=for-the-badge&logo=anthropic&logoColor=white">
@@ -37,9 +45,9 @@ https://github.com/user-attachments/assets/e3444422-02e8-4dd7-bb44-d39f2b0f2bef
 
 <table>
 <tr>
-<td width="33%" valign="top"><h3>No API key</h3>Runs on the Claude plan you already have, through <code>claude -p</code>. Atticus is free.</td>
-<td width="33%" valign="top"><h3>~700 asks for $1</h3>About 0.14¢ per ask in real use, priced at API list rates. Completed requests are logged with their cost in Settings → Usage.</td>
-<td width="33%" valign="top"><h3>Instant when it can be</h3>Opening apps and sites, moving windows, web searches and music skip the AI entirely. With Start while I’m talking on, reasoning can start during pauses; AI tools wait for confirmed words.</td>
+<td width="33%" valign="top"><h3>Fast</h3>Opening apps and sites, moving windows, web searches and music skip the AI entirely (an app opens in 0.08 s). Actions you ask for once (opening apps, moving windows, playing music) become learned shortcuts: "Open Calculator and Chess" went from 5.5 s to 0.4 s, with no AI.</td>
+<td width="33%" valign="top"><h3>No API key</h3>Runs on the Claude plan you already have, through <code>claude -p</code>. About 0.14¢ of plan usage per ask (~700 asks for $1 at API list rates). Atticus itself is free.</td>
+<td width="33%" valign="top"><h3>Remembers you</h3>"Remember: open means bring it to the front." Saved rules go with every ask. It learns lasting facts about you (name, city, favorite apps), and when you correct it, it saves a rule so it gets it right next time. Edit all of it in Settings.</td>
 </tr>
 <tr>
 <td valign="top"><h3>Private ears</h3>Apple's on-device speech turns your voice into text. Audio never leaves your Mac.</td>
@@ -48,11 +56,17 @@ https://github.com/user-attachments/assets/e3444422-02e8-4dd7-bb44-d39f2b0f2bef
 </tr>
 </table>
 
+<details>
+<summary><b>How the shortcut and the box work</b></summary>
+<br>
+
 Choose **Hold to talk** or **Press to toggle** in Settings → General → Shortcut behavior. Hold mode sends when you release. Toggle mode starts on the first press and sends on the second; pauses keep listening. Pressing the shortcut while Atticus answers stops it; during spoken playback it stops the voice. Esc cancels listening without sending. Toggle recordings reach a review screen after 60 seconds, rather than sending automatically. Closing the overlay or pausing Atticus stops its microphone, workers and voice.
 
 Click any answer to copy it, including earlier answers still shown in the box. Click your request to edit and ask again, or press ↑ in an empty typing box to recall the latest request. The overlay stays within your display when resized and respects Reduce Motion.
 
 Apple's final transcript confirms each voice request before AI tools or learned shortcuts run. AI reasoning can start during a pause, but its tools wait for confirmation. If speech finalization takes too long, Atticus offers the partial text for review. Instant commands still skip the AI entirely. Supported built-in commands run mid-sentence, before you send, with Instant commands and Act while I’m talking on (Settings → Intelligence). Learned shortcuts wait for confirmed words.
+
+</details>
 
 ## Install
 
