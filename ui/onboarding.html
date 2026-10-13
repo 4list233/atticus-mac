@@ -51,12 +51,12 @@
   .btn.quiet { background: var(--card); color: var(--fg); box-shadow: inset 0 0 0 .5px var(--line); }
 
   /* permissions list, grouped like System Settings */
-  #list { width: 100%; max-width: 480px; margin-top: 22px; border-radius: 12px; background: var(--card); text-align: left;
+  #list, .list { width: 100%; max-width: 480px; margin-top: 22px; border-radius: 12px; background: var(--card); text-align: left;
     box-shadow: inset 0 0 0 .5px var(--line), 0 1px 3px rgba(0,0,0,.04); overflow: hidden; }
   .row { display: flex; align-items: center; gap: 12px; padding: 11px 14px; opacity: 0; transform: translateY(8px);
     transition: opacity .45s var(--ease), transform .55s var(--out), background .4s; }
   .row + .row { box-shadow: inset 0 .5px 0 var(--line); }
-  #perms.on .row { opacity: 1; transform: none; }
+  #perms.on .row, #improve.on .row { opacity: 1; transform: none; }
   .ic { flex: none; width: 30px; height: 30px; border-radius: 7px; display: grid; place-items: center;
     box-shadow: inset 0 .5px 0 rgba(255,255,255,.3), 0 .5px 1px rgba(0,0,0,.2); }
   .ic svg { width: 17px; height: 17px; fill: none; stroke: #fff; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -297,7 +297,22 @@
   <div class="mt-row r"><div class="ic" style="background:#30b0c7"><svg viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg></div>
     <div class="txt"><b>Turn on Meeting Copilot<span class="beta">Beta</span></b><span>Then start it from the menu bar when a call begins.</span></div>
     <label class="sw"><input type="checkbox" data-k="meeting" aria-label="Meeting Copilot"></label></div>
-  <div class="bar2 r"><button class="btn quiet" data-go="done">Skip</button><button class="btn" data-go="done">Next</button></div>
+  <div class="bar2 r"><button class="btn quiet" data-go="improve">Skip</button><button class="btn" data-go="improve">Next</button></div>
+</section>
+
+<section class="page" id="improve">
+  <div class="kicker r">Optional</div>
+  <h2 class="r">Help make Atticus better</h2>
+  <p class="sub r">When a task fails, Atticus can tell its maker what went wrong, so the next version gets it right. Change it anytime in Settings.</p>
+  <div class="list r">
+    <div class="row"><div class="ic" style="background:#0a84ff"><svg viewBox="0 0 24 24"><path d="M5 5h14v10H10l-5 4z"/></svg></div>
+      <div class="txt"><b>Only what failed</b><span>What you asked, the steps Atticus took, and why it didn’t work.</span></div></div>
+    <div class="row"><div class="ic" style="background:#30d158"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>
+      <div class="txt"><b>Anonymous</b><span>A random ID. Never your name, your screen, your files or passwords.</span></div></div>
+    <div class="row"><div class="ic" style="background:#8e8e93"><svg viewBox="0 0 24 24"><path d="M3 3l18 18"/><path d="M10.6 6.1A9.8 9.8 0 0 1 12 6c5 0 9 6 9 6a15 15 0 0 1-2.7 3.2M6.6 7.6A15 15 0 0 0 3 12s4 6 9 6a9 9 0 0 0 3.4-.7"/></svg></div>
+      <div class="txt"><b>Cleaned first</b><span>Emails, numbers, file paths and anything typed for you are removed before it leaves your Mac.</span></div></div>
+  </div>
+  <div class="bar2 r"><button class="btn quiet" data-improve="false">Not Now</button><button class="btn" data-improve="true">Help Improve</button></div>
 </section>
 
 <section class="page" id="done">
@@ -309,13 +324,13 @@
   <button class="btn r" id="finish">Start Using Atticus</button>
 </section>
 
-<div id="dots"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+<div id="dots"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
 
 <script type="text/plain" id="orbsrc">/*ORBS*/</script>
 <script type="module">
   const $ = id => document.getElementById(id);
   const post = m => window.webkit?.messageHandlers.ob.postMessage(m);
-  const pages = ['welcome', 'perms', 'try', 'mac', 'learn', 'text', 'point', 'meeting', 'done'];
+  const pages = ['welcome', 'perms', 'try', 'mac', 'learn', 'text', 'point', 'meeting', 'improve', 'done'];
   let cur = '';
   const go = id => {
     if (cur) { $(cur).classList.remove('on'); $(cur).classList.add('gone'); const c = cur; setTimeout(() => $(c).classList.remove('gone'), 600); }
@@ -325,6 +340,7 @@
   };
   document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => go(b.dataset.go));
   $('finish').onclick = () => post({ do: 'done' });
+  document.querySelectorAll('[data-improve]').forEach(b => b.onclick = () => { post({ do: 'set', k: 'improve', v: b.dataset.improve }); go('done'); });
   document.querySelectorAll('.sw input').forEach(i => i.onchange = () => post({ do: 'set', k: i.dataset.k, v: String(i.checked) }));
 
   // Permissions: icon color + SF-style glyph, why it's needed.

@@ -610,6 +610,18 @@
         post(retry ? { pick: 'n' } : { allow: false }); clockGo(); d.remove(); status(retry ? 'Offer expired' : 'Approval expired', true); setState('solving'); fit();
       }, 60000);
     },
+    improve() {   // once, after a task that worked: people who updated never saw setup's question
+      $('thread').querySelectorAll('.ok.improve').forEach(e => e.remove());
+      const d = document.createElement('div'); d.className = 'ok offer improve';
+      d.innerHTML = '<b>Help make Atticus better?</b><p>When a task fails, send what you asked, the steps and why. Anonymous, cleaned first. Change it in Settings.</p><div><button>Not Now</button><button class="go">Help Improve</button></div>';
+      d.querySelectorAll(':scope > div > button').forEach((b, i) => b.onclick = e => {
+        e.stopPropagation(); if (d.classList.contains('gone')) return;
+        post({ improve: !!i }); status(i ? 'Thank you' : '', true);
+        d.classList.add('gone'); follow(360); setTimeout(() => { d.remove(); fit(); }, 360);
+      });
+      d.onanimationend = () => d.style.animation = 'none';
+      (turn() || $('thread')).append(d); fit();
+    },
     pick({ q, options }) {   // "which one?": the index picked (or "" = none of these) goes back to the app, then the card goes
       $('thread').querySelectorAll('.pk').forEach(e => e.remove());
       const d = document.createElement('div'); d.className = 'pk';

@@ -24,7 +24,7 @@ enum Prefs {
         "soundStart": "Pop", "soundDone": "Glass", "soundStop": "Tink", "volume": 0.16, "model": "haiku", "instant": true,
         "selection": true, "ahead": true, "aheadDelay": 0.7, "live": true, "screen": "auto", "openOn": "here", "workIn": "back", "miniScreen": true, "pageJS": false,
         "speak": false, "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
-        "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "stats": true, "tips": true, "askMe": true, "escalate": true, "meetingSummary": true, "escalateAuto": false, "input": "voice", "talkMode": "hold", "speechModel": "speech", "boxW": 460, "boxH": 360]
+        "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "stats": true, "tips": true, "askMe": true, "escalate": true, "meetingSummary": true, "escalateAuto": false, "input": "voice", "talkMode": "hold", "speechModel": "speech", "improve": false, "improveAsked": false, "boxW": 460, "boxH": 360]
     static var d: [String: Any] = defaults.merging(
         (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path)))) as? [String: Any] ?? [:]) { $1 }
     static func set(_ k: String, _ v: Any) {
@@ -633,6 +633,7 @@ final class App: NSObject, WKScriptMessageHandler {
                 try? i.write(toFile: askFile, atomically: true, encoding: .utf8); askFile = ""
             }   // an index, or "" = none; failure cards also use r/y/n
             if let k = b["off"] as? String, ["escalate", "tips"].contains(k) { Prefs.set(k, false); Atticus.settings.push() }   // a card's own "Turn off"; never safe mode
+            if let v = b["improve"] as? Bool { Atticus.settings.apply("improve", v); Atticus.settings.push() }
             if let ok = b["allow"] as? Bool, !askFile.isEmpty { try? (ok ? "y" : "n").write(toFile: askFile, atomically: true, encoding: .utf8); askFile = "" }
             return
         }
@@ -1043,6 +1044,7 @@ final class App: NSObject, WKScriptMessageHandler {
                     let line = String(decoding: buffer[..<i], as: UTF8.self); buffer.removeSubrange(...i)
                     if line == "! setup" { onboarding.open(); continue }   // Claude not installed, signed out or no plan
                     if line == "! feedback" { Atticus.settings.open(tab:"feedback"); continue }
+                    if line == "! improve" { self.js("improve"); continue }   // the one-time "help make Atticus better?" card
                     if line.hasPrefix("▣ "), let value = try? JSONSerialization.jsonObject(with:Data(line.dropFirst(2).utf8)) as? [String:Any] { if Prefs.d["miniScreen"] as? Bool ?? true { self.mini.receive(value) }; continue }
                     if line.hasPrefix("@ ") { if self.mini.target != nil { self.js("line",line) } else { pointAt(line) }; continue }   // experimental "show me where"
                     if line.hasPrefix("? ") {   // safe mode: "? <question>\t<command>\t<answer file>"
@@ -1204,7 +1206,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
     func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
         guard let b = m.body as? [String: String] else { return }
         if b["do"] == "done" { return finish() }
-        if b["do"] == "set", let k = b["k"], ["meeting", "pointer"].contains(k) { Atticus.settings.apply(k, b["v"] == "true"); Atticus.settings.push(); return }   // the extras switches
+        if b["do"] == "set", let k = b["k"], ["meeting", "pointer", "improve"].contains(k) { Atticus.settings.apply(k, b["v"] == "true"); Atticus.settings.push(); return }   // the extras switches
         grant(b["id"] ?? "")
     }
 
@@ -1699,6 +1701,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
             calendar.requestFullAccessToEvents { ok, _ in if !ok { DispatchQueue.main.async { Prefs.set("meetingNudge", false); settings.push() } } }
         }
         if k == "speechModel" { app.prepareSpeech() }
+        if k == "improve" { Prefs.set("improveAsked", true) }   // any answer, here or in setup or the card, is the answer
         if k == "speak" { if v as? Bool == true { siriVoice() } else { app.shush() } }
         if k == "hideWhenSharing" { app.panel.sharingType = v as? Bool == true ? .none : .readOnly }
         if k == "menuIcon" { bar.item.isVisible = v as? Bool == true }

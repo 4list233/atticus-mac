@@ -689,7 +689,7 @@ UNSAFE = re.compile(r'(^|[;&|(`\s])(rm|rmdir|sudo|dd|diskutil|shutdown|reboot|ha
 
 NAMED = re.compile(r'(?:from now on,? )?when(?:ever)? i say (?:["“\']([^"”\']{2,40})["”\']|([^,:;"“]{2,40}?)\s*(?:[,:;]|\b(?:do|then|can you|please|you)\b))', re.I)   # "When I say work mode, …"
 MORE = re.compile(r'\b(and|then|after that|also)\b', re.I)   # a second step after an instant command's free text
-FAILED = re.compile(r"\b(can't|cannot|couldn't|could not|unable|failed|not done|not completed|didn't work)\b", re.I)   # the reply admits it did not work
+FAILED = re.compile(r"\b(can't|cannot|couldn't|could not|unable|not able|failed|not done|not completed|didn't work)\b", re.I)   # the reply admits it did not work
 
 
 def skills():
@@ -1641,18 +1641,41 @@ def activate(key):
     return 'Thanks for buying Atticus! It is unlocked.'
 
 
-def ping():
-    day, stamp = time.strftime('%Y-%m-%d'), os.path.join(DIR, 'pinged')
-    if not POSTHOG_KEY or not pref('stats', True) or (os.path.exists(stamp) and open(stamp).read() == day):
-        return
+def posthog(event, props=None, stamp=()):
+    """One anonymous event (a random ID, no person profile). stamp: (text, file) written once it is sent."""
     idf = os.path.join(DIR, 'id')
     if not os.path.exists(idf):
         os.makedirs(DIR, exist_ok=True)
         open(idf, 'w').write(base64.b32encode(os.urandom(10)).decode())
-    body = json.dumps({'api_key': POSTHOG_KEY, 'event': 'used', 'distinct_id': open(idf).read(), 'properties': {'$process_person_profile': False}})
-    subprocess.Popen(['/bin/sh', '-c', 'curl -fsS -m 10 -H "Content-Type: application/json" -d "$1" https://us.i.posthog.com/i/v0/e/ && printf %s "$2" > "$3"',
-                      'atticus-ping', body, day, stamp],
+    body = json.dumps({'api_key': POSTHOG_KEY, 'event': event, 'distinct_id': open(idf).read(), 'properties': {'$process_person_profile': False, **(props or {})}})
+    subprocess.Popen(['/bin/sh', '-c', 'curl -fsS -m 10 -H "Content-Type: application/json" -d "$1" https://us.i.posthog.com/i/v0/e/' + (' && printf %s "$2" > "$3"' if stamp else ''),
+                      'atticus-ping', body, *stamp],
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)   # its own process: never slows the answer
+
+
+def ping():
+    day, stamp = time.strftime('%Y-%m-%d'), os.path.join(DIR, 'pinged')
+    if not POSTHOG_KEY or not pref('stats', True) or (os.path.exists(stamp) and open(stamp).read() == day):
+        return
+    posthog('used', stamp=(day, stamp))
+
+
+def clean(text):
+    """Failure reports carry no emails, numbers, file paths, link queries, long tokens or text typed for the user."""
+    t = str(text).replace(ME, 'atticus').replace(HOME, '~')
+    t = re.sub(r'((?:--type|--hands type (?:"[^"]*"|\S+)|--web fill \d+)\s+)("(?:[^"\\]|\\.)*"|\'[^\']*\')', r'\1<text>', t)
+    t = re.sub(r'[\w.+-]+@[\w-]+\.[\w.]+', '<email>', t)
+    t = re.sub(r'(https?://[^\s"\'?#]+)[?#][^\s"\']*', r'\1', t)
+    t = re.sub(r'~/[^\s"\']+', '~/<path>', t)
+    t = re.sub(r'\b[A-Za-z0-9_-]{24,}\b', '<secret>', t)
+    return re.sub(r'\d[\d\s().-]{4,}\d', '<number>', t)[:300]
+
+
+def report(task, reply, ran, secs, why):
+    """Settings → Help improve Atticus (off until the user says yes): a task that failed goes to the maker, cleaned."""
+    if POSTHOG_KEY and pref('improve', False) and os.environ.get('ATTICUS_LIVE') != '1':
+        posthog('task_failed', {'task': clean(task), 'reply': clean(reply), 'steps': [clean(c) for c in list(ran)[:12]], 'why': why,
+                                'secs': round(secs, 1), 'model': pref('model', 'haiku'), 'macos': platform.mac_ver()[0]})
 
 
 def say(tag, text):
@@ -1678,7 +1701,7 @@ def tip(reply, taught='', task='', elapsed=0):
     every time; slow successful tasks get a memory hint; otherwise a general tip at most every 6 h. Off in Settings."""
     if not pref('tips', True) or os.environ.get('ATTICUS_UI') != '1':
         return
-    if taught or re.search(r"\b(can't|cannot|couldn't|could not|unable|failed|didn't work|not able)\b", reply.lower()):
+    if taught or FAILED.search(reply):
         return say('i', taught or MISS)
     if elapsed >= 15 and task and not re.search(r'(?i)\bremember\b', task):
         return say('i', 'For next time, say "remember how to ' + task.strip().rstrip('.?!')[:180] + '".')
@@ -2540,6 +2563,8 @@ def main():
         workflow = learn(task, run.cmds, reply) or workflow
         if fix:
             learn(turns[-1]['q'], run.cmds, reply)   # and the fix becomes the shortcut for the original words
+    if fix and turns: report(turns[-1]['q'], turns[-1]['a'], (), 0, 'the user said it was wrong')
+    if not run.ok or FAILED.search(reply): report(task, reply, run.ran, time.time() - t, 'error' if not run.ok else 'could not do it')
     remember_turn(task, reply)
     log_turn(task, reply, t, cost, steps, run.ran)
     # clicks inside an app pull it forward; give the user back the app the user was in unless the user asked to go somewhere
@@ -2549,6 +2574,10 @@ def main():
     say('✓' if run.ok else '!', reply)
     learned = [r for c in run.ran for r in re.findall(r'--remember\s+["\']([^"\']+)', c)]   # it taught itself: say so, so the user sees it improve
     tip(reply, 'Saved the procedure for next time.' if workflow else f'Learned: {learned[-1]}' if learned else taught[1].strip() if taught else '')
+    asked = os.path.join(DIR, 'improve-asked')   # people who updated never saw setup's question: ask once a day after a task that worked, until they answer
+    if run.ok and not FAILED.search(reply) and POSTHOG_KEY and not pref('improveAsked', False) and os.environ.get('ATTICUS_UI') == '1' \
+            and not (os.path.exists(asked) and open(asked).read() == time.strftime('%Y-%m-%d')):
+        open(asked, 'w').write(time.strftime('%Y-%m-%d')); say('!', 'improve')
     if os.environ.get('ATTICUS_UI') != '1':   # typed from the menu bar: no overlay, so a notification
         osa('on run argv\ndisplay notification (item 1 of argv) with title "Atticus"\nend run', reply)
 
@@ -2606,6 +2635,8 @@ if __name__ == '__main__':
         named = lambda t: (lambda m: m and (m[1] or m[2]))(NAMED.match(t))
         assert named('When I say work mode, minimize all apps') == 'work mode' and named('when I say "study time" open Notes') == 'study time' and named('When I say study time can you open Notes') == 'study time'
         assert move_target('put notes on the left of my monitor') == ('Notes', 'left', 'monitor') and move_target('put notes and find shoes') is None
+        assert clean(f'{ME} --hands type "Message" "Hi, call 408-555-1234"') == 'atticus --hands type "Message" <text>' and clean('mail sam@x.com ~/Docs/a.xlsx') == 'mail <email> ~/<path>'
+        assert clean('https://amazon.com/s?k=salt') == 'https://amazon.com/s' and clean('key sk-ant-api03-abcdefghijklmnopqrstuvwxyz') == 'key <secret>'
         assert move_target('full screen notes on my big screen') == ('Notes', 'full', 'monitor') == move_target('move notes to the external display and maximize')
         assert move_target('notes on the laptop screen') == ('Notes', 'center', 'laptop') and move_target('make notes fullscreen') == ('Notes', 'full', 'current')
         assert move_target("what's on my monitor") is None and move_target('notes left on my monitor right') is None

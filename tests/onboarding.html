@@ -24,7 +24,11 @@ w.ob.tried();await wait(200);assert(!$('try-next').hidden&&$('try-skip').hidden,
 await go('mac');assert(!!$('mac-mini')&&$('mac').textContent.includes('background'),'Mac preview explains background work and live mini screen');await go('learn');assert($('learn').textContent.includes('remember'),'Setup teaches that Atticus remembers');await go('text');await go('point');w.ob.prefs({pointer:true,meeting:false});
 assert(d.querySelector('[data-k="pointer"]').checked&&!d.querySelector('[data-k="meeting"]').checked,'Switches reflect prefs');
 d.querySelector('[data-k="pointer"]').click();await wait(30);assert(messages.some(m=>m.do==='set'&&m.k==='pointer'&&m.v==='false'),'Switch sends native preference');
-await go('meeting');assert($('meeting').textContent.includes('Settings → Meetings')&&!!$('mt-archive'),'Meeting preview includes the local archive');await go('done');assert($('feedback-note').textContent.includes('Report feedback from the menu bar'),'Last page mentions feedback quietly');assert(w.getComputedStyle($('done-check').querySelector('circle')).opacity==='1','Done check finishes');
+await go('meeting');assert($('meeting').textContent.includes('Settings → Meetings')&&!!$('mt-archive'),'Meeting preview includes the local archive');await go('improve');
+for(const e of $('improve').children){const r=e.getBoundingClientRect();assert(r.left>=0&&r.right<=640&&r.top>=0&&r.bottom<=612,'Fits window improve / '+e.className)}
+assert($('improve').textContent.includes('Anonymous')&&d.querySelector('#improve .bar2 .btn:not(.quiet)').textContent==='Help Improve','Improve page says what is sent; Help Improve is the main action');
+d.querySelector('#improve [data-improve="true"]').click();await wait(750);page('done');
+assert(messages.some(m=>m.do==='set'&&m.k==='improve'&&m.v==='true'),'Help Improve turns the setting on');assert($('feedback-note').textContent.includes('Report feedback from the menu bar'),'Last page mentions feedback quietly');assert(w.getComputedStyle($('done-check').querySelector('circle')).opacity==='1','Done check finishes');
 const reduced=await load('reduced',true);await wait(1500);
 assert(reduced.framesRequested===0,'Reduced Motion renders orb once');
 assert(!reduced.document.querySelector('.key.down'),'Reduced Motion stops welcome key loop');

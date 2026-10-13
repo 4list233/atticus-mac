@@ -128,6 +128,8 @@ Atticus has to stay fast and nearly free, so new features must fit under these l
 
 Once a day, Atticus sends one random ID (made on your Mac, not tied to you) to PostHog, so I can see how many people use it. It never sends your name, your asks or your screen. Turn it off in Settings → Account & Access → Count me as a user.
 
+If you say yes to **Help improve Atticus** (asked once, off until you do), a task that fails sends what you asked, the steps Atticus took and why it failed, under the same random ID. Emails, numbers, file paths, link details and anything typed for you are removed on your Mac first. Turn it off in Settings → Account & Access → Help improve Atticus.
+
 ## Files
 
 - `Atticus.swift`: the app (hotkey, speech, overlay, onboarding window)

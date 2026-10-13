@@ -29,6 +29,7 @@ try {
   frame.srcdoc = html.replace('/*ORBS*/', () => orbs).replace('<head>', '<head>' + bridge);
   await Promise.race([ready, new Promise((_, reject) => setTimeout(() => reject(Error('UI did not initialize')), 5000))]);
   const w = frame.contentWindow, d = w.document, ui = w.ui;
+  await new Promise(r => { let n = 0; const f = () => ++n >= 3 ? r() : w.requestAnimationFrame(f); w.requestAnimationFrame(f); setTimeout(r, 3000); });   // a fresh page draws its first frames late on a slow Mac or VM: timed checks start once frames run
   const tap = el => { const r = el.getBoundingClientRect(); ui.tap([r.x + r.width / 2, r.y + r.height / 2]); };
   ui.listen();
   assert(!d.getElementById('comp').classList.contains('open'), 'Voice starts with the typing box hidden');
@@ -96,6 +97,10 @@ try {
   ui.respond('maybe later'); assert(d.querySelector('.ok.retry:not(.gone)') && d.getElementById('ask').value==='maybe later', 'A reply that is not an answer keeps the card and shows what was heard');
   ui.respond('Um, try again, please.'); await new Promise(r=>setTimeout(r,380));
   assert(messages.some(m=>m.pick==='r'), 'Spoken or typed try again answers Retry');
+  ui.improve(); ui.improve(); const imp = d.querySelectorAll('.ok.improve');
+  assert(imp.length === 1 && imp[0].querySelector('.go').textContent === 'Help Improve', 'The help-improve question shows once, Help Improve in blue');
+  imp[0].querySelector('.go').click(); await new Promise(r=>setTimeout(r,380));
+  assert(messages.some(m=>m.improve===true) && !d.querySelector('.ok.improve'), 'Help Improve says yes and the card goes');
   ui.ask(['Couldn’t finish this', 'Try again.', '', 'retry']);
   assert(d.querySelectorAll('.ok div button').length===2 && !d.querySelector('.ok .off'), 'Disabling Sonnet keeps Retry and hides only the Sonnet offer');
   ui.respond('yes'); await new Promise(r=>setTimeout(r,380)); assert(messages.filter(m=>m.pick==='r').length===2,'Yes on a retry-only card means Retry');
@@ -160,7 +165,9 @@ try {
   const fixedTop=d.querySelector('.mini-view').getBoundingClientRect().top;
   for(let i=2;i<=12;i++){
     ui.line('▸ Background step '+i);
-    if(i===4||i===12){await new Promise(r=>setTimeout(r,400));const rect=d.querySelector('.mini-view').getBoundingClientRect(),thread=d.getElementById('thread').getBoundingClientRect(),latest=d.querySelector('.step:last-child').getBoundingClientRect();
+    if(i===4||i===12){const shown=()=>{const v=d.querySelector('.mini-view').getBoundingClientRect(),t=d.getElementById('thread').getBoundingClientRect();return Math.abs(v.top-fixedTop)<1&&v.top>=t.top&&v.bottom<=t.bottom};
+      for(let ms=0;ms<2000&&(ms<400||!shown());ms+=50)await new Promise(r=>setTimeout(r,50));   // settled, or 2 s on a slow machine
+      const rect=d.querySelector('.mini-view').getBoundingClientRect(),thread=d.getElementById('thread').getBoundingClientRect(),latest=d.querySelector('.step:last-child').getBoundingClientRect();
       assert(Math.abs(rect.top-fixedTop)<1&&rect.top>=thread.top&&rect.bottom<=thread.bottom,'Mini remains fully visible at '+i+' steps');
       assert(latest.top>=rect.bottom&&latest.bottom<=thread.bottom,'Newest step remains readable at '+i+' steps');}
   }
