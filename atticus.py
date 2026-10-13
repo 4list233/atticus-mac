@@ -2558,9 +2558,9 @@ def main():
     workflow = False
     if not replacement:
         reply, workflow = remember_workflow(task, reply, run.ok, run.ran)   # ran: a retried step that then worked still counts
-    named = NAMED.match(task.strip())
+    named, shortcut = NAMED.match(task.strip()), ''
     if named and run.ok and run.cmds and learn(named[1] or named[2], run.cmds, reply) is not None:   # "When I say work mode, …": the words become the shortcut, even if the AI forgot --shortcut
-        sk = skills(); sk[plain(named[1] or named[2])]['mine'] = True; save_skills(sk); workflow = True
+        sk = skills(); sk[plain(named[1] or named[2])]['mine'] = True; save_skills(sk); workflow = True; shortcut = (named[1] or named[2]).strip()
     if pref('learn', True):
         workflow = learn(task, run.cmds, reply) or workflow
         if fix:
@@ -2575,7 +2575,8 @@ def main():
         print('↺ ' + json.dumps({'t': '' if replacement == 'delete' else reply, 'mode': replacement}, ensure_ascii=False), flush=True)
     say('✓' if run.ok else '!', reply)
     learned = [r for c in run.ran for r in re.findall(r'--remember\s+["\']([^"\']+)', c)]   # it taught itself: say so, so the user sees it improve
-    tip(reply, 'Saved the procedure for next time.' if workflow else f'Learned: {learned[-1]}' if learned else taught[1].strip() if taught else '')
+    # "When I say focus mode, …" saved: a green Learned pill, like a remembered rule
+    tip(reply, f'Learned: say “{shortcut}” any time.' if shortcut else 'Saved the procedure for next time.' if workflow else f'Learned: {learned[-1]}' if learned else taught[1].strip() if taught else '')
     asked = os.path.join(DIR, 'improve-asked')   # people who updated never saw setup's question: ask once a day after a task that worked, until they answer
     if run.ok and not FAILED.search(reply) and POSTHOG_KEY and not pref('improveAsked', False) and os.environ.get('ATTICUS_UI') == '1' \
             and not (os.path.exists(asked) and open(asked).read() == time.strftime('%Y-%m-%d')):
