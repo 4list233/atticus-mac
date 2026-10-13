@@ -126,7 +126,8 @@ struct TextSelection {
     var pastable: Bool { ["AXTextArea", "AXTextField", "AXComboBox", "AXSearchField"].contains(axAttribute(element, kAXRoleAttribute) as? String ?? "") }
     func apply(_ draft: String, valid: @escaping () -> Bool, done: @escaping (Bool) -> Void) {
         guard valid() else { done(false); return }
-        if editable && replace(draft) { done(true); return }
+        let before = value
+        if editable && replace(draft) && landed(draft, before) { done(true); return }   // web editors can accept the AX write and drop the text
         guard pastable, !app.isTerminated, range != nil else { done(false); return }
         app.activate()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
@@ -152,14 +153,29 @@ struct TextSelection {
                 }
             }
             let changed = pb.changeCount
-            for e in [down, up] { e.flags = draft.isEmpty ? [] : .maskCommand; e.postToPid(app.processIdentifier) }
-            done(true)
-            guard !draft.isEmpty else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                guard pb.changeCount == changed else { return }
+            let send = { (hid: Bool) in for e in [down, up] { e.flags = draft.isEmpty ? [] : .maskCommand; if hid { e.post(tap: .cghidEventTap) } else { e.postToPid(app.processIdentifier) } } }
+            let finish = { (ok: Bool) in
+                done(ok)
+                guard !draft.isEmpty, pb.changeCount == changed else { return }
                 pb.clearContents(); pb.writeObjects(saved.map { pairs in let i = NSPasteboardItem(); pairs.forEach { i.setData($1, forType: $0) }; return i })
             }
+            send(false)
+            // Success means the text is in the field, not that keys were sent; some apps ignore keys posted to them, so try the system keyboard once.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                if landed(draft, before) { return finish(true) }
+                guard valid(), NSWorkspace.shared.frontmostApplication == app,
+                      let f = axAttribute(target, kAXFocusedUIElementAttribute), CFEqual(f, element) else { return finish(false) }
+                send(true)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { finish(landed(draft, before)) }
+            }
         }
+    }
+    var value: String? { axAttribute(element, kAXValueAttribute) as? String }
+    // shortcut: a field that hides its text (nil value) counts as landed; there is nothing to check against
+    func landed(_ draft: String, _ before: String?) -> Bool {
+        guard let before, let now = value else { return true }
+        let squash = { (s: String) in s.filter { !$0.isWhitespace } }
+        return now != before && (draft.isEmpty || squash(now).contains(squash(draft)))
     }
     func replace(_ draft: String) -> Bool {
         guard !app.isTerminated, let range, let current = Self.selectedRange(element),
@@ -1061,9 +1077,9 @@ final class App: NSObject, WKScriptMessageHandler {
                         self.retryOffer = p.count == 5 && p[4] == "retry"
                         self.askFile = p[2]; self.show(); self.js("ask", [p[0], p[1], p.count >= 4 ? p[3] : "", self.retryOffer ? "retry" : ""]); continue
                     }
-                    if line.hasPrefix("⚙ ") {   // "⚙ <key> <true|false>": the AI flips one of Atticus's switches; never safe mode or pause
+                    if line.hasPrefix("⚙ ") {   // "⚙ <key> <true|false>": the AI flips one of Atticus's switches; never pause, and Safe mode only on
                         let p = line.split(separator: " ").map(String.init)
-                        if p.count == 3, Prefs.defaults[p[1]] is Bool, !["safe", "paused"].contains(p[1]) { Atticus.settings.apply(p[1], p[2] == "true"); Atticus.settings.push() }
+                        if p.count == 3, Prefs.defaults[p[1]] is Bool, p[1] != "paused", p[1] != "safe" || p[2] == "true" { Atticus.settings.apply(p[1], p[2] == "true"); Atticus.settings.push() }
                         else if p.count == 3, Prefs.defaults[p[1]] is String, !p[1].hasPrefix("hotkey") { Atticus.settings.apply(p[1], p[2]); Atticus.settings.push() }   // a choice setting ("workIn front")
                         continue
                     }
@@ -1072,10 +1088,11 @@ final class App: NSObject, WKScriptMessageHandler {
                     }
                     if line.hasPrefix("↺ ") {
                         guard let j = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(2).utf8)) as? [String: Any], let draft = j["t"] as? String else { continue }
-                        self.replacement = draft; self.mode = j["mode"] as? String ?? "replace"; self.pinned = true
+                        let now = j["mode"] as? String == "insert"   // the user asked to put it in: no Insert click needed
+                        self.replacement = draft; self.mode = now ? "draft" : j["mode"] as? String ?? "replace"; self.pinned = true
                         let target = self.selection.map { ($0.editable || $0.pastable) && (self.mode != "draft" || $0.caret) } ?? false
                         self.js("rewrite", [draft, self.mode, target])
-                        if self.mode == "draft" && target && Prefs.str("draftInsert") == "auto" { self.applyReplacement() }
+                        if self.mode == "draft" && target && (now || Prefs.str("draftInsert") == "auto") { self.applyReplacement() }
                         continue
                     }
                     if line.hasPrefix("✓") {
@@ -3123,7 +3140,7 @@ if CommandLine.arguments.dropFirst() == ["--type"] {
               let focused = axAttribute(target, kAXFocusedUIElementAttribute) else { return false }
         return CFEqual(focused, selected.element)
     }) { ok in
-        print(ok ? "typed into \(selected.app.localizedName ?? "app")" : "Could not type: the focused field changed.")
+        print(ok ? "typed into \(selected.app.localizedName ?? "app")" : "Could not type: the text did not appear in the field.")
         if ok { DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { exit(0) } }
         else { exit(1) }
     }

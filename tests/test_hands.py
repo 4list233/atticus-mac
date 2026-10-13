@@ -319,7 +319,7 @@ class HandsLabels(unittest.TestCase):
                 self.assertEqual(atticus.label('Bash', {'command': f'{H} press "cmd+shift+t"'}), 'Pressing ⌘⇧T')
                 self.assertEqual(atticus.label('Bash', {'command': f'{H} scroll down 2'}), 'Scrolling down')
                 self.assertEqual(atticus.label('Bash', {'command': f'{H} click 2:340,120'}), 'Clicking “a spot on screen”')
-                self.assertEqual(atticus.label('Bash', {'command': f'{H} see'}), 'Looking at your screen')
+                self.assertEqual(atticus.label('Bash', {'command': f'{H} see'}), 'Reading the window')
 
 
 if __name__ == '__main__': unittest.main()

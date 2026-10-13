@@ -25,12 +25,12 @@ class SelectionTests(unittest.TestCase):
         apply = source[source.index('    func apply(_ draft:'):source.index('    func replace(_ draft:')]
         swift = '''import Foundation
 import CoreFoundation
-let kAXFocusedUIElementAttribute = "focus", kAXSelectedTextAttribute = "text"
-var keys: [Int] = []
+let kAXFocusedUIElementAttribute = "focus", kAXSelectedTextAttribute = "text", kAXValueAttribute = "value"
+var keys: [Int] = [], field = "old", deaf = false, hidEvents = 0
 var focused = 1, selected = "old", currentRange = CFRange(location: 3, length: 3), events = 0, directWrites = 0, directOK = true
 func AXUIElementCreateApplication(_ pid: Int) -> Int { pid }
 func AXUIElementSetMessagingTimeout(_ element: Int, _ timeout: Double) {}
-func axAttribute(_ e: Any, _ name: String) -> CFTypeRef? { name == "focus" ? NSNumber(value: focused) : selected as CFString }
+func axAttribute(_ e: Any, _ name: String) -> CFTypeRef? { name == "focus" ? NSNumber(value: focused) : name == "value" ? field as CFString : selected as CFString }
 final class FakeApp: Equatable {
  var isTerminated = false, processIdentifier = 42
  func activate() { NSWorkspace.shared.frontmostApplication = self }
@@ -55,18 +55,20 @@ final class NSPasteboard {
  }
  func writeObjects(_ items: [NSPasteboardItem]) { pasteboardItems = items; changeCount += 1 }
 }
+enum CGEventTapLocation { case cghidEventTap }
 struct Flags: OptionSet { let rawValue: Int; static let maskCommand = Flags(rawValue: 1) }
 final class CGEvent {
  var flags: Flags = []
  let key: Int
  init?(keyboardEventSource: Int?, virtualKey: Int, keyDown: Bool) { key = virtualKey }
- func postToPid(_ pid: Int) { events += 1; keys.append(key); precondition(pid == 42 && flags == (key == 51 ? [] : .maskCommand)) }
+ func postToPid(_ pid: Int) { events += 1; keys.append(key); precondition(pid == 42 && flags == (key == 51 ? [] : .maskCommand)); if !deaf { field = key == 51 ? "ol" : "old draft" } }
+ func post(tap: CGEventTapLocation) { hidEvents += 1 }
 }
 struct Harness {
  let element: CFTypeRef = NSNumber(value: 1), app = FakeApp(), text = "old", range: CFRange? = CFRange(location: 3, length: 3)
  var editable = false, pastable = true
  static func selectedRange(_ e: CFTypeRef) -> CFRange? { currentRange }
- func replace(_ text: String) -> Bool { if directOK { directWrites += 1 }; return directOK }
+ func replace(_ text: String) -> Bool { if directOK { directWrites += 1; field = text }; return directOK }
 ''' + apply + '''}
 func pump(_ seconds: Double) {
  let end = Date().addingTimeInterval(seconds)
@@ -74,7 +76,7 @@ func pump(_ seconds: Double) {
 }
 let h = Harness(), pb = NSPasteboard.general
 let old = NSPasteboardItem(); old.setData(Data("rich original".utf8), forType: .rich)
-func reset() { focused = 1; selected = "old"; currentRange = CFRange(location: 3, length: 3); h.app.isTerminated = false; pb.failWrite = false; pb.writeObjects([old]) }
+func reset() { focused = 1; selected = "old"; field = "old"; deaf = false; currentRange = CFRange(location: 3, length: 3); h.app.isTerminated = false; pb.failWrite = false; pb.writeObjects([old]) }
 for scenario in 0..<6 {
  reset(); let before = events; var result: Bool?, allowed = true
  h.apply(scenario == 4 ? "" : "draft", valid: { allowed }) { result = $0 }
@@ -91,15 +93,17 @@ for scenario in 0..<6 {
  precondition(pb.pasteboardItems?.first?.data(forType: .rich) == Data("rich original".utf8), "aborted paste touched clipboard")
 }
 reset(); var ok = false
-h.apply("draft", valid: { true }) { ok = $0 }; pump(0.2); precondition(ok)
+h.apply("draft", valid: { true }) { ok = $0 }; pump(0.5); precondition(ok)
 pb.clearContents(); _ = pb.setString("new copy", forType: .string); pump(0.45)
 precondition(pb.pasteboardItems?.first?.data(forType: .string) == Data("new copy".utf8), "new clipboard copy clobbered")
 reset(); h.apply("draft", valid: { true }) { ok = $0 }; pump(0.6)
 precondition(ok && pb.pasteboardItems?.first?.data(forType: .rich) == Data("rich original".utf8), "rich clipboard not restored")
-reset(); let count = pb.changeCount; h.apply("", valid: { true }) { ok = $0 }; pump(0.2)
+reset(); let count = pb.changeCount; h.apply("", valid: { true }) { ok = $0 }; pump(0.5)
 precondition(ok && pb.changeCount == count && Array(keys.suffix(2)) == [51, 51], "delete key/clipboard regressed")
 reset(); pb.failWrite = true; h.apply("draft", valid: { true }) { ok = $0 }; pump(0.2)
 precondition(!ok && pb.pasteboardItems?.first?.data(forType: .rich) != nil, "failed write lost clipboard")
+reset(); deaf = true; ok = true; h.apply("draft", valid: { true }) { ok = $0 }; pump(0.9)
+precondition(!ok && hidEvents == 2 && pb.pasteboardItems?.first?.data(forType: .rich) != nil, "ignored paste reported success or kept the draft on the clipboard")
 var readonly = h; readonly.pastable = false; let before = events
 readonly.apply("", valid: { true }) { ok = $0 }; pump(0.2); precondition(!ok && events == before, "read-only delete posted")
 var editable = h; editable.editable = true; editable.pastable = false

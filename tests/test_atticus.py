@@ -467,9 +467,12 @@ class WatchAndBudgetTests(unittest.TestCase):
         app = [c for c in calls if 'get bounds' in c] + [run.call_args.args[0][2]]
         self.assertTrue(all('whose name contains "Ch4-Study-Guide copy"' in c and 'window 1' not in c for c in app))
 
-    def test_set_flips_a_switch_by_name_never_safe_mode(self):
+    def test_set_flips_a_switch_by_name_safe_mode_only_on(self):
         self.assertIn('askMe', atticus.switches())
-        self.assertFalse({'safe', 'paused'} & set(atticus.switches()))
+        self.assertNotIn('paused', atticus.switches())
+        with patch.dict(os.environ, {'ATTICUS_ASK': '/fake'}), patch.object(atticus, 'ask_user') as ask, patch('sys.stdout', new_callable=io.StringIO):
+            atticus.set_switch('safe mode', 'on')
+        self.assertEqual(ask.call_args.args[0], {'set': 'safe', 'value': True})
         for words, key in [('the asking setting', 'askMe'), ('read answers aloud', 'speak'), ('safe mode', None)]:
             with patch.dict(os.environ, {'ATTICUS_ASK': '/fake'}), patch.object(atticus, 'ask_user') as ask, patch('sys.stdout', new_callable=io.StringIO):
                 atticus.set_switch(words, 'off')
@@ -491,7 +494,8 @@ class WatchAndBudgetTests(unittest.TestCase):
         self.assertEqual(atticus.replacement_reply('[replace] ', True)[0], 'delete')
         self.assertEqual(atticus.replacement_reply('[draft] Hi Dana,\n\nThanks!', False), ('draft', 'Hi Dana,\n\nThanks!'))
         self.assertFalse(atticus.replacement_reply('[draft]', True)[0])
-        self.assertIn('{TYPE} it, an earlier draft word for word', atticus.SYSTEM.replace(atticus.TYPE, '{TYPE}'))
+        self.assertEqual(atticus.replacement_reply('[insert] Thanks!', False), ('insert', 'Thanks!'))
+        self.assertIn('[insert] then only the text (an earlier draft word for word)', atticus.SYSTEM)
 
     def test_prompt_stays_under_budget(self):
         # Every ask pays for this prompt. Raising the cap is a decision: check `atticus.py --budget` first.
