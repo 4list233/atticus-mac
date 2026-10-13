@@ -19,12 +19,12 @@
   <img alt="macOS" src="https://img.shields.io/badge/macOS-1d1d1f?style=for-the-badge&logo=apple&logoColor=white">
   <img alt="Swift" src="https://img.shields.io/badge/Swift-1d1d1f?style=for-the-badge&logo=swift&logoColor=white">
   <img alt="Claude" src="https://img.shields.io/badge/Claude_Haiku-1d1d1f?style=for-the-badge&logo=anthropic&logoColor=white">
-  <img alt="Cost" src="https://img.shields.io/badge/~0.14%C2%A2_per_ask-1d1d1f?style=for-the-badge">
+  <img alt="Cost" src="https://img.shields.io/badge/~0.18%C2%A2_per_ask-1d1d1f?style=for-the-badge">
 </p>
 
 <br>
 
-https://github.com/user-attachments/assets/e3444422-02e8-4dd7-bb44-d39f2b0f2bef
+https://github.com/user-attachments/assets/a8007025-6651-4234-b3c6-29736f27ff20
 
 <br>
 
@@ -36,8 +36,10 @@ https://github.com/user-attachments/assets/e3444422-02e8-4dd7-bb44-d39f2b0f2bef
 | *"Open Spotify."* · *"Terminal on the left."* | Runs instantly, with no AI at all. |
 | *"Find my notes about the Tokyo trip."* | Searches your files by what's inside them, opens the match on your other screen. |
 | *"What's wrong with this code?"* | Looks at your screen and answers in a line. |
+| *"Reply to this. Thursday works, send me a time."* | Reads the email on screen and writes the reply. Insert puts it at your cursor. It never sends. |
+| *"Find me a desk lamp under $30 on Amazon."* | Works in Chrome behind your apps; a live mini screen shows it. |
+| *"Where do I turn on Night Shift?"* | A ring lights up the exact spot on your screen (Show me where). |
 | *"Summarize this article in three bullets."* | Reads the page for you. |
-| *"Reply: sounds good, see you at 7."* | Types it into the app you're in. It never sends. |
 | *"Play my late night coding playlist on Spotify."* | Plays it in a second, no clicks. Any song, artist or playlist. |
 | *"When I say focus mode, close Slack and open my to-do list."* | Remembers it. Next time, two words do it all. |
 
@@ -48,7 +50,7 @@ https://github.com/user-attachments/assets/e3444422-02e8-4dd7-bb44-d39f2b0f2bef
 <table>
 <tr>
 <td width="33%" valign="top"><h3>Fast</h3>Opening apps and sites, moving windows, web searches and music skip the AI entirely (an app opens in 0.08 s). Actions you ask for once (opening apps, moving windows, playing music) become learned shortcuts: "Open Calculator and Chess" went from 5.5 s to 0.4 s, with no AI.</td>
-<td width="33%" valign="top"><h3>No API key</h3>Runs on the Claude plan you already have, through <code>claude -p</code>. About 0.14¢ of plan usage per ask (~700 asks for $1 at API list rates). Atticus itself is free.</td>
+<td width="33%" valign="top"><h3>No API key</h3>Runs on the Claude plan you already have, through <code>claude -p</code>. About 0.18¢ of plan usage per ask (~550 asks for $1 at API list rates). Atticus itself is free.</td>
 <td width="33%" valign="top"><h3>Remembers you</h3>"Remember: open means bring it to the front." Saved rules go with every ask. It learns lasting facts about you (name, city, favorite apps), and when you correct it, it saves a rule so it gets it right next time. Edit all of it in Settings.</td>
 </tr>
 <tr>
