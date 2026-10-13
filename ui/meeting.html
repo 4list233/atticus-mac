@@ -73,10 +73,10 @@ h1{font-size:17px;font-weight:600;letter-spacing:-.3px;margin:0}
 /* live */
 #live{flex:1;min-height:0;display:flex;flex-direction:column;margin-top:12px}
 /* Answers · Transcript · Notes: the same segmented control as Settings */
-#tabs{display:flex;padding:2px;border-radius:8px;background:rgba(0,0,0,.22);box-shadow:inset 0 0 0 .5px var(--line);flex:none}
-#tabs button{flex:1;position:relative;padding:4px 0;border-radius:6px;background:none;box-shadow:none;font-size:12px;color:var(--fg2)}
-#tabs button.hover{background:none;color:var(--fg)}
-#tabs button[aria-selected=true]{background:#636366;color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,.15),inset 0 0 0 .5px var(--line)}
+#tabs,#mode{display:flex;padding:2px;border-radius:8px;background:rgba(0,0,0,.22);box-shadow:inset 0 0 0 .5px var(--line);flex:none}
+#tabs button,#mode button{flex:1;position:relative;padding:4px 0;border-radius:6px;background:none;box-shadow:none;font-size:12px;color:var(--fg2)}
+#tabs button.hover,#mode button.hover{background:none;color:var(--fg)}
+#tabs button[aria-selected=true],#mode button[aria-pressed=true]{background:#636366;color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,.15),inset 0 0 0 .5px var(--line)}
 #tabs button.new::after{content:'';position:absolute;top:50%;margin:-3px 0 0 6px;width:6px;height:6px;border-radius:50%;background:var(--accent)}
 .pane{flex:1;min-height:0;overflow:auto;margin:0 -16px;padding:2px 16px 10px}
 .pane::-webkit-scrollbar{width:0}
@@ -101,6 +101,9 @@ h1{font-size:17px;font-weight:600;letter-spacing:-.3px;margin:0}
 .response span{display:block;font-size:12px;color:var(--fg2);margin-top:4px;line-height:1.4}
 .response em{display:block;font-style:normal;font-size:10.5px;color:var(--fg3);margin-top:8px}
 .response.copied em{color:#30d158}
+.response small{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:500;color:var(--fg3);margin-bottom:5px;letter-spacing:.1px}
+.response small::before{content:'';width:5px;height:5px;border-radius:50%;background:#bf5af2}
+#mode{margin:0 0 12px}
 #history{margin:2px 0 4px}
 #history summary{list-style:none;cursor:pointer;color:var(--fg3);font-size:11.5px;padding:6px 0}
 #history summary::-webkit-details-marker{display:none}
@@ -183,6 +186,7 @@ body.reduce *{animation:none!important;transition:none!important}
   <textarea id="context" maxlength="20000" aria-label="What's this call about" placeholder="Interview with Dana at Stripe. I want the summer internship.&#10;&#10;Or paste an agenda, notes or a link."></textarea>
   <div id="attach"><button id="choose" class="quiet">＋ Add files</button><span id="filechip" hidden><span id="filename">Files added</span><button id="unfile" aria-label="Remove files">✕</button></span></div>
   <div id="prepfiles" class="attachments"></div>
+  <div id="mode" role="group" aria-label="Where is this meeting"><button data-mode="call" aria-pressed="true">On a call</button><button data-mode="room" aria-pressed="false">In person</button></div>
   <button id="start" class="blue big" disabled>Start listening</button>
   <p class="note fine">Hears the call and your microphone. Transcripts save only on this Mac. Change this in Settings.</p>
 </section>
@@ -233,7 +237,7 @@ function tab(name){
 const atEnd=()=>$('transcript').scrollHeight-$('transcript').scrollTop-$('transcript').clientHeight<40;
 const follow=(was)=>{if(was)$('transcript').scrollTop=$('transcript').scrollHeight};
 function toast(text){$('toast').textContent=text;show('toast',true);clearTimeout(toastTimer);toastTimer=setTimeout(()=>show('toast',false),4000)}
-function begin(){const context=($('context').value.trim()+(files?'\n'+files:'')).trim();$('brief').value=context.slice(0,1500);$('start').disabled=true;post({do:'start',context})}
+function begin(){const context=($('context').value.trim()+(files?'\n'+files:'')).trim();$('brief').value=context.slice(0,1500);$('start').disabled=true;post({do:'start',context,room:room()})}
 function ask(text){if(!running||!text.trim())return;post({do:'ask',text:selectionContext?`Context: ${selectionContext}\nQuestion: ${text}`:text});selectionContext='';$('ask').value='';syncSend();$('ask').placeholder='Ask about the call…'}
 function syncSend(){const has=!!$('ask').value.trim();$('send').classList.toggle('blue',has);$('send').title=has?'Send':'Ask by voice';$('send').setAttribute('aria-label',$('send').title)}
 // Voice ask: the box becomes waves and a bubble of what you say. Send asks it; clicking the waves goes back to typing with those words; Esc cancels.
@@ -246,6 +250,8 @@ function voice(on,then){
 
 window.addEventListener('resize',()=>{if(!running)fit()});
 $('start').onclick=begin;
+const room=()=>$('mode').querySelector('[aria-pressed=true]').dataset.mode==='room';
+for(const b of $('mode').children)b.onclick=()=>meeting.mode(b.dataset.mode);
 $('context').onkeydown=e=>{if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){e.preventDefault();begin()}};
 $('close').onclick=$('later').onclick=()=>post({do:'delete'});
 $('ready').onclick=()=>{post({do:'focus'});view('prep');$('context').focus()};
@@ -301,7 +307,8 @@ function card(row){
 }
 document.addEventListener('click',e=>{if(!e.target.closest('.attachment'))document.querySelectorAll('.attachment.expanded').forEach(b=>b.classList.remove('expanded'))});
 window.meeting={
-  privacy(on){document.querySelector('#prep .fine').textContent=on?'Hears the call and your microphone. Transcripts save only on this Mac. Change this in Settings.':'Hears the call and your microphone. Transcript saving is off.'},
+  privacy(on){saving=on;this.mode()},
+  mode(m){if(m)for(const b of $('mode').children)b.setAttribute('aria-pressed',String(b.dataset.mode===m));document.querySelector('#prep h1').textContent=room()?'Get ready for your meeting':'Get ready for your call';$('notice').textContent=(room()?'Atticus hears the room through your microphone.':'Atticus hears this call and your microphone.')+' Transcripts stay on this Mac.';document.querySelector('#prep .fine').textContent=(room()?'Hears the room through your microphone. No call needed.':'Hears the call and your microphone.')+(saving?' Transcripts save only on this Mac.':' Transcript saving is off.')},
   saving(on){saving=on;document.body.classList.toggle('saved',on);show('saving',running&&!minimized&&on);$('endnote').textContent=on?'Saved on this Mac.':'This transcript isn’t saved. Copy it before closing. Enable saving in Settings for future meetings.';$('delete').disabled=!on;$('restore').title=on?'Restore · Saving transcript':'Restore'},
   recap(m){$('recap').textContent=m.summary+(m.action_items?.length?'\n\nAction items\n'+m.action_items.map(s=>'• '+s).join('\n'):'');show('recap',!!m.summary);if(!running)fit()},
   settled(id){if(id!==viewTransition)return;document.body.classList.remove('transitioning');document.body.classList.add('revealing')},
@@ -343,6 +350,7 @@ window.meeting={
     if(r.kind==='SKIP'){reset();setTimeout(()=>{if(touched.has(r.id))return;d.classList.add('gone');setTimeout(()=>{d.remove();cards.delete(r.id);if(!document.querySelector('.question:not([hidden])'))show('empty',true)},300)},4000);return}
     if(r.kind==='UNSURE'){reset();const reason=document.createElement('p');reason.className='reason';reason.textContent=r.reason||'There isn’t enough meeting context to answer this reliably.';d.querySelector('.reason')?.remove();b.before(reason);b.textContent='Add notes';b.onclick=()=>{retryId=r.id;touched.add(r.id);show('retry',true);tab('notes')};return}
     d.querySelector('.reason')?.remove();const lines=r.lines||[], res=document.createElement('button');res.className='response';res.setAttribute('aria-label','Copy answer');
+    if(r.general){const g=document.createElement('small');g.textContent='General knowledge';res.append(g)}
     lines.forEach((line,i)=>{const el=document.createElement(i?'span':'strong');el.textContent=line;res.append(el)});
     const hint=document.createElement('em');hint.textContent='Copy answer';res.append(hint);
     res.onclick=()=>{post({do:'copy',text:lines.join('\n')});res.classList.add('copied');hint.textContent='Copied';setTimeout(()=>{res.classList.remove('copied');hint.textContent='Copy answer'},1500)};

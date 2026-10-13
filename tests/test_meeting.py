@@ -34,6 +34,8 @@ class MeetingTests(unittest.TestCase):
                          {'kind': 'answer', 'lines': ['November 12.', 'The brief says so.', 'Approved.']})
         self.assertEqual(atticus.meeting_parse('UNSURE\nThe launch date has not been shared.'),
                          {'kind': 'UNSURE', 'lines': [], 'reason': 'The launch date has not been shared.'})
+        self.assertEqual(atticus.meeting_parse('GENERAL\nParis is the capital of France.'),
+                         {'kind': 'answer', 'lines': ['Paris is the capital of France.'], 'general': True})
         with self.assertRaises(ValueError):
             atticus.meeting_parse(' \n')
 

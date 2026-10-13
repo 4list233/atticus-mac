@@ -24,7 +24,7 @@ enum Prefs {
         "soundStart": "Pop", "soundDone": "Glass", "soundStop": "Tink", "volume": 0.16, "model": "haiku", "instant": true,
         "selection": true, "ahead": true, "aheadDelay": 0.7, "live": true, "screen": "auto", "openOn": "here", "workIn": "back", "miniScreen": true, "pageJS": false,
         "speak": false, "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
-        "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "stats": true, "tips": true, "askMe": true, "escalate": true, "meetingSummary": true, "escalateAuto": false, "input": "voice", "talkMode": "hold", "boxW": 460, "boxH": 360]
+        "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "stats": true, "tips": true, "askMe": true, "escalate": true, "meetingSummary": true, "escalateAuto": false, "input": "voice", "talkMode": "hold", "speechModel": "speech", "boxW": 460, "boxH": 360]
     static var d: [String: Any] = defaults.merging(
         (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path)))) as? [String: Any] ?? [:]) { $1 }
     static func set(_ k: String, _ v: Any) {
@@ -388,7 +388,21 @@ final class App: NSObject, WKScriptMessageHandler {
     let engine = AVAudioEngine()
     // Speech: Apple's SpeechAnalyzer (macOS 26+), on-device and free; punctuates and capitalizes.
     var feed: AsyncStream<AnalyzerInput>.Continuation?, analyzer: SpeechAnalyzer?, reading: Task<Void, Never>?
-    var speechFormat: AVAudioFormat?   // what the model wants (found once at launch)
+    var speechFormat: AVAudioFormat?   // what the model wants (found at launch and when the model changes)
+    // Settings → Speech model: Apple's newer SpeechTranscriber, or the Dictation model the keyboard mic uses.
+    func speechModule() -> any SpeechModule {
+        let en = Locale(identifier: "en-US")
+        return Prefs.str("speechModel") == "dictation" ? DictationTranscriber(locale: en, preset: .progressiveShortDictation)
+            : SpeechTranscriber(locale: en, preset: .progressiveTranscription)
+    }
+    func prepareSpeech() {   // make sure the speech model is installed, and learn its audio format
+        let m = speechModule()
+        Task { [weak self] in
+            if let r = try? await AssetInventory.assetInstallationRequest(supporting: [m]) { try? await r.downloadAndInstall() }
+            let f = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [m])
+            await MainActor.run { self?.speechFormat = f }
+        }
+    }
     var text = "", answer = "", busy = false, speechFailed = false, gen = 0
     var proc: Process?, escRef: EventHotKeyRef?, warm: (p: Process, input: FileHandle, commit: String)?
     var commit = "", listenID = 0
@@ -572,12 +586,7 @@ final class App: NSObject, WKScriptMessageHandler {
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }; frame(panel.frame)
         }
-        Task { [weak self] in   // make sure the speech model is installed, and learn its audio format
-            let tr = SpeechTranscriber(locale: Locale(identifier: "en-US"), preset: .progressiveTranscription)
-            if let r = try? await AssetInventory.assetInstallationRequest(supporting: [tr]) { try? await r.downloadAndInstall() }
-            let f = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [tr])
-            await MainActor.run { self?.speechFormat = f }
-        }
+        prepareSpeech()
         AVCaptureDevice.requestAccess(for: .audio) { _ in }
     }
 
@@ -804,7 +813,7 @@ final class App: NSObject, WKScriptMessageHandler {
             if replying { stopOfferInput() } else { hush() }; js("msg", "Allow Atticus in System Settings → Privacy & Security → Microphone."); hide(after: 6); return
         }
         listenID += 1; let listeningID = listenID
-        let tr = SpeechTranscriber(locale: Locale(identifier: "en-US"), preset: .progressiveTranscription)
+        let tr = speechModule()
         let (stream, cont) = AsyncStream<AnalyzerInput>.makeStream()
         let an = SpeechAnalyzer(modules: [tr])
         feed = cont; analyzer = an
@@ -812,13 +821,14 @@ final class App: NSObject, WKScriptMessageHandler {
         Task { try? await an.setContext(ctx); try? await an.start(inputSequence: stream) }
         reading = Task { [weak self] in   // finished pieces add up; the live (volatile) piece is shown after them
             var done = ""
+            func got(_ piece: String, _ final: Bool) async {
+                if final { done += piece }
+                let now = final ? done : done + piece
+                await MainActor.run { if self?.listenID == listeningID { self?.heard(now) } }
+            }
             do {
-                for try await r in tr.results {
-                    let piece = String(r.text.characters)
-                    if r.isFinal { done += piece }
-                    let now = r.isFinal ? done : done + piece
-                    await MainActor.run { if self?.listenID == listeningID { self?.heard(now) } }
-                }
+                if let d = tr as? DictationTranscriber { for try await r in d.results { await got(String(r.text.characters), r.isFinal) } }
+                else if let t = tr as? SpeechTranscriber { for try await r in t.results { await got(String(r.text.characters), r.isFinal) } }
             } catch { await MainActor.run { if self?.listenID == listeningID { self?.speechFailed = true } } }
         }
         let input = engine.inputNode, natural = input.outputFormat(forBus: 0)
@@ -1688,6 +1698,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         if k == "meetingNudge", v as? Bool == true, EKEventStore.authorizationStatus(for: .event) != .fullAccess {
             calendar.requestFullAccessToEvents { ok, _ in if !ok { DispatchQueue.main.async { Prefs.set("meetingNudge", false); settings.push() } } }
         }
+        if k == "speechModel" { app.prepareSpeech() }
         if k == "speak" { if v as? Bool == true { siriVoice() } else { app.shush() } }
         if k == "hideWhenSharing" { app.panel.sharingType = v as? Bool == true ? .none : .readOnly }
         if k == "menuIcon" { bar.item.isVisible = v as? Bool == true }
@@ -1901,6 +1912,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
     var pendingBrief: String?
     var moveMonitor: Any?, screenObserver: NSObjectProtocol?, mouseDown: NSPoint?, dragOrigin: NSRect?, dragging = false
     var archive: MeetingArchive?, archiveEnded = false, meetingTitle = "", callApp = "Call"
+    var room: Bool { callApp == "In person" }   // no call: the mic hears everyone, so its questions get answers too
     var measured: [Int: Double] = [:], demoEnds: [Double] = []
     func js(_ call: String, _ value: Any = [:]) {
         guard let data = try? JSONSerialization.data(withJSONObject: [value]), let json = String(data: data, encoding: .utf8) else { return }
@@ -1975,7 +1987,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
                 self?.focus()
             }
         } else if let nudge { panel?.contentView?.layer?.cornerRadius = 18; js("nudge", nudge) }   // a calendar reminder: shown, never steals focus
-        else { js("prep"); focus() }
+        else { js("mode", callAppsOnMic().isEmpty ? "room" : "call"); js("prep"); focus() }
     }
     func rememberFrame() {
         guard let panel, let screen = panel.screen else { return }
@@ -2142,7 +2154,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
         }
         if mic && Date() < voiceTail { return }   // the last words of a voice ask finishing; already in the ask
         if mic { micPartial = final ? "" : piece } else { partial = final ? "" : piece }
-        js("partial", ["mic": mic, "text": final ? "" : piece])
+        js("partial", ["mic": mic && !room, "text": final ? "" : piece])
         if final { heard(piece, mic: mic) }
     }
     func heard(_ piece: String, mic: Bool = false) {
@@ -2158,12 +2170,12 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
         let text = (mic ? micPending : pending).trimmingCharacters(in: .whitespacesAndNewlines)
         if mic { micPending = "" } else { pending = "" }
         guard running, !text.isEmpty else { return }
-        let at = Date().timeIntervalSince1970
-        transcript.append(["at": at, "text": text, "seconds": Int(Date().timeIntervalSince(began)), "mic": mic]); serial += 1
-        saveEvent(["kind": "transcript", "at": at, "text": text, "seconds": Int(Date().timeIntervalSince(began)), "mic": mic, "speaker": mic ? "You" : callApp == "Call" ? "Them" : callApp])
-        let row: [String: Any] = ["id": serial, "text": text, "seconds": Int(Date().timeIntervalSince(began)), "mic": mic]
+        let at = Date().timeIntervalSince1970, you = mic && !room
+        transcript.append(["at": at, "text": text, "seconds": Int(Date().timeIntervalSince(began)), "mic": you]); serial += 1
+        saveEvent(["kind": "transcript", "at": at, "text": text, "seconds": Int(Date().timeIntervalSince(began)), "mic": you, "speaker": you ? "You" : room ? "Room" : callApp == "Call" ? "Them" : callApp])
+        let row: [String: Any] = ["id": serial, "text": text, "seconds": Int(Date().timeIntervalSince(began)), "mic": you]
         js("line", row)
-        if answer && !mic && meetingQuestion(text, name) {   // your own words are never answered for you
+        if answer && !you && meetingQuestion(text, name) {   // your own words are never answered for you
             js("question", row.merging(["auto": Prefs.str("meetingAuto") != "ask", "heard": true]) { $1 })
             if Prefs.str("meetingAuto") != "ask" { enqueue(serial, text, best: Prefs.str("meetingAuto") == "always", at: at) }
         }
@@ -2297,7 +2309,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
         case "resetFrame": resetFrame()
         case "rememberFrame": rememberFrame()
         case "ready": ready()
-        case "start": start(b["context"] as? String ?? "")
+        case "start": if b["room"] as? Bool == true { callApp = "In person" } else if room { callApp = "Call" }; start(b["context"] as? String ?? "")
         case "size": size(b["h"] as? Double ?? 0, reveal: b["reveal"] as? Int)
         case "resize": resize(b["w"] as? Double ?? 340, b["h"] as? Double ?? 650)
         case "compact": compact(b["on"] as? Bool ?? false)
