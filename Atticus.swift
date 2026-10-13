@@ -84,6 +84,17 @@ func py(_ args: [String], _ extra: [String: String] = [:]) -> Process {
     return p
 }
 
+// Freeze the user's display before live actions can move or focus another window.
+func currentRequestScreen() -> String {
+    let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly,.excludeDesktopElements],kCGNullWindowID) as? [[String:Any]] ?? []
+    let frame = windows.first(where: { ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }).flatMap(MiniScreen.bounds)
+    return (NSScreen.screens.first { screen in
+        let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? CGMainDisplayID()
+        return frame.map { CGDisplayBounds(id).contains(CGPoint(x:$0.midX,y:$0.midY)) } ?? screen.frame.contains(NSEvent.mouseLocation)
+    } ?? NSScreen.main)?.localizedName ?? ""
+}
+
 func axAttribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
     var value: CFTypeRef?
     return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
@@ -426,7 +437,7 @@ final class App: NSObject, WKScriptMessageHandler {
     var proc: Process?, escRef: EventHotKeyRef?, warm: (p: Process, input: FileHandle, commit: String)?
     var commit = "", listenID = 0
     var consumed = 0, fastBusy = false, did: [String] = [], pause: DispatchWorkItem?   // "Act while I'm talking": commands done mid-sentence
-    var fastProc: Process?, consumedText = "", liveRevised = false
+    var fastProc: Process?, consumedText = "", liveRevised = false, targetScreen = ""
     var ahead = "", aheadItem: DispatchWorkItem?   // words the AI already started on while the user was still holding the keys
     var stops = 0   // each key release; tells a late "words landed" from a current one
     var dragging = false, fromTop = false   // moving or resizing the box; fromTop: dragging the top edge, so the bottom stays put
@@ -803,6 +814,7 @@ final class App: NSObject, WKScriptMessageHandler {
         if fresh && panel.isVisible { return dismiss() }
         cancelFast()
         if replying { offerText = text } else { captureSelection(); replacement = nil }
+        targetScreen = currentRequestScreen()
         text = ""; ahead = ""; speechFailed = false; consumed = 0; consumedText = ""; liveRevised = false; did = []
         if !panel.isVisible && Date().timeIntervalSince(lastDone) > 30 { js("reset"); try? FileManager.default.removeItem(atPath: recent) }
         if !replying && Prefs.str("input") == "type" && !clickTalk {   // Settings: the shortcut opens the box ready to type
@@ -932,7 +944,7 @@ final class App: NSObject, WKScriptMessageHandler {
         let w = words()
         guard Prefs.bool("live"), Prefs.bool("instant"), engine.isRunning, !fastBusy, !liveRevised, w.count > consumed else { return }
         let seg = w[consumed...].joined(separator: " "), n = w.count, prefix = transcriptKey(w.joined(separator: " "))
-        let p = py(["--fast", seg], ["ATTICUS_FRONT": mine, "ATTICUS_LIVE": "1", "ATTICUS_FOCUS_GUARD": "1"]), out = Pipe()
+        let p = py(["--fast", seg], ["ATTICUS_FRONT": mine, "ATTICUS_SCREEN": targetScreen, "ATTICUS_LIVE": "1", "ATTICUS_FOCUS_GUARD": "1"]), out = Pipe()
         p.standardOutput = out
         do { try p.run() } catch { return }
         fastProc = p
@@ -1020,6 +1032,7 @@ final class App: NSObject, WKScriptMessageHandler {
         }
         if !panel.isKeyWindow { selection = TextSelection.capture() }
         if !Prefs.bool("selection") { selection = nil }
+        if !panel.isKeyWindow || targetScreen.isEmpty { targetScreen = currentRequestScreen() }
         text = t; replacement = nil
         fresh = false; js("listen", keep); if let s = selection { js("selected", s.text) }; show(); js("words", t); run(t)
     }
@@ -1045,7 +1058,7 @@ final class App: NSObject, WKScriptMessageHandler {
         }
         dropAhead()
         // the rest keeps the whole sentence: "for e-bikes, open the cheapest" alone lost "on Amazon"
-        if !rest.isEmpty { return run(did.isEmpty ? rest : text + "\n(Already done while I was talking: " + did.joined(separator: " ") + " Do the rest; redo it only if it was wrong.)") }
+        if !rest.isEmpty { return run(did.isEmpty ? rest : text, remaining: did.isEmpty ? nil : rest) }
         busy = false; unwarm()   // nothing left for the AI
         if did.isEmpty { js("msg", "Didn't catch that."); return hide(after: 1.2) }
         answer = "✓ " + did.joined(separator: " ")
@@ -1057,8 +1070,9 @@ final class App: NSObject, WKScriptMessageHandler {
     func spawn() -> (p: Process, input: FileHandle, commit: String)? {
         let commit = NSTemporaryDirectory() + "atticus-commit-" + UUID().uuidString
         warmSel = selKey
-        let p = py(["--wait"], ["ATTICUS_UI": "1", "ATTICUS_FRONT": mine, "ATTICUS_COMMIT": commit, "ATTICUS_SELECTION": warmSel == "\u{1}" ? "" : warmSel, "ATTICUS_CARET": warmSel == "\u{1}" ? "1" : "", "ATTICUS_FOCUS_GUARD": "1"])
+        let p = py(["--wait"], ["ATTICUS_UI": "1", "ATTICUS_FRONT": mine, "ATTICUS_SCREEN": targetScreen, "ATTICUS_COMMIT": commit, "ATTICUS_SELECTION": warmSel == "\u{1}" ? "" : warmSel, "ATTICUS_CARET": warmSel == "\u{1}" ? "1" : "", "ATTICUS_FOCUS_GUARD": "1"])
         let pipe = Pipe(), inp = Pipe(); p.standardOutput = pipe; p.standardInput = inp
+        fcntl(inp.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)   // a worker can exit before we write; let the catch handle EPIPE
         var buffer = Data()
         let feed = { [weak self] (d: Data) in
             DispatchQueue.main.async {
@@ -1125,7 +1139,7 @@ final class App: NSObject, WKScriptMessageHandler {
 
     func unwarm() { warm?.p.terminate(); warm = nil }
 
-    func run(_ t: String, speculative: Bool = false) {
+    func run(_ t: String, speculative: Bool = false, remaining: String? = nil) {
         mini.reset(); busy = true; answer = ""; try? FileManager.default.removeItem(atPath: focusFile)
         if !speculative { js("think") }
         if let w = warm, !w.p.isRunning { try? w.input.close(); warm = nil }
@@ -1137,7 +1151,10 @@ final class App: NSObject, WKScriptMessageHandler {
             catch { cancel(); js("msg", "Could not confirm the request. Please try again."); return }
         }
         do {
-            try w.input.write(contentsOf: Data((mine + "\t" + t.replacingOccurrences(of: "\n", with: " ") + "\n").utf8)); try w.input.close()
+            var request: [String:Any] = ["front":mine, "task":t]
+            if let remaining { request["remaining"] = remaining; request["done"] = did }
+            var data = try JSONSerialization.data(withJSONObject:request); data.append(10)
+            try w.input.write(contentsOf:data); try w.input.close()
         } catch { cancel(); js("msg", "The request worker stopped. Please try again.") }
     }
 }
@@ -1630,6 +1647,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         let version = Updater.version.isEmpty ? Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "unknown" : Updater.version
         DispatchQueue.global().async { [weak self] in
             let p = py(["--feedback"]), input = Pipe(), out = Pipe(); p.standardInput = input; p.standardOutput = out
+            fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
             do { try p.run(); try input.fileHandleForWriting.write(contentsOf:JSONSerialization.data(withJSONObject:["include":include,"version":version,"text":text])); try input.fileHandleForWriting.close() }
             catch { if p.isRunning { p.terminate() }; DispatchQueue.main.async { if self?.feedbackJob == job { self?.send("feedback", ["error":"Could not prepare feedback. Try again.","revision":revision]) } }; return }
             let data = out.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
@@ -1689,6 +1707,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         }
         DispatchQueue.global().async { [weak self] in
             let p = py(["--meetings"]), input = Pipe(), output = Pipe(); p.standardInput = input; p.standardOutput = output
+            fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
             var result: [String: Any] = ["error": "Could not open saved meetings. Try again."]
             do {
                 try p.run(); try input.fileHandleForWriting.write(contentsOf: JSONSerialization.data(withJSONObject: data)); try input.fileHandleForWriting.close()
@@ -2088,6 +2107,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
         guard summarize else { return }
         let id = archive.id
         let p = py(["--meetings"]), input = Pipe(), output = Pipe(); p.standardInput = input; p.standardOutput = output
+        fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         do { try p.run() } catch { return }; finishing = p
         DispatchQueue.global().async { [weak self] in
             do { try input.fileHandleForWriting.write(contentsOf: JSONSerialization.data(withJSONObject: ["action": "finish", "id": id])); try input.fileHandleForWriting.close() } catch { p.terminate(); return }
@@ -2249,6 +2269,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
     }
     func worker(_ command: String, _ data: [String: Any], _ done: @escaping ([String: Any]) -> Void) {
         let p = py([command]), input = Pipe(), output = Pipe(); p.standardInput = input; p.standardOutput = output
+        fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         process = p; let g = generation
         do { try p.run() } catch { process = nil; done(["error": "Could not start"]); return }
         DispatchQueue.global().async { [weak self] in

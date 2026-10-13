@@ -53,7 +53,7 @@ func py(_ args: [String], _ extra: [String: String] = [:]) -> Process {
 }
 ''' + key + '''
 final class Harness {
-    var consumed = 0, fastBusy = false, liveRevised = false, consumedText = "", mine = "Notes", text = "open Spotify"
+    var consumed = 0, fastBusy = false, liveRevised = false, consumedText = "", targetScreen = "Fixture display", mine = "Notes", text = "open Spotify"
     var fastProc: Process?, proc: Process?, did: [String] = []
     var busy = false, ahead = ""
     let engine = Engine()
@@ -122,6 +122,44 @@ if CommandLine.arguments.contains("--benchmark") {
 
 @unittest.skipUnless(sys.platform == 'darwin', 'macOS Swift worker regression')
 class NativeTests(unittest.TestCase):
+    def test_final_words_after_live_action_preserve_raw_remainder(self):
+        source = (ROOT / 'Atticus.swift').read_text()
+        finish = source[source.index('    func finish()', source.index('    func typed(')):source.index('    // atticus.py --wait, started')]
+        swift = '''import Foundation
+final class Engine { var isRunning = false }
+final class Panel { func makeKey() {}; func makeFirstResponder(_ v: Int) {} }
+final class Harness {
+    var busy = true, selectionPending = false, fastBusy = false, liveRevised = false, pinned = false
+    var offerText: String?, text = "Fixture left, Other right", ahead = "", answer = ""
+    var did = ["Fixture: left."], consumed = 2, stops = 0, web = 0
+    var proc: Process?, aheadItem: DispatchWorkItem?, commit = "", lastDone = Date()
+    let panel = Panel(), engine = Engine()
+    var request = "", remaining: String?, delivered = ""
+    func rest() -> String { text.split(separator:" ").dropFirst(consumed).joined(separator:" ") }
+    func run(_ t: String, remaining: String? = nil) { request = t; self.remaining = remaining }
+    func dropAhead() { ahead = "" }
+    func unwarm() {}; func hush() {}; func cancel() {}; func hide(after: Double) {}
+    func js(_ name: String, _ value: Any = "") {}; func cue(_ name: String) {}
+    func linger(_ n: Double) -> Double { n }
+    func deliver(_ text: String) { delivered = text }
+''' + finish + '''}
+func transcriptKey(_ t: String) -> String { t.lowercased() }
+let partial = Harness(); partial.finish()
+precondition(partial.request == partial.text && partial.remaining == "Other right")
+let complete = Harness(); complete.consumed = 4; complete.finish()
+precondition(complete.request.isEmpty && complete.delivered == "Fixture: left.")
+let fresh = Harness(); fresh.did = []; fresh.consumed = 0; fresh.finish()
+precondition(fresh.request == fresh.text && fresh.remaining == nil)
+print("confirmed remainder regressions ok")
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); file = root / 'finish.swift'; file.write_text(swift)
+            binary = root / 'finish'
+            compiled = subprocess.run(['swiftc', str(file), '-o', str(binary)], capture_output=True, text=True)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            result = subprocess.run([str(binary)], check=True, capture_output=True, text=True)
+            self.assertIn('confirmed remainder regressions ok', result.stdout)
+
     def test_replace_checks_original_text_range_and_app(self):
         source = (ROOT / 'Atticus.swift').read_text()
         method = source[source.index('    func replace(_ draft:'):source.index('// Sees the mouse')]
@@ -328,7 +366,8 @@ print("shortcut regressions ok")
     def test_live_worker_cancellation_revision_and_pipe_drain(self):
         with tempfile.TemporaryDirectory() as path:
             command = harness(Path(path))
-            result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=15)
+            result = subprocess.run(command, capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('regressions ok', result.stdout)
 
 
