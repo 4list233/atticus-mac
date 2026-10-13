@@ -2537,8 +2537,11 @@ enum Hands {
         queue.append((w, [], wf))
         for (i, child) in children(e).enumerated() where attribute(child, kAXRoleAttribute) as? String == "AXMenu" { queue.append((child, [-2, i], .null)) }
         let focused = element(e, kAXFocusedUIElementAttribute)
-        var cursor = 0
-        while cursor < queue.count && cursor < (offscreen ? 6000 : 1800) && Date().timeIntervalSince(start) < (offscreen ? 1 : 0.3) {
+        var cursor = 0, later: [(AXUIElement, [Int], CGRect)] = [], deferring = true
+        while true {
+            // Web pages last: their links would use up the budget before an app's own toolbar (Chrome's Extensions button). --web reads pages.
+            if cursor == queue.count, deferring { deferring = false; queue += later }
+            guard cursor < queue.count && cursor < (offscreen ? 6000 : 1800) && Date().timeIntervalSince(start) < (offscreen ? 1 : 0.3) else { break }
             try checkStopped()
             let (item, path, clip) = queue[cursor]; cursor += 1
             if visited.contains(where: { CFEqual($0, item) }) { continue }; visited.append(item)
@@ -2552,6 +2555,7 @@ enum Hands {
                 value = String(mask(raw as? String ?? (raw as? NSNumber)?.stringValue ?? "").prefix(400))
             }
             if role == "AXWebArea", let url = attribute(item, "AXURL") { let s = (url as? URL)?.absoluteString ?? (url as? String ?? ""); if s.hasPrefix("http") { m.page = mask(s) } }
+            if role == "AXWebArea", deferring { later.append((item, path, clip)); visited.removeLast(); continue }
             if let focused, CFEqual(focused, item) { m.focused = mask(label.isEmpty ? role : label); m.focusIdentity = "\(role):\(path):\(array(bounds))" }
             if role == "AXScrollArea", let bar = element(item, kAXVerticalScrollBarAttribute), let n = attribute(bar, kAXValueAttribute) as? NSNumber { m.scroll.append(n.doubleValue) }
             if ["AXStaticText", "AXHeading"].contains(role) {
@@ -3218,5 +3222,14 @@ if let demo = UserDefaults.standard.string(forKey: "demo") {
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { app.js("listen"); app.show(); app.js("words", demo); app.run(demo) }
 }
 
+// ⌘X/C/V/A/Z in every Atticus text field (typing box, choices, Settings, meetings): a menu-bar-less app has no Edit
+// menu to route them, and a non-activating panel never gets menu shortcuts anyway, so send them down the responder chain.
+NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
+    let mods = e.modifierFlags.intersection(.deviceIndependentFlagsMask), k = e.charactersIgnoringModifiers?.lowercased() ?? ""
+    let action: Selector? = mods == [.command, .shift] ? (k == "z" ? Selector(("redo:")) : nil) : mods != .command ? nil :
+        ["x": #selector(NSText.cut(_:)), "c": #selector(NSText.copy(_:)), "v": #selector(NSText.paste(_:)), "a": #selector(NSText.selectAll(_:)), "z": Selector(("undo:"))][k]
+    guard let action, NSApp.sendAction(action, to: nil, from: nil) else { return e }
+    return nil
+}
 NSApplication.shared.setActivationPolicy(.accessory)
 NSApplication.shared.run()
