@@ -71,6 +71,11 @@ try {
   assert(messages.some(m => m.replace === true) && messages.some(m => m.copy === 'A polished draft.'), 'Rewrite actions replace or copy the reviewed draft');
   ui.replaced(false);
   assert(bar.querySelector('.go').disabled && d.querySelector('.rewrite-note').textContent.includes('Selection changed'), 'Stale selection shows recovery and disables replacement');
+  ui.rewrite(['Hi Dana,', 'draft', true]);
+  assert(d.querySelector('.rewrite .go').textContent === 'Insert', 'A draft with a cursor target offers Insert first');
+  ui.replaced(true); assert(d.querySelector('.rewrite-note').textContent === 'Inserted', 'Insert confirms');
+  ui.rewrite(['Hi Dana,', 'draft', false]);
+  assert(d.querySelector('.rewrite .go').textContent === 'Copy', 'A draft with no cursor target offers Copy first');
   ui.listen(true); assert(!d.querySelector('.rewrite'), 'New requests remove stale replacement actions'); ui.words('Open Safari'); ui.think(); ui.line('✓ Safari is open.');
   tap(d.querySelector('.a'));
   await new Promise(resolve => setTimeout(resolve, 30));

@@ -491,6 +491,7 @@ class WatchAndBudgetTests(unittest.TestCase):
         self.assertEqual(atticus.replacement_reply('[replace] ', True)[0], 'delete')
         self.assertEqual(atticus.replacement_reply('[draft] Hi Dana,\n\nThanks!', False), ('draft', 'Hi Dana,\n\nThanks!'))
         self.assertFalse(atticus.replacement_reply('[draft]', True)[0])
+        self.assertIn('{TYPE} it, an earlier draft word for word', atticus.SYSTEM.replace(atticus.TYPE, '{TYPE}'))
 
     def test_prompt_stays_under_budget(self):
         # Every ask pays for this prompt. Raising the cap is a decision: check `atticus.py --budget` first.

@@ -426,11 +426,11 @@
       part('a')?.classList.add('draft');
       $('thread').querySelectorAll('.rewrite').forEach(e => e.remove());
       const bar = document.createElement('div'); bar.className = 'rewrite'; bar.dataset.mode = mode;
-      const actions = { replace: [['Replace', 'replace'], ['Try again', 'retry'], ['Copy', 'copy']], delete: [['Delete', 'replace'], ['Try again', 'retry']], draft: [['Copy', 'copy'], ['Try again', 'retry']] }[mode] || [];
+      const actions = { replace: [['Replace', 'replace'], ['Try again', 'retry'], ['Copy', 'copy']], delete: [['Delete', 'replace'], ['Try again', 'retry']], draft: editable ? [['Insert', 'replace'], ['Copy', 'copy'], ['Try again', 'retry']] : [['Copy', 'copy'], ['Try again', 'retry']] }[mode] || [];
       for (const [label, action] of actions) {
         const b = document.createElement('button'); b.textContent = label;
-        if (mode === 'draft' && action === 'copy') b.className = 'go';
-        if (action === 'replace') { b.className = mode === 'delete' ? 'go del' : 'go'; b.disabled = !editable; b.title = editable ? label + ' the selected text' : 'This app does not let Atticus edit here. Use Copy.'; }
+        if (mode === 'draft' && action === 'copy' && !editable) b.className = 'go';
+        if (action === 'replace') { b.className = mode === 'delete' ? 'go del' : 'go'; b.disabled = !editable; b.title = !editable ? 'This app does not let Atticus edit here. Use Copy.' : mode === 'draft' ? 'Insert at your cursor' : label + ' the selected text'; }
         b.onclick = e => { e.stopPropagation(); post(action === 'copy' ? {copy: draft} : {[action]: true}); };
         bar.append(b);
       }
@@ -439,7 +439,8 @@
     replaced(ok) {
       const bar = turn()?.querySelector('.rewrite'); if (!bar) return;
       const note = document.createElement('div'); note.className = 'rewrite-note'; note.setAttribute('role', 'status');
-      note.textContent = ok ? (bar.dataset.mode === 'delete' ? 'Deleted' : 'Replaced') : 'Selection changed or this app cannot replace it. Select the text and ask again, or use Copy.';
+      const draft = bar.dataset.mode === 'draft';
+      note.textContent = ok ? ({delete: 'Deleted', draft: 'Inserted'}[bar.dataset.mode] || 'Replaced') : draft ? 'Your cursor moved. Click where it goes and ask again, or use Copy.' : 'Selection changed or this app cannot replace it. Select the text and ask again, or use Copy.';
       turn().querySelector('.rewrite-note')?.remove(); turn().append(note);
       bar.querySelector('.go').disabled = true; fit();
     },

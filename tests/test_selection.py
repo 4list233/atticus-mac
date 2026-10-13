@@ -142,7 +142,8 @@ func acceptsTyping() -> Bool {
 }
 precondition(acceptsTyping(), "typing rejected an editable custom role")
 canEdit = false; precondition(!acceptsTyping(), "typing accepted a read-only custom role"); canEdit = true
-precondition(TextSelection.capture() == nil, "empty selection became AI context")
+precondition(TextSelection.capture()?.caret == true, "a cursor in a text box was not kept for drafts")
+canEdit = false; precondition(TextSelection.capture() == nil, "an empty read-only spot became a draft target"); canEdit = true
 precondition(TextSelection.capture(enabled: true, allowEmpty: true)?.text == "", "typing rejected an empty field")
 selectedText = "old"; precondition(TextSelection.capture()?.text == "old")
 precondition(TextSelection.capture(enabled: false, allowEmpty: true) == nil)
@@ -163,6 +164,7 @@ struct Prefs { static func bool(_ key: String) -> Bool { true } }
 final class NSWorkspace { static let shared = NSWorkspace(); var frontmostApplication: String? = "Original" }
 struct TextSelection {
  let text: String
+ var caret: Bool { text.isEmpty }
  static func capture(_ app: String?, enabled: Bool) -> TextSelection? { Thread.sleep(forTimeInterval: 0.15); return TextSelection(text: app ?? "") }
 }
 final class Harness {

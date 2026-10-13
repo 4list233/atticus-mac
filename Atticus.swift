@@ -24,7 +24,7 @@ enum Prefs {
         "soundStart": "Pop", "soundDone": "Glass", "soundStop": "Tink", "volume": 0.16, "model": "haiku", "instant": true,
         "selection": true, "ahead": true, "aheadDelay": 0.7, "live": true, "screen": "auto", "openOn": "here", "workIn": "back", "miniScreen": true, "pageJS": false,
         "speak": false, "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
-        "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "stats": true, "tips": true, "askMe": true, "escalate": true, "meetingSummary": true, "escalateAuto": false, "input": "voice", "talkMode": "hold", "speechModel": "speech", "improve": false, "improveAsked": false, "boxW": 460, "boxH": 360]
+        "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "stats": true, "tips": true, "askMe": true, "escalate": true, "meetingSummary": true, "escalateAuto": false, "input": "voice", "talkMode": "hold", "speechModel": "speech", "improve": false, "improveAsked": false, "draftInsert": "ask", "boxW": 460, "boxH": 360]
     static var d: [String: Any] = defaults.merging(
         (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path)))) as? [String: Any] ?? [:]) { $1 }
     static func set(_ k: String, _ v: Any) {
@@ -107,9 +107,12 @@ struct TextSelection {
         AXUIElementSetMessagingTimeout(element, 0.15)
         guard axAttribute(element, kAXSubroleAttribute) as? String != kAXSecureTextFieldSubrole,
               let text = axAttribute(element, kAXSelectedTextAttribute) as? String,
-              allowEmpty || (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.count <= 6000) else { return nil }
-        return TextSelection(element: element, app: app, text: text, range: selectedRange(element))
+              allowEmpty || text.count <= 6000 else { return nil }
+        let s = TextSelection(element: element, app: app, text: text, range: selectedRange(element))
+        // nothing highlighted: keep it only as a cursor in a text box, where a draft can go
+        return allowEmpty || !s.caret || s.range != nil && (s.editable || s.pastable) ? s : nil
     }
+    var caret: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     static func selectedRange(_ element: AXUIElement) -> CFRange? {
         guard let value = axAttribute(element, kAXSelectedTextRangeAttribute), CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
         var range = CFRange()
@@ -607,19 +610,7 @@ final class App: NSObject, WKScriptMessageHandler {
             if let a = b["copy"] as? String, !a.isEmpty {
                 NSPasteboard.general.clearContents(); NSPasteboard.general.setString(a, forType: .string); js("copied")
             }
-            if b["replace"] != nil, !busy, let draft = replacement, mode != "draft" {
-                guard !replacing else { return }
-                guard Prefs.bool("selection"), let selection else { js("replaced", false); return }
-                replacing = true; let id = selectionID
-                selection.apply(mode == "delete" ? "" : draft, valid: { [weak self] in
-                    self?.selectionID == id && self?.replacing == true && Prefs.bool("selection") && !Prefs.bool("paused")
-                }) { [weak self] ok in
-                    guard let self, selectionID == id else { return }
-                    replacing = false
-                    if ok { replacement = nil; self.selection = nil }
-                    js("replaced", ok)
-                }
-            }
+            if b["replace"] != nil, !busy { applyReplacement() }
             if b["retry"] != nil, !busy, !engine.isRunning { typed(text, keep: true) }
             if let t = b["send"] as? String { typed(t, keep: true) }
             if b["mic"] != nil { fresh = false }
@@ -777,10 +768,12 @@ final class App: NSObject, WKScriptMessageHandler {
                 guard let self, self.selectionID == id else { return }
                 self.selectionPending = false; self.selection = Prefs.bool("selection") ? selected : nil
                 if let selection = self.selection { self.js("selected", selection.text) }
-                if self.warm != nil && self.warmSel != (self.selection?.text ?? "") { self.unwarm(); self.warm = self.spawn() }
+                if self.warm != nil && self.warmSel != self.selKey { self.unwarm(); self.warm = self.spawn() }
             }
         }
     }
+
+    var selKey: String { Prefs.bool("selection") ? selection.map { $0.caret ? "\u{1}" : $0.text } ?? "" : "" }   // \u{1}: no highlight, the cursor sits in a text box
 
     func start() {
         let replying = retryOffer && !askFile.isEmpty
@@ -983,6 +976,21 @@ final class App: NSObject, WKScriptMessageHandler {
         }
     }
 
+    // Replace / Delete / Insert: the text goes to the saved selection, or for a draft to the saved cursor.
+    func applyReplacement() {
+        guard let draft = replacement, !replacing else { return }
+        guard Prefs.bool("selection"), let selection, mode != "draft" || selection.caret else { js("replaced", false); return }
+        replacing = true; let id = selectionID
+        selection.apply(mode == "delete" ? "" : draft, valid: { [weak self] in
+            self?.selectionID == id && self?.replacing == true && Prefs.bool("selection") && !Prefs.bool("paused")
+        }) { [weak self] ok in
+            guard let self, selectionID == id else { return }
+            replacing = false
+            if ok { replacement = nil; self.selection = nil }
+            js("replaced", ok)
+        }
+    }
+
     func typed(_ t: String, keep: Bool = false) {   // the typing box (keep: it stays open for the next one)
         if retryOffer && !askFile.isEmpty { js("respond", t); return }
         guard !busy, !engine.isRunning else { return }
@@ -1032,8 +1040,8 @@ final class App: NSObject, WKScriptMessageHandler {
     // atticus.py --wait, started at key-down so Claude is up by the time the user lets go; run() hands it the words.
     func spawn() -> (p: Process, input: FileHandle, commit: String)? {
         let commit = NSTemporaryDirectory() + "atticus-commit-" + UUID().uuidString
-        warmSel = Prefs.bool("selection") ? selection?.text ?? "" : ""
-        let p = py(["--wait"], ["ATTICUS_UI": "1", "ATTICUS_FRONT": mine, "ATTICUS_COMMIT": commit, "ATTICUS_SELECTION": warmSel, "ATTICUS_FOCUS_GUARD": "1"])
+        warmSel = selKey
+        let p = py(["--wait"], ["ATTICUS_UI": "1", "ATTICUS_FRONT": mine, "ATTICUS_COMMIT": commit, "ATTICUS_SELECTION": warmSel == "\u{1}" ? "" : warmSel, "ATTICUS_CARET": warmSel == "\u{1}" ? "1" : "", "ATTICUS_FOCUS_GUARD": "1"])
         let pipe = Pipe(), inp = Pipe(); p.standardOutput = pipe; p.standardInput = inp
         var buffer = Data()
         let feed = { [weak self] (d: Data) in
@@ -1065,7 +1073,10 @@ final class App: NSObject, WKScriptMessageHandler {
                     if line.hasPrefix("↺ ") {
                         guard let j = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(2).utf8)) as? [String: Any], let draft = j["t"] as? String else { continue }
                         self.replacement = draft; self.mode = j["mode"] as? String ?? "replace"; self.pinned = true
-                        self.js("rewrite", [draft, self.mode, self.selection.map { $0.editable || $0.pastable } ?? false]); continue
+                        let target = self.selection.map { ($0.editable || $0.pastable) && (self.mode != "draft" || $0.caret) } ?? false
+                        self.js("rewrite", [draft, self.mode, target])
+                        if self.mode == "draft" && target && Prefs.str("draftInsert") == "auto" { self.applyReplacement() }
+                        continue
                     }
                     if line.hasPrefix("✓") {
                         let result = self.replacement.flatMap { $0.isEmpty ? nil : $0 } ?? String(line.dropFirst(2))
@@ -1101,7 +1112,7 @@ final class App: NSObject, WKScriptMessageHandler {
         mini.reset(); busy = true; answer = ""; try? FileManager.default.removeItem(atPath: focusFile)
         if !speculative { js("think") }
         if let w = warm, !w.p.isRunning { try? w.input.close(); warm = nil }
-        if warm != nil && warmSel != (Prefs.bool("selection") ? selection?.text ?? "" : "") { unwarm() }   // spawned before the selection changed
+        if warm != nil && warmSel != selKey { unwarm() }   // spawned before the selection changed
         guard let w = warm ?? spawn() else { busy = false; js("msg", "Could not start atticus.py"); return hide(after: 3) }
         warm = nil; proc = w.p; commit = w.commit
         if !speculative {
