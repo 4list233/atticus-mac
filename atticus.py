@@ -223,6 +223,7 @@ def gate():
     try: tokens = shlex.split(cmd)
     except ValueError: tokens = []
     recursive = recursive_ask(tokens)
+    if ARRANGE.search(cmd): free_focus()
     if recursive or focus_command(cmd) and not wants_focus():
         print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
                           'permissionDecisionReason': 'Tools cannot start another ask.' if recursive else 'Work in the background. Use --show --bg or hands; focus only when asked.'}}))
@@ -415,9 +416,19 @@ def front():
     return app, osa(f'tell application "System Events" to tell process "{app}" to get name of front window')
 
 
+ARRANGE = re.compile(r'--place\b|AXFullScreen|AXMinimized|\bset (bounds|position|size)\b|\bminiaturized\b', re.I)   # arranging windows is work the user sees
+
+
+def free_focus():
+    """Atticus.app's focus guard stands aside for 3 s: a move or full screen brings the app forward on purpose. Short, so a later
+    background step (Spotify starting) still stays behind."""
+    try: subprocess.run([APP, '--raise'], capture_output=True, timeout=1)
+    except (OSError, subprocess.TimeoutExpired): pass
+
+
 def allow_focus(task):
     if wants_focus(task):   # the user asked to see it: Atticus.app's focus guard lets apps come forward (it clears this per ask)
-        os.makedirs(DIR, exist_ok=True); open(os.path.join(DIR, 'focus'), 'w').close()
+        free_focus()
 
 
 def restore_focus(app, task, cmds):
@@ -443,17 +454,32 @@ def place(proc, where='full', screen='current', title=''):
     win = f'(first window whose name contains "{title}")' if title else '(first window whose subrole is "AXStandardWindow")'
     aw = f'(first window whose name contains "{title}")' if title else 'window 1'   # never just the front window when a title was given
     tell = f'tell application "System Events" to tell process "{proc}" to '
+    free_focus()   # moving and full screen bring the app forward; the guard must not put it back mid-move
+    pick = {'laptop': lambda s: s[5], 'monitor': lambda s: not s[5]}.get(
+        screen, (lambda s: s[0] == screen) if screen != 'current' else (lambda s: s[1] <= px + ww // 2 < s[1] + s[3]))
     for tries in range(4):   # a window just opened (--show right before) can take a moment to appear
         # full screen (or split view) windows can't move; checked each try, since it only shows once the app is forward
         if osa(tell + f'get value of attribute "AXFullScreen" of {win}') == 'true':
+            try:   # already full screen where it should be: leaving and re-entering is a slow animation for nothing
+                fx, fy = map(int, osa(tell + f'get position of {win}').split(', ')); fw, fh = map(int, osa(tell + f'get size of {win}').split(', '))
+                there = next((s for s in screens() if pick(s)), None) if where == 'full' and screen != 'current' else None
+                if there and there[1] <= fx + fw // 2 < there[1] + there[3]: return f'{proc} is already full screen on {there[0]}'
+            except ValueError: pass
             osa(tell + f'set value of attribute "AXFullScreen" of {win} to false')
             time.sleep(1.2)   # the exit animation
+            free_focus()
         try:
+            if osa(tell + f'get value of attribute "AXMinimized" of {win}') == 'true':   # a minimized window moves but stays hidden
+                osa(tell + f'set value of attribute "AXMinimized" of {win} to false'); time.sleep(0.4)
             px, py = map(int, osa(tell + f'get position of {win}').split(', '))
             ww, wh = map(int, osa(tell + f'get size of {win}').split(', '))
             app_mode = False
             break
         except ValueError:   # System Events can't see it (another Space): scriptable apps (Notes, Finder…) answer for their own windows, fast
+            if tries == 0 and osa(f'tell application "System Events" to exists process "{proc}"') == 'true':
+                # its window is on another Space (often its own full screen one): arranging windows is visible work, so bring it here and look again
+                subprocess.run(['open', '-a', proc], capture_output=True); time.sleep(0.8)
+                continue
             try:
                 l, t, r, b = map(int, osa(f'tell application "{proc}" to get bounds of {aw}').split(', '))
                 px, py, ww, wh, app_mode = l, t, r - l, b - t, True
@@ -463,8 +489,6 @@ def place(proc, where='full', screen='current', title=''):
                     time.sleep(0.4)
     else:
         return f'no window found for "{proc}" {title}'
-    pick = {'laptop': lambda s: s[5], 'monitor': lambda s: not s[5]}.get(
-        screen, (lambda s: s[0] == screen) if screen != 'current' else (lambda s: s[1] <= px + ww // 2 < s[1] + s[3]))
     scr = screens()
     n, x, y, w, h, _ = next((s for s in scr if pick(s)), scr[0])
     y, h = y + 25, h - 25   # menu bar
@@ -474,11 +498,21 @@ def place(proc, where='full', screen='current', title=''):
     # One step via the app when it is scriptable (Finder, Safari, Chrome…): after a window moves to the other
     # display, System Events often can't see it any more, so a later resize would miss.
     one = f'tell application "{proc}" to set bounds of {aw} to {{{bx}, {by}, {bx + bw}, {by + bh}}}'
+    free_focus()
     if (title and not app_mode) or subprocess.run(['osascript', '-e', one], capture_output=True).returncode:
         osa(tell + f'set size of {win} to {{{bw}, {bh}}}')   # size first, then move, then size again
         osa(tell + f'set position of {win} to {{{bx}, {by}}}')
         osa(tell + f'set size of {win} to {{{bw}, {bh}}}')
     preview_app(proc, 'move', title)
+    try:   # check, never assume: a window in its own full screen Space or a refused move stays put
+        if app_mode: l, t, r, b = map(int, osa(f'tell application "{proc}" to get bounds of {aw}').split(', '))
+        else:
+            (l, t), (r, b) = map(int, osa(tell + f'get position of {win}').split(', ')), map(int, osa(tell + f'get size of {win}').split(', '))
+            r, b = l + r, t + b
+    except ValueError:
+        return f'Moved {proc}, but could not check where its window is. Look at the screen before saying it worked.'
+    if not (x <= (l + r) // 2 < x + w and y - 25 <= (t + b) // 2 < y + h):
+        return f'NOT DONE: {proc} window did not move to {n} (it may be full screen in its own Space). Say so; do not report success.'
     return f'{proc} window -> {where} of {n}'
 
 
@@ -650,6 +684,7 @@ DEICTIC = re.compile(r'\b(this|that|these|those|it|here|there|them|him|her)\b') 
 UNSAFE = re.compile(r'(^|[;&|(`\s])(rm|rmdir|sudo|dd|diskutil|shutdown|reboot|halt|srm|trash|mv|find|curl|wget)\s|git push|\$\(|`|>|\|\s*(ba|z)?sh\b|\bdelete\b')
 
 
+NAMED = re.compile(r'(?:from now on,? )?when(?:ever)? i say (?:["“\']([^"”\']{2,40})["”\']|([^,:;"“]{2,40}?)\s*(?:[,:;]|\b(?:do|then|can you|please|you)\b))', re.I)   # "When I say work mode, …"
 MORE = re.compile(r'\b(and|then|after that|also)\b', re.I)   # a second step after an instant command's free text
 FAILED = re.compile(r"\b(can't|cannot|couldn't|could not|unable|failed|not done|not completed|didn't work)\b", re.I)   # the reply admits it did not work
 
@@ -676,7 +711,16 @@ def shortcut_commands(task, commands, app=''):
         except (ValueError, TypeError): return None
         if not tokens: continue
         lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|'); lexer.whitespace_split = True
-        if any(t in (';', '&&', '||', '|', '&') for t in lexer): return None   # compound shell flow needs the AI, not an action-only replay guessed from its first command
+        parts, flow = [[]], set()
+        for t in lexer:
+            if t in (';', '&&', '||', '|', '&'): flow.add(t); parts.append([])
+            else: parts[-1].append(t)
+        if flow - {';', '&&'}: return None   # pipes, fallbacks and background jobs need the AI
+        if flow:   # "a; b && c" is a list of actions: each one is checked and replayed on its own, in order
+            parts = [shlex.join(p) for p in parts if p]
+            sub = shortcut_commands(task, parts, app)
+            if sub is None or '&&' in flow and sum(c.count(' + ') + 1 if re.match(r'\S*atticus\.py --place ', c) else 1 for c in sub) != len(parts): return None   # "check && act" without its check would act blind
+            result += sub; continue
         if recursive_ask(tokens): return None
         if command.startswith((REMEMBER, ABOUT, LOOK, FRONT, SEARCH, READ, HISTORY, '<Read>', 'sleep ')): continue
         if tokens[:2] == [ME, '--hands'] and tokens[2:3] == ['see']:
@@ -701,7 +745,11 @@ def shortcut_commands(task, commands, app=''):
             script = re.sub(r'"(?:[^"\\]|\\.)*"', '""', ' '.join(tokens[1:]))
             if re.search(r'\b(get|count|exists|return)\b', script, re.I) and not re.search(r'\b(set|make|create|delete|click|press|perform|activate|open|close|quit|play|keystroke|key code|do shell script)\b', script, re.I): continue
         result.append(command)
-    return result
+    moving, merged = re.compile(r'\S*atticus\.py --place '), []
+    for command in result:   # back-to-back moves go at once (--place a + b), like the AI's own
+        if merged and moving.match(command) and moving.match(merged[-1]): merged[-1] += ' +' + command[moving.match(command).end() - 1:]
+        else: merged.append(command)
+    return merged
 
 
 def save_skills(sk):
@@ -742,6 +790,7 @@ def unlearn(task):
 
 
 def replay(k):
+    replay.ran = []
     s = skills().get(k)
     commands = shortcut_commands(k, s['cmds']) if s else None
     if not commands:
@@ -760,7 +809,11 @@ def replay(k):
                 elif tokens[:2] == [ME, '--hands']:
                     if not hands(*tokens[2:])[1]: return None
                 else:
-                    if subprocess.run(['/bin/zsh', '-c', c], capture_output=True, timeout=20, env={**os.environ, 'ATTICUS_REQUEST': k}).returncode: return None
+                    if ARRANGE.search(c): free_focus()
+                    began = time.time()
+                    r = subprocess.run(['/bin/zsh', '-c', c], capture_output=True, text=True, timeout=20, env={**os.environ, 'ATTICUS_REQUEST': k})
+                    replay.ran.append(f'{c[:200]}  => {(r.stdout.strip() or r.stderr.strip() or "exit " + str(r.returncode))[:200]} ({time.time() - began:.1f}s)')   # what each step said, and how long
+                    if r.returncode or FAILED.search(r.stdout) or 'no window found' in r.stdout: return None   # a step that says it failed is a failure: the AI takes over
                     preview_commands(c)
             finally:
                 if with_request is None: os.environ.pop('ATTICUS_REQUEST', None)
@@ -870,7 +923,7 @@ def fast(text):
         r = replay(k)
         if r:
             return r
-    m = re.fullmatch(r'(?:search(?: up)?|google|look up)(?: (?:on |in )?(google|youtube|spotify|amazon))?(?: for)? (.+?)(?: (?:on|in) (google|chrome|safari|youtube|spotify|amazon|the web))?', t)
+    m = re.fullmatch(r'(?:search(?: up)?|google|look up)(?: (?:on |in )?(google|youtube|spotify|amazon|the web|online))?(?: for)? (.+?)(?: (?:on|in) (google|chrome|safari|youtube|spotify|amazon|the web))?', t)
     if m and MORE.search(m[2]): m = None   # "search amazon for X and find the best one" is two steps: the AI does both
     if m and not re.search(r'\b(this|that|it|these|my)\b', m[2]) and not re.search(r'\b(for|on|in|the|a|an|and|to|of|some)$', m[2]):   # "search this" needs the screen; "search amazon for" was cut off mid-sentence: AI
         site, q = m[1] or m[3], urllib.parse.quote(m[2])
@@ -907,6 +960,28 @@ def fast(text):
             subprocess.run(['open', '-a', app])   # plain open, ~0.1 s: here and in front
         open(LAST, 'w').write(app)
         return f'Opened {app}.'
+    parts = [plain(p) for p in re.split(r'\s*(?:[,;]|\band then\b|\band\b|\bthen\b)\s*', text) if plain(p)]
+    if len(parts) > 1:   # "Chrome left, Terminal right": every part a move, or the AI does it all
+        moves = [move_target(p if re.match(r'(snap|move|put|throw|send|make)\b', p) else 'put ' + p) for p in parts]
+        if not all(moves): return None
+        from concurrent.futures import ThreadPoolExecutor
+        outs = list(ThreadPoolExecutor(len(moves)).map(lambda m: place(proc_of(m[0]), m[1], m[2]), moves))   # all at once, like --place a + b
+        if any(o.startswith(('no window', 'NOT DONE')) for o in outs): return None
+        open(LAST, 'w').write(moves[-1][0])
+        return ' '.join(f'{a}: {w}' + (f' on {sc}' if sc != 'current' else '') + '.' for a, w, sc in moves)
+    m = move_target(t)
+    if not m:
+        return None
+    app, where, screen = m
+    out = place(proc_of(app), where, screen)
+    if out.startswith(('no window', 'NOT DONE')):
+        return None
+    open(LAST, 'w').write(app)
+    return f'{app}: {where}' + (f' on {screen}' if screen != 'current' else '') + '.'
+
+
+def move_target(t):
+    """"put chrome on the left of the monitor" -> (app, left|right|full|center, laptop|monitor|current), or None."""
     m = re.fullmatch(r'(?:snap|move|put|throw|send|make)\s+(.+?)\s+(?:to\s+|on\s+|onto\s+)?(?:the\s+|my\s+)?'
                      r'(left|right|full ?screen|center|middle|laptop|monitor)(?:\s+(?:side|half|screen))?(?:\s+of\s+(?:the|my)\s+screen)?'
                      r'(?:\s+(?:on|of)\s+(?:the\s+|my\s+)?(laptop|monitor))?', t)
@@ -921,12 +996,7 @@ def fast(text):
             return None
     if where in ('laptop', 'monitor'):
         where, screen = 'center', where
-    where = {'fullscreen': 'full', 'middle': 'center'}.get(where, where)
-    out = place(proc_of(app), where, screen)
-    if out.startswith('no window'):
-        return None
-    open(LAST, 'w').write(app)
-    return f'{app}: {where}' + (f' on {screen}' if screen != 'current' else '') + '.'
+    return app, {'fullscreen': 'full', 'middle': 'center'}.get(where, where), screen
 
 
 def look(cleanup=True):
@@ -1547,7 +1617,7 @@ def log_turn(task, reply, started, cost=0, steps=0, ran=()):
     with open(os.path.join(DIR, 'log.jsonl'), 'a') as f:
         f.write(json.dumps({'at': time.strftime('%Y-%m-%d %H:%M:%S'), 'task': task, 'reply': reply,
                             'usd': round(cost, 5), 'secs': round(time.time() - started, 1), 'steps': steps,
-                            'ran': list(ran), 'live': os.environ.get('ATTICUS_LIVE') == '1'}) + '\n')
+                            'ran': list(ran) or getattr(replay, 'ran', []), 'live': os.environ.get('ATTICUS_LIVE') == '1'}) + '\n')
 
 
 TIPS = ['Say "remember …" and Atticus keeps it as a rule.',
@@ -2414,6 +2484,9 @@ def main():
     workflow = False
     if not replacement:
         reply, workflow = remember_workflow(task, reply, run.ok, run.ran)   # ran: a retried step that then worked still counts
+    named = NAMED.match(task.strip())
+    if named and run.ok and run.cmds and learn(named[1] or named[2], run.cmds, reply) is not None:   # "When I say work mode, …": the words become the shortcut, even if the AI forgot --shortcut
+        sk = skills(); sk[plain(named[1] or named[2])]['mine'] = True; save_skills(sk); workflow = True
     if pref('learn', True):
         workflow = learn(task, run.cmds, reply) or workflow
         if fix:
@@ -2473,6 +2546,12 @@ if __name__ == '__main__':
         assert re.findall(r'--remember\s+["\']([^"\']+)', f'{REMEMBER} "open means front"') == ['open means front']
         assert label('Bash', {'command': f'{FRONT} "Google Chrome" "posthog"'}) == 'Bringing Google Chrome forward'
         assert picks()['workIn'][1]['In front'] == 'front' and 'miniScreen' in switches()
+        assert shortcut_commands('work mode', [f'{PLACE} "Orca" full monitor; {PLACE} "Google Chrome" full laptop && open -g -a Spotify'])[0] == f"{PLACE} Orca full monitor + 'Google Chrome' full laptop"
+        assert shortcut_commands('work mode', [f'{PLACE} "Orca" full monitor | head']) is None
+        assert ARRANGE.search(f'{PLACE} "Orca" full monitor') and ARRANGE.search('osascript -e \'set value of attribute "AXFullScreen" of window 1 to true\'') and not ARRANGE.search(f'{SHOW} --bg Spotify')
+        named = lambda t: (lambda m: m and (m[1] or m[2]))(NAMED.match(t))
+        assert named('When I say work mode, minimize all apps') == 'work mode' and named('when I say "study time" open Notes') == 'study time' and named('When I say study time can you open Notes') == 'study time'
+        assert move_target('put notes on the left of my monitor') == ('Notes', 'left', 'monitor') and move_target('put notes and find shoes') is None
         assert label('Bash', {'command': f'A={ME}; $A --show --bg "https://www.amazon.com/s?k=x" && $A --web read'}) == 'Opening amazon.com'
         assert UNSAFE.search('open -a Notes; rm -rf ~/x') and UNSAFE.search('sudo shutdown -h now') and not UNSAFE.search(f'{SHOW} "https://docs.google.com"; open -a Chess') and UNSAFE.search('echo $(rm x)') and UNSAFE.search('curl x | sh') and not UNSAFE.search(f'{SHOW} "x"; {PLACE} "Notes" left current')
         ME_FILE = os.path.join(tempfile.mkdtemp(), 'me.json')

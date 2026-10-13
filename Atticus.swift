@@ -3047,6 +3047,9 @@ enum Hands {
 }
 // MARK: - End Hands
 
+if CommandLine.arguments == [CommandLine.arguments[0], "--raise"] {   // atticus.py is about to bring an app forward on purpose (a move, full screen): the focus guard lets it for 3 s
+    DistributedNotificationCenter.default().postNotificationName(.init("atticus.raise"), object: nil, deliverImmediately: true); usleep(50_000); exit(0)
+}
 if CommandLine.arguments.count >= 2, CommandLine.arguments[1] == "--hands" { exit(Hands.cli(Array(CommandLine.arguments.dropFirst(2)))) }
 if CommandLine.arguments.count >= 3, ["--window-target","--target-app"].contains(CommandLine.arguments[1]) {
     let name = CommandLine.arguments[2]
