@@ -1,0 +1,34 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Onboarding checks</title><style>body{font:14px system-ui;margin:24px}iframe{width:640px;height:612px;border:0}.pass{color:green}.fail{color:red}pre{white-space:pre-wrap}</style></head><body><pre id="results">Running…</pre><iframe id="preview" title="Onboarding"></iframe><iframe id="reduced" title="Reduced motion"></iframe>
+<script type="module">
+const results=document.getElementById('results'),checks=[],messages=[],wait=ms=>new Promise(r=>setTimeout(r,ms));
+const assert=(ok,name)=>{if(!ok)throw Error(name);checks.push('✓ '+name)};
+try{
+const html=await(await fetch('../ui/onboarding.html')).text(),orbs=await(await fetch('../ui/orbs.js')).text();
+async function load(id,reduce){
+ const f=document.getElementById(id),bridge=`<script>const media=window.matchMedia;window.matchMedia=q=>q.includes('prefers-reduced-motion')?{matches:${reduce}}:media(q);window.framesRequested=0;const raf=window.requestAnimationFrame;window.requestAnimationFrame=f=>{framesRequested++;return raf(f)};window.webkit={messageHandlers:{ob:{postMessage:m=>parent.postMessage(m,'*')}}};<\/script>`;
+ f.srcdoc=html.replace('/*ORBS*/',()=>orbs).replace('<head>','<head>'+bridge);
+ for(let i=0;i<100&&!f.contentWindow.ob;i++)await wait(30);
+ assert(!!f.contentWindow.ob,'Onboarding initializes '+id);return f.contentWindow;
+}
+window.addEventListener('message',e=>messages.push(e.data));
+const w=await load('preview',false),d=w.document,$=id=>d.getElementById(id);
+function page(id){
+ const active=d.querySelector('.page.on');assert(active.id===id,'Page '+id+' is active');
+ for(const p of d.querySelectorAll('.page'))assert(p.inert===(p!==active)&&p.getAttribute('aria-hidden')===String(p!==active),'Accessible state '+id+' / '+p.id);
+}
+async function go(id){d.querySelector(`.page.on [data-go="${id}"]`).click();await wait(750);page(id);
+ for(const e of $(''+id).children){const r=e.getBoundingClientRect();if(!e.hidden)assert(r.left>=0&&r.right<=640&&r.top>=0&&r.bottom<=612,'Fits window '+id+' / '+(e.id||e.tagName))}
+}
+page('welcome');await go('perms');await go('try');assert($('try-next').hidden,'Try Next waits for shortcut');
+w.ob.tried();await wait(200);assert(!$('try-next').hidden&&$('try-skip').hidden,'Shortcut enables Next');
+await go('mac');assert(!!$('mac-mini')&&$('mac').textContent.includes('background'),'Mac preview explains background work and live mini screen');await go('learn');assert($('learn').textContent.includes('remember'),'Setup teaches that Atticus remembers');await go('text');await go('point');w.ob.prefs({pointer:true,meeting:false});
+assert(d.querySelector('[data-k="pointer"]').checked&&!d.querySelector('[data-k="meeting"]').checked,'Switches reflect prefs');
+d.querySelector('[data-k="pointer"]').click();await wait(30);assert(messages.some(m=>m.do==='set'&&m.k==='pointer'&&m.v==='false'),'Switch sends native preference');
+await go('meeting');assert($('meeting').textContent.includes('Settings → Meetings')&&!!$('mt-archive'),'Meeting preview includes the local archive');await go('done');assert($('feedback-note').textContent.includes('Report feedback from the menu bar'),'Last page mentions feedback quietly');assert(w.getComputedStyle($('done-check').querySelector('circle')).opacity==='1','Done check finishes');
+const reduced=await load('reduced',true);await wait(1500);
+assert(reduced.framesRequested===0,'Reduced Motion renders orb once');
+assert(!reduced.document.querySelector('.key.down'),'Reduced Motion stops welcome key loop');
+assert(reduced.document.getElementById('macstage').classList.contains('snapped')&&reduced.document.getElementById('mt-ans').classList.contains('on'),'Reduced Motion shows final previews');
+results.textContent=checks.join('\n')+`\n${checks.length} checks passed.`;results.className='pass';
+}catch(e){results.textContent=checks.join('\n')+'\n✗ '+e.message;results.className='fail'}
+</script></body></html>

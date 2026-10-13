@@ -122,18 +122,157 @@ if CommandLine.arguments.contains("--benchmark") {
 
 @unittest.skipUnless(sys.platform == 'darwin', 'macOS Swift worker regression')
 class NativeTests(unittest.TestCase):
+    def test_replace_checks_original_text_range_and_app(self):
+        source = (ROOT / 'Atticus.swift').read_text()
+        method = source[source.index('    func replace(_ draft:'):source.index('// Sees the mouse')]
+        # Reuse the production method with fake AX writes; never address a real app.
+        swift = """import Foundation
+import CoreFoundation
+let kAXSelectedTextAttribute = "selected"
+enum Status { case success, failure }
+var currentText = "old", currentRange: CFRange? = CFRange(location: 3, length: 3), writes = 0
+func axAttribute(_ element: Int, _ name: String) -> String? { currentText }
+func AXUIElementSetAttributeValue(_ e: Int, _ name: CFString, _ text: CFString) -> Status { writes += 1; return .success }
+final class FakeApp { var isTerminated = false }
+struct Harness {
+ let element = 1, app = FakeApp(), text = "old", range: CFRange? = CFRange(location: 3, length: 3)
+ static func selectedRange(_ element: Int) -> CFRange? { currentRange }
+""" + method + """
+let h = Harness()
+precondition(h.replace("draft") && writes == 1)
+currentText = "new"; precondition(!h.replace("draft") && writes == 1)
+currentText = "old"; currentRange = CFRange(location: 4, length: 3)
+precondition(!h.replace("draft") && writes == 1)
+currentRange = nil; precondition(!h.replace("draft") && writes == 1)
+currentRange = CFRange(location: 3, length: 3); h.app.isTerminated = true
+precondition(!h.replace("draft") && writes == 1)
+print("selection regressions ok")
+"""
+        with tempfile.TemporaryDirectory() as path:
+            file = Path(path) / 'selection.swift'; file.write_text(swift)
+            binary = Path(path) / 'selection'
+            compiled = subprocess.run(['swiftc', str(file), '-o', str(binary)], capture_output=True, text=True)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            result = subprocess.run([str(binary)], check=True, capture_output=True, text=True)
+            self.assertIn('selection regressions ok', result.stdout)
+
+    def test_meeting_size_stays_on_small_and_secondary_displays(self):
+        source = (ROOT / 'Atticus.swift').read_text()
+        size = source[source.index('    func size(_ h: Double'):source.index('    func compact(', source.index('    func size(_ h: Double'))]
+        swift = """import Cocoa
+final class NSScreen {
+ static var main: NSScreen? = NSScreen()
+ var visibleFrame = NSRect(x: -800, y: 100, width: 600, height: 400)
+}
+final class NSWorkspace { static let shared = NSWorkspace(); var accessibilityDisplayShouldReduceMotion = true }
+final class NSAnimationContext {
+ var duration: Double = 0
+ static var done: (() -> Void)?
+ static func runAnimationGroup(_ changes: (NSAnimationContext) -> Void, completionHandler: @escaping () -> Void) { changes(NSAnimationContext()); done = completionHandler }
+}
+final class Panel {
+ var screen = NSScreen.main, frame = NSRect(x: -552, y: 258, width: 340, height: 230)
+ func setFrame(_ f: NSRect, display: Bool, animate: Bool) { frame = f }
+ func setFrame(_ f: NSRect, display: Bool) { frame = f }
+ func animator() -> Panel { self }
+}
+final class Harness { var panel: Panel? = Panel(); var running = true, generation = 0; var expanded = NSSize(width: 340, height: 650), minimized = false, resizing = false
+ var reveals: [Int] = []; func js(_ name: String, _ value: Int) { if name == "settled" { reveals.append(value) } }
+""" + size + """}
+let h = Harness(), p = h.panel!
+let top = p.frame.maxY
+h.size(200); precondition(p.frame.maxY == top && p.frame.height == 200, "top edge moved")
+h.size(200, reveal: 1); precondition(h.reveals == [1], "unchanged frame lost reveal")
+h.size(210, reveal: 2); precondition(h.reveals == [1, 2], "Reduce Motion lost reveal")
+NSWorkspace.shared.accessibilityDisplayShouldReduceMotion = false
+h.size(220, reveal: 3); precondition(h.reveals == [1, 2], "text revealed during expansion")
+NSAnimationContext.done!(); precondition(h.reveals == [1, 2, 3], "completion lost reveal")
+h.size(230, reveal: 4); h.generation += 1; NSAnimationContext.done!(); precondition(h.reveals == [1, 2, 3], "cancelled animation revealed a new meeting")
+NSWorkspace.shared.accessibilityDisplayShouldReduceMotion = true
+h.size(0); precondition(p.frame.height == 376 && p.screen!.visibleFrame.contains(p.frame), "secondary display overflow")
+h.resize(440, 500); precondition(p.frame.width == 440 && p.frame.height == 376, "resize ignored display limits")
+h.minimized = true; h.size(44); precondition(p.frame.width == 116 && p.frame.height == 44, "compact size wrong")
+h.minimized = false; h.size(0); precondition(p.frame.width == 440 && p.frame.height == 376, "restore forgot expanded size")
+p.screen!.visibleFrame = NSRect(x: 0, y: 0, width: 300, height: 190)
+h.size(200); precondition(p.frame.width == 276 && p.frame.height == 166 && p.screen!.visibleFrame.contains(p.frame), "small display overflow")
+print("meeting size ok")
+"""
+        with tempfile.TemporaryDirectory() as root:
+            file = Path(root) / 'size.swift'; file.write_text(swift)
+            binary = Path(root) / 'size'
+            compiled = subprocess.run(['swiftc', str(file), '-o', str(binary)], capture_output=True, text=True)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_calendar_dismissal_and_updates_preserve_open_meeting(self):
+        source = (ROOT / 'Atticus.swift').read_text()
+        timer = source[source.index('    let g = meeting.generation', source.index('func checkCalendar()')):source.index('\n}', source.index('    let g = meeting.generation', source.index('func checkCalendar()')))]
+        context = next(line for line in source.splitlines() if 'let context = [e.title' in line)
+        idle = source[source.index('    static func restartWhenIdle()'):source.index('    static func schedule()')]
+        swift = """import Foundation
+final class Queue {
+ var pending: [() -> Void] = []
+ func asyncAfter(deadline: DispatchTime, execute work: @escaping () -> Void) { pending.append(work) }
+}
+enum DispatchQueue { static let main = Queue() }
+final class Meeting {
+ var generation = 1, running = false, nudge: Int? = 1, panel: Int? = 1, discards = 0
+ func discard() { generation += 1; nudge = nil; panel = nil; discards += 1 }
+}
+let meeting = Meeting()
+func scheduleNudge() {
+""" + timer + """
+}
+struct Event { var title: String? = "Call", location: String? = "Room 2", url: URL? = URL(string: "https://meet.google.com/abc"), notes: String? }
+let e = Event(), people = ["Dana"]
+""" + context + """
+precondition(context.contains("Room 2") && context.contains("https://meet.google.com/abc"), "calendar link/location lost")
+scheduleNudge(); meeting.discard(); meeting.generation += 1; meeting.nudge = 2; meeting.panel = 2
+DispatchQueue.main.pending.removeFirst()(); precondition(meeting.panel == 2, "old timer dismissed new nudge")
+scheduleNudge(); DispatchQueue.main.pending.removeFirst()(); precondition(meeting.panel == nil, "current nudge did not dismiss")
+final class Engine { var isRunning = false }
+final class Voice { var isRunning = false }
+final class App { var busy = false, engine = Engine(), voice: Voice? }
+final class Window { var isKeyWindow = false }
+final class Settings { var win: Window? }
+let app = App(), settings = Settings(), onboarding = Settings()
+var restarts = 0
+func relaunchSoon() { restarts += 1 }
+enum Updater {
+""" + idle + """}
+meeting.panel = 1; Updater.restartWhenIdle(); precondition(restarts == 0, "update interrupted unsaved meeting")
+meeting.panel = nil; DispatchQueue.main.pending.removeFirst()(); precondition(restarts == 1, "update never resumed")
+print("calendar/update safety ok")
+"""
+        with tempfile.TemporaryDirectory() as root:
+            file = Path(root) / 'calendar.swift'; file.write_text(swift)
+            binary = Path(root) / 'calendar'
+            compiled = subprocess.run(['swiftc', str(file), '-o', str(binary)], capture_output=True, text=True)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_shortcut_states_and_recording_limit(self):
         source = (ROOT / 'Atticus.swift').read_text()
         methods = source[source.index('    func shortcut('):source.index('    func review(')]
-        methods += source[source.index('    func recordingLimit('):source.index('    func start()')]
+        methods += source[source.index('    func recordingLimit('):source.index('    func captureSelection()')]
+        methods += source[source.index('    func stopOfferInput()'):source.index('    func dismiss()')]
         methods += source[source.index('    func escape()'):source.index('    func hush()')]
         stop = source[source.index('    func stop()'):source.index('        engine.stop(); engine.inputNode.removeTap', source.index('    func stop()'))]
         swift = """import Foundation
 struct Prefs { static var paused = false, toggle = false; static func bool(_ k: String) -> Bool { paused } }
-final class Engine { var isRunning = false }
+final class MeetingStub { var running = false, focuses = 0; func focus() { focuses += 1 } }
+let meeting = MeetingStub()
+final class Node { var removed=false; func removeTap(onBus: Int) {removed=true} }
+final class Engine { var isRunning = false; let inputNode=Node(); func stop() {isRunning=false} }
+final class Input { var cancelled=false; func finish() {cancelled=true}; func cancel() {cancelled=true} }
+final class Analyzer { func cancelAndFinishNow() async {} }
 final class Panel { var isVisible = true; func makeKey() {}; func makeFirstResponder(_ value: Int) {} }
 final class Harness {
     let engine = Engine(), panel = Panel()
+    var retryOffer=false,offerText:String?,askFile="fixture-answer",listenID=0,stops=0
+    var feed:Input?,reading:Input?,quiet:Input?,analyzer:Analyzer?
     var shortcutDown = false, toggleTalk = false, clickTalk = false, busy = false, speaking = false
     var events: [String] = [], text = "hello", began = Date(), wasUp = false, fresh = false, web = 0
     func start() { events.append("start"); engine.isRunning = true; toggleTalk = Prefs.toggle }
@@ -147,6 +286,10 @@ final class Harness {
     func js(_ f: String, _ text: Any) {}
     func hide(after: Double) {}
 """ + methods + stop + '        events.append("send"); engine.isRunning = false; busy = true; toggleTalk = false\n    }\n' + """}
+meeting.running = true
+let meetingShortcut = Harness(); meetingShortcut.shortcut(true); meetingShortcut.shortcut(false)
+precondition(!meetingShortcut.engine.isRunning && meeting.focuses == 1 && meetingShortcut.events.isEmpty, "meeting shortcut started the microphone")
+meeting.running = false
 Prefs.toggle = true
 let toggle = Harness(); toggle.shortcut(true); toggle.shortcut(true)
 precondition(toggle.events == ["start"], "key repeat toggled twice")
@@ -163,6 +306,15 @@ Prefs.paused = true; let paused = Harness(); paused.shortcut(true); paused.short
 Prefs.paused = false; Prefs.toggle = true
 let escape = Harness(); escape.shortcut(true); escape.escape(); precondition(!escape.events.contains("send") && !escape.engine.isRunning, "Esc submitted instead of cancelling")
 let limit = Harness(); limit.shortcut(true); limit.recordingLimit(); precondition(limit.events.contains("review") && !limit.events.contains("send"), "timeout submitted toggle request")
+let reply=Harness();reply.retryOffer=true;reply.busy=true;reply.offerText="Original task";reply.text="retry";reply.engine.isRunning=true;reply.feed=Input();reply.reading=Input()
+reply.stopOfferInput()
+precondition(reply.engine.inputNode.removed, "reply tap stayed installed")
+let failedStart=Harness();failedStart.retryOffer=true;failedStart.busy=true;failedStart.stopOfferInput();precondition(failedStart.engine.inputNode.removed && failedStart.busy && failedStart.askFile=="fixture-answer", "failed engine start left its tap or lost its worker")
+precondition(!reply.engine.isRunning && reply.text=="Original task" && reply.offerText==nil && reply.busy && reply.retryOffer && reply.askFile=="fixture-answer", "stopping reply input lost the waiting task")
+precondition(reply.feed!.cancelled && reply.reading!.cancelled, "reply input stayed alive")
+reply.shortcut(true);precondition(reply.events==["start"], "retry shortcut cancelled its worker")
+reply.offerText="Original task";reply.text="partial retry";reply.recordingLimit()
+precondition(reply.busy && reply.askFile=="fixture-answer" && reply.text=="Original task" && !reply.events.contains("send"), "reply recording limit sent or cancelled the request")
 print("shortcut regressions ok")
 """
         with tempfile.TemporaryDirectory() as path:

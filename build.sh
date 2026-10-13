@@ -28,13 +28,23 @@ cat > "$APP/Contents/Info.plist" <<P
 <key>LSUIElement</key><true/>
 <key>NSMicrophoneUsageDescription</key><string>Atticus listens when you use its shortcut or microphone button.</string>
 <key>NSAppleEventsUsageDescription</key><string>Atticus controls apps like Finder, Chrome and Music when you ask it to.</string>
+<key>NSCalendarsFullAccessUsageDescription</key><string>Meeting Copilot checks for calls starting soon so it can offer to get ready. Nothing leaves your Mac.</string>
 <key>NSSpeechRecognitionUsageDescription</key><string>Atticus turns your words into text on this Mac.</string>
 </dict></plist>
 P
 mv "$STAGE/Atticus" "$APP/Contents/MacOS/Atticus"
 # With a code-signing identity named "Atticus Local Signing" in the keychain, macOS keeps permissions across
-# rebuilds; without one it signs ad hoc, and permissions must be granted again after each build.
+# rebuilds and auto-updates; ad hoc signing would ask for every permission again after each one. So make it once.
 ID=$(security find-identity -p codesigning | awk '/Atticus Local Signing/{print $2; exit}')
+if [ -z "$ID" ]; then
+  K=$(mktemp -d)
+  /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 7300 -subj "/CN=Atticus Local Signing" -addext "extendedKeyUsage=critical,codeSigning" \
+    -addext "keyUsage=critical,digitalSignature" -keyout "$K/k.pem" -out "$K/c.pem" 2>/dev/null &&
+  /usr/bin/openssl pkcs12 -export -inkey "$K/k.pem" -in "$K/c.pem" -out "$K/a.p12" -passout pass:atticus 2>/dev/null &&
+  security import "$K/a.p12" -P atticus -T /usr/bin/codesign >/dev/null 2>&1 || true   # fails quietly: ad hoc still works
+  rm -rf "$K"
+  ID=$(security find-identity -p codesigning | awk '/Atticus Local Signing/{print $2; exit}')
+fi
 codesign -s "${ID:--}" --force "$APP"
 # register with macOS, or System Settings can't list it for permissions
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"

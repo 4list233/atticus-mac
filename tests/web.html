@@ -1,0 +1,27 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Web control checks</title></head><body><h1>Web control checks</h1><pre id="results">Running…</pre>
+<iframe id="page" srcdoc='<p>Order summary</p><a href="#x">Docs</a><button aria-label="Send">✈</button><button style="display:none">Hidden</button><input placeholder="Email"><input type="password" value="hunter2"><textarea placeholder="Note"></textarea><select><option>Small</option><option>Large</option></select><div contenteditable="true" aria-label="Message"></div><button id="b">Go</button><script>var seen=[];document.querySelector("input").addEventListener("input",e=>seen.push(e.target.value));document.getElementById("b").addEventListener("mousedown",()=>seen.push("down"))</script>'></iframe>
+<script type="module">
+const results=document.getElementById('results'),checks=[];
+const assert=(v,name)=>{if(!v)throw Error(name);checks.push('✓ '+name)};
+try{
+  const fr=document.getElementById('page');if(fr.contentDocument?.readyState!=='complete'||!fr.contentWindow.seen)await new Promise(r=>fr.onload=r);
+  const w=document.getElementById('page').contentWindow,f=w.eval(await(await fetch('../ui/web.js')).text());
+  const page=f('read');
+  const ready=JSON.parse(f('ready'));assert(ready.ready&&ready.signature&&!ready.signature.includes('hunter2'),'Readiness returns a compact state, not private page text');
+  w.document.body.setAttribute('aria-busy','true');assert(!JSON.parse(f('ready')).ready,'Readiness waits for a visibly busy page');w.document.body.removeAttribute('aria-busy');
+  assert(page.includes('Order summary'),'Read returns the page text');
+  assert(/\d+ link: Docs/.test(page)&&/\d+ button: Send/.test(page),'Links and labelled buttons are numbered');
+  assert(!page.includes('Hidden'),'Hidden controls are skipped');
+  assert(!page.includes('hunter2')&&/\d+ box: password/.test(page),'A password is never read out');
+  assert(!f('name',page.match(/(\d+) box: password/)[1]).includes('hunter2'),'A password never shows in the Allow check');
+  const num=label=>page.match(new RegExp('(\\d+) \\w+: '+label))[1];
+  assert(f('fill',num('Email'),'a@b.co').startsWith('Filled')&&w.document.querySelector('input').value==='a@b.co'&&w.seen.includes('a@b.co'),'Fill sets a box and fires input');
+  f('fill',num('Message'),'Hi there');assert(w.document.querySelector('[contenteditable]').innerText==='Hi there','Fill types into a rich editor');
+  f('fill',num('Small'),'large');assert(w.document.querySelector('select').value==='Large','Fill picks a menu option by text');
+  const c=JSON.parse(f('name',num('Send')));assert(c.short==='Send'&&c.url===w.location.href,'Name reads a control and its tab before a click');
+  assert(f('click',num('Go'),'https://elsewhere.test/').startsWith('The tab changed'),'A click in a different tab is refused');
+  f('click',num('Go'));assert(w.seen.includes('down'),'Click sends the full press');
+  assert(f('click','999').startsWith('No control'),'A stale number asks for a fresh read');
+  results.className='pass';results.textContent=checks.join('\n');
+}catch(e){results.className='fail';results.textContent=checks.concat('✗ '+e.message).join('\n')}
+</script></body></html>

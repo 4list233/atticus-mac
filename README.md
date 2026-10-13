@@ -13,6 +13,8 @@
 - **No API key.** It runs on the Claude Pro or Max plan you already have, through Claude Code. Nothing to sign up for, no key to paste, no extra bill.
 - **Remembers you.** Say "remember…" and every ask after that knows it. It picks up who you are (your name, your apps) and fixes its own mistakes when you correct it.
 
+> **On Windows?** [@FindlayHi](https://github.com/FindlayHi) built **[Atticus for Windows](https://github.com/FindlayHi/atticus-windows)**, with integrations for Home Assistant, Jellyfin, Immich and more.
+
 <p align="center">
   <img alt="macOS" src="https://img.shields.io/badge/macOS-1d1d1f?style=for-the-badge&logo=apple&logoColor=white">
   <img alt="Swift" src="https://img.shields.io/badge/Swift-1d1d1f?style=for-the-badge&logo=swift&logoColor=white">
@@ -51,7 +53,7 @@ https://github.com/user-attachments/assets/e3444422-02e8-4dd7-bb44-d39f2b0f2bef
 </tr>
 <tr>
 <td valign="top"><h3>Private ears</h3>Apple's on-device speech turns your voice into text. Audio never leaves your Mac.</td>
-<td valign="top"><h3>Your whole Mac</h3>Apps, windows, files, settings, the web and the screen, with <a href="https://github.com/openclaw/Peekaboo">Peekaboo</a> for clicking inside any app.</td>
+<td valign="top"><h3>Your whole Mac</h3>Apps, windows, files, settings, the web and the screen, with native Accessibility controls for clicking, scrolling and typing inside apps.</td>
 <td valign="top"><h3>Safe by default</h3>Safe mode runs the AI's commands in Claude Code's sandbox: they can only write to a scratch folder. Before anything deletes, sends, buys or changes a file, Atticus asks you first. <code>rm</code>, <code>sudo</code>, disk tools and shutdown are always blocked. Every exact command is in the ask log.</td>
 </tr>
 </table>
@@ -62,11 +64,25 @@ https://github.com/user-attachments/assets/e3444422-02e8-4dd7-bb44-d39f2b0f2bef
 
 Choose **Hold to talk** or **Press to toggle** in Settings → General → Shortcut behavior. Hold mode sends when you release. Toggle mode starts on the first press and sends on the second; pauses keep listening. Pressing the shortcut while Atticus answers stops it; during spoken playback it stops the voice. Esc cancels listening without sending. Toggle recordings reach a review screen after 60 seconds, rather than sending automatically. Closing the overlay or pausing Atticus stops its microphone, workers and voice.
 
-Click any answer to copy it, including earlier answers still shown in the box. Click your request to edit and ask again, or press ↑ in an empty typing box to recall the latest request. The overlay stays within your display when resized and respects Reduce Motion.
+Click any answer to copy it, including earlier answers still shown in the box. Click your request to edit and ask again, or press ↑ in an empty typing box to recall the latest request. The overlay stays within your display when resized and respects Reduce Motion. While Atticus works in a covered window, another Space, or another display, a live mini screen shows that window; the steps below show the action. The finished view stays until the next ask, typing, or a click on it. Click it to open that exact window. The preview stays on your Mac, is never sent to the AI or saved, and stops streaming when the task ends. Without Screen Recording permission, the same card shows the app icon and window title.
 
 Apple's final transcript confirms each voice request before AI tools or learned shortcuts run. AI reasoning can start during a pause, but its tools wait for confirmation. If speech finalization takes too long, Atticus offers the partial text for review. Instant commands still skip the AI entirely. Supported built-in commands run mid-sentence, before you send, with Instant commands and Act while I’m talking on (Settings → Intelligence). Learned shortcuts wait for confirmed words.
 
 </details>
+
+## Meeting Copilot
+
+Enable Meeting Copilot in Settings → Meetings → Meeting Copilot settings, then open it for a call or try the demo. Drag its header or empty background in any state; the minimized pill also drags. Positions and expanded sizes are remembered per display. Double-click the header to return to the default spot. Frames stay inside the display’s usable area, including after a display change.
+
+**Save meeting transcripts** is on by default. While listening, a quiet indicator shows when saving is active. Text, speaker labels, timestamps, notes and copilot answers save incrementally under `$ATTICUS_DIR/meetings/<meeting-id>/` (normally `~/.config/atticus/meetings/`). Each folder is private (`0700`), with `metadata.json` and an append-only `events.jsonl` (`0600`). Unfinished speech is checkpointed every two seconds; interrupted calls remain readable. Audio is never saved.
+
+Settings → **Meetings**, or **See all meetings** after a call, opens the local archive. Search titles and transcripts, use ↑/↓ and Return to browse, ⌘F to search and Esc to go back. Each meeting shows its recap, action items, notes, answers and timestamped transcript. Copy, export Markdown, or delete with confirmation. Turning saving off stops the current archive and asks whether to keep or delete past meetings.
+
+With **AI meeting summaries** on (the default), Claude reads the transcript once after each ended session and writes a summary and action items, on your own Claude plan. Turn it off to keep transcripts entirely on your Mac; you still get a simpler local recap that quotes decisions and opening/closing speech. A failed AI recap leaves the local transcript intact. Resuming cancels a pending recap and the next End summarizes the full transcript. Closing or pausing stops recap work; already saved text stays on your Mac. Asking Atticus about a past meeting lets it search that archive with `--meeting-history "<keywords, weekday or YYYY-MM-DD>"`. Live question answering retains the selected Meeting Copilot answer policy.
+
+## Feedback
+
+Choose **Report Feedback…** in the menu bar, **Report feedback** in Settings, or say/type “report feedback” or “report a bug”. Review the exact text before opening a GitHub issue draft. It contains a short template, version/commit, macOS and Mac model, model, safe mode and input settings. **Include my last ask** starts off; answers, screen content and command logs are never attached. Submit the draft yourself on GitHub.
 
 ## Install
 
@@ -74,7 +90,7 @@ You need:
 - **macOS 26** or later (Atticus uses Apple's new on-device speech)
 - **A paid Claude plan** (Pro or Max) and [Claude Code](https://claude.com/claude-code). No Claude Code yet? The setup window installs it and signs you in.
 - Apple's command line tools: `xcode-select --install`
-- Optional: [Peekaboo](https://github.com/openclaw/Peekaboo) (see its install steps) so Atticus can click inside apps
+- Accessibility permission enables native clicks, scrolling, menus, keys, dragging and field typing.
 
 Paste this in Terminal:
 
@@ -126,4 +142,6 @@ MIT. See `LICENSE`. `ui/orbs.js` is from [thinking-orbs](https://github.com/Jaku
 
 ## Contributing
 
-Run regressions with a scratch `ATTICUS_DIR` and use `tests/ui.html` and `tests/settings.html` for mock-bridge UI checks. Keep personal agent settings, credentials and runtime state out of commits. Anonymous usage telemetry is disabled unless `ATTICUS_POSTHOG_KEY` is supplied through the environment; no key is embedded in the source.
+Run regressions with a scratch `ATTICUS_DIR` and use `tests/ui.html` and `tests/settings.html` for mock-bridge UI checks. Keep personal agent settings, credentials and runtime state out of commits. Anonymous usage telemetry uses a public PostHog capture token. Set `ATTICUS_POSTHOG_KEY` to override it (an empty value disables telemetry), or turn off Count me as a user in Settings.
+
+Hands: ideas and some logic adapted from Plip (github.com/hussainn7/plip-oss, MIT).
