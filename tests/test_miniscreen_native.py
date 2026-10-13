@@ -24,6 +24,36 @@ __NATIVE__
 let app = NSApplication.shared; app.setActivationPolicy(.accessory)
 let activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleDisplaySleepDisabled], reason: "Atticus isolated window fixtures")
 let mode = CommandLine.arguments[1]
+if mode == "cover" || mode == "activation" { app.setActivationPolicy(.regular) }
+if mode == "cover" {
+    let cover=NSWindow(contentRect:NSRect(x:100,y:100,width:300,height:200),styleMask:[.titled],backing:.buffered,defer:false)
+    cover.title="Atticus activation cover";cover.makeKeyAndOrderFront(nil)
+    MiniScreen.activate(ProcessInfo.processInfo.processIdentifier)
+    print("READY");fflush(stdout);app.run()
+}
+if mode == "activation" {
+    let target=NSWindow(contentRect:NSRect(x:40,y:40,width:600,height:375),styleMask:[.titled],backing:.buffered,defer:false)
+    let other=NSWindow(contentRect:NSRect(x:70,y:70,width:400,height:300),styleMask:[.titled],backing:.buffered,defer:false)
+    target.title="Atticus exact activation target";other.title="Atticus other activation window"
+    target.orderFrontRegardless();other.orderFrontRegardless()
+    let mini=MiniScreen(),pid=ProcessInfo.processInfo.processIdentifier
+    let f=target.frame,height=NSScreen.screens.first!.frame.height
+    mini.target=["pid":pid,"windowID":String(target.windowNumber),"windowFrame":[Double(f.minX),Double(height-f.maxY),Double(f.width),Double(f.height)]]
+    DispatchQueue.main.asyncAfter(deadline:.now()+0.3) {
+        let coverPID=Int32(CommandLine.arguments[2])!
+        MiniScreen.activate(coverPID)
+        precondition(NSWorkspace.shared.frontmostApplication?.processIdentifier == coverPID,"Cover did not activate")
+        mini.open()
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.3) {
+            precondition(NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,"Mini click did not activate its running process")
+            if AXIsProcessTrusted() { precondition(app.orderedWindows.first === target,"Mini click raised the wrong window") }
+            MiniScreen.activate(coverPID)
+            precondition(NSWorkspace.shared.frontmostApplication?.processIdentifier == coverPID,"Guard did not restore the working app")
+            print("background process activation, mini handoff and focus restoration ok; AX trusted: \(AXIsProcessTrusted())");exit(0)
+        }
+    }
+    app.run()
+}
 let panel = NSWindow(contentRect:NSRect(x:20,y:40,width:460,height:760),styleMask:[.borderless],backing:.buffered,defer:false)
 panel.isReleasedWhenClosed = false
 let mini = MiniScreen()
@@ -125,6 +155,19 @@ class MiniScreenNativeTests(unittest.TestCase):
         result = subprocess.run(['swiftc','-O',str(source),'-o',str(cls.binary)],capture_output=True,text=True,env=cls.env)
         if result.returncode: raise AssertionError(result.stderr)
 
+    def test_background_activation_and_mini_window_handoff(self):
+        try:   # activation goes through System Events; without Automation permission osascript waits on a prompt nobody can click (the VM)
+            subprocess.run(['osascript','-e','tell application "System Events" to count processes'],capture_output=True,timeout=3,check=True)
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError): self.skipTest('System Events automation not allowed here')
+        cover =subprocess.Popen([str(self.binary),'cover'],env=self.env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            self.assertEqual(cover.stdout.readline().strip(),'READY')
+            result = subprocess.run([str(self.binary),'activation',str(cover.pid)],env=self.env,capture_output=True,text=True,timeout=10)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            print(result.stdout.strip(),flush=True)
+        finally:
+            cover.terminate();cover.communicate(timeout=5)
+
     def test_visibility(self):
         result = subprocess.run([str(self.binary),'visibility'],env=self.env,capture_output=True,text=True,timeout=5)
         self.assertEqual(result.returncode,0,result.stdout + result.stderr)
@@ -214,6 +257,9 @@ let candidates=[info(41,"Budget"),info(42,"Notes"),info(43,"Popup",3)]
 precondition(MiniScreen.windowTarget(.current,windows:candidates)?["windowID"] as? String == "42")
 precondition(MiniScreen.windowTarget(.current,title:"Budget",windows:candidates)?["windowID"] as? String == "41")
 precondition(MiniScreen.windowTarget(.current,title:"Popup",windows:candidates) == nil)
+var moved=info(41,"Budget");moved[kCGWindowBounds as String]=CGRect(x:500,y:100,width:400,height:300).dictionaryRepresentation
+precondition(MiniScreen.windowTarget(.current,frame:[500,100,400,300],windows:[info(42,"Notes"),moved])?["windowID"] as? String == "41", "Pinned bounds must beat the app's focused window")
+precondition(MiniScreen.windowTarget(.current,frame:[999,100,400,300],windows:candidates) == nil,"Never preview an unrelated window")
 // apps own invisible full-width strips listed before their real window; AX-known windows win, else the largest
 let strip:[String:Any]=[kCGWindowNumber as String:40,kCGWindowBounds as String:CGRect(x:0,y:0,width:1000,height:30).dictionaryRepresentation,kCGWindowOwnerPID as String:pid,kCGWindowLayer as String:0]
 precondition(MiniScreen.windowTarget(.current,windows:[strip,info(42,"Notes")])?["windowID"] as? String == "42")

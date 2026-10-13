@@ -46,7 +46,7 @@ class PageReadyTests(unittest.TestCase):
         web.assert_called_once_with('wait',text='https://fixture.invalid',app='Safari',fresh=True)
 
     def test_read_after_open_keeps_the_handler_browser_instead_of_another_running_browser(self):
-        with tempfile.TemporaryDirectory() as scratch,patch.dict(os.environ,{'ATTICUS_ASK':scratch,'ATTICUS_FRONT':'Google Chrome'}),patch.object(atticus,'page_ready',return_value=True),patch.object(atticus,'preview_app',return_value=None),patch.object(atticus,'hands_map',return_value=None),patch.object(atticus.subprocess,'run',side_effect=lambda args,**kw:subprocess.CompletedProcess([],0,'10\t2' if 'return (id of window' in args[2] else 'Fixture page','')) as run:
+        with tempfile.TemporaryDirectory() as scratch,patch.dict(os.environ,{'ATTICUS_ASK':scratch,'ATTICUS_FRONT':'Google Chrome'}),patch.object(atticus,'page_ready',return_value=True),patch.object(atticus,'preview_app',return_value=None),patch.object(atticus,'hands_map',return_value=None),patch.object(atticus.subprocess,'run',side_effect=lambda args,**kw:subprocess.CompletedProcess([],0,'10\t2' if 'return (id of window' in args[2] else 'Fixture, 0, 0, 300, 200' if 'get {name, bounds}' in args[2] else 'Fixture page','')) as run:
             self.assertEqual(atticus.web('wait',app='Safari',fresh=True),'Page ready.')
             self.assertEqual(atticus.web('read'),'Fixture page')
             self.assertIn('in tab 2 of window id 10',run.call_args.args[0][2])
@@ -57,6 +57,7 @@ class PageReadyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:
             def run(args,**kwargs):
                 if 'return (id of window' in args[2]: return subprocess.CompletedProcess(args,0,'10\t2','')
+                if 'get {name, bounds}' in args[2]: return subprocess.CompletedProcess(args,0,'Fixture, 0, 0, 300, 200','')
                 return subprocess.CompletedProcess(args,0,json.dumps({'what':'Go','short':'Go','url':'https://fixture.invalid'}) if '"name"' in args[-1] else 'Clicked 1: Go','')
             with patch.dict(os.environ,{'ATTICUS_FRONT':'Safari','ATTICUS_ASK':scratch}),patch.object(atticus,'preview_app',return_value=None),patch.object(atticus,'hands_map',return_value=None),patch.object(atticus.subprocess,'run',side_effect=run) as worker,patch.object(atticus,'page_ready',side_effect=subprocess.TimeoutExpired('fixture',.5)):
                 result=atticus.web('click','1')

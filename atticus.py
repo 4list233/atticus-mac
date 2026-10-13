@@ -360,10 +360,10 @@ def wants_focus(task=None, sites=False):
                for m in re.finditer(r'\b(open|show|switch to|focus|bring up|bring .{0,40}forward|full ?screen)\b', task, re.I))
 
 
-def preview_app(app, action='work', title='', directory=None):
+def preview_app(app, action='work', title='', directory=None, frame=None):
     if not app or os.environ.get('ATTICUS_LIVE') == '1': return
     try:
-        r = subprocess.run([APP, '--window-target', app, title], capture_output=True, text=True, timeout=2)
+        r = subprocess.run([APP, '--window-target', app, title] + ([json.dumps(frame)] if frame else []), capture_output=True, text=True, timeout=2)
         if r.returncode or not r.stdout.strip(): return
         target = json.loads(r.stdout)
         emit(['▣ ' + json.dumps({**target, 'action': action})], directory)
@@ -1277,10 +1277,13 @@ def web(cmd, n='', text='', app=None, fresh=False):
                 os.replace(path + '.tmp', path)
             if not all(isinstance(saved.get(k), int) and saved[k] > 0 for k in ('window', 'tab')):
                 raise ValueError('Invalid browser target')
-            if cmd != 'wait' and not saved.get('target'):
-                saved['target'] = preview_app(app, cmd)
-                m = hands_map(app)   # a browser read retargets subsequent hands without adding a tree/screenshot read to a readiness poll
-                if not saved['target'] and m and m.get('windowID'): saved['target'] = {k:m.get(k) for k in ('pid','windowID','windowFrame','window','app')}
+            if cmd in ('read','wait') or not saved.get('target'):
+                r = subprocess.run(['osascript', '-e', f'tell application "{app}" to get {{name, bounds}} of window id {saved["window"]}'],capture_output=True,text=True,timeout=2)
+                parts = r.stdout.strip().rsplit(', ',4)
+                if r.returncode or len(parts) != 5: raise ValueError('Could not locate the pinned browser window')
+                l,t,right,bottom = map(float,parts[1:])
+                saved['target'] = preview_app(app, cmd, title=parts[0], frame=[l,t,right-l,bottom-t])
+                if cmd == 'read': hands_map(app)
                 with open(path + '.tmp','w') as f: json.dump(saved,f)
                 os.replace(path + '.tmp',path)
             # shortcut: Safari exposes tab indexes; reread after rearranging tabs. Window IDs survive focus changes.

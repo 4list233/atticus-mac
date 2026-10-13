@@ -22,6 +22,16 @@ try{
   assert(f('click',num('Go'),'https://elsewhere.test/').startsWith('The tab changed'),'A click in a different tab is refused');
   f('click',num('Go'));assert(w.seen.includes('down'),'Click sends the full press');
   assert(f('click','999').startsWith('No control'),'A stale number asks for a fresh read');
+  const go=w.document.getElementById('b'), goNumber=num('Go');
+  let focused=0;go.addEventListener('focus',()=>focused++);f('name',goNumber);
+  assert(focused===0,'Inspecting a control does not focus it or trigger focus handlers');
+  go.textContent='Different action';assert(f('click',goNumber).includes('changed since the read'),'Repurposed nodes cannot keep an old action number');
+  f('read');const replacement=go.cloneNode(true);go.replaceWith(replacement);
+  assert(f('click',goNumber).startsWith('No control'),'Cloned number attributes cannot redirect an old action');
+  const a=w.document.querySelector('a');a.target='_blank';a.addEventListener('click',e=>{w.seen.push(a.target);e.preventDefault()});
+  const reread=f('read'), linkNumber=reread.match(/(\d+) link: Docs/)[1];
+  f('click',linkNumber);assert(w.seen.includes('_self')&&a.target==='_blank','New-window links navigate in the pinned tab and retain their original target');
+  const oldHref=a.href;a.href='#new';assert(f('click',linkNumber).includes('changed since the read'),'Changed destinations require a fresh read');a.href=oldHref;
   results.className='pass';results.textContent=checks.join('\n');
 }catch(e){results.className='fail';results.textContent=checks.concat('✗ '+e.message).join('\n')}
 </script></body></html>

@@ -565,13 +565,13 @@ class WebAndHistoryTests(unittest.TestCase):
         calls = []
         def run(cmd, **kw):
             calls.append(cmd)
-            out = '41\t73' if 'count windows' in cmd[-1] else json.dumps({'what':'Toggle','short':'Toggle','url':'https://fixture.test'}) if '"name"' in cmd[-1] else 'Page read'
+            out = '41\t73' if 'count windows' in cmd[-1] else 'Fixture, 0, 0, 300, 200' if 'get {name, bounds}' in cmd[-1] else json.dumps({'what':'Toggle','short':'Toggle','url':'https://fixture.test'}) if '"name"' in cmd[-1] else 'Page read'
             return subprocess.CompletedProcess(cmd,0,out,'')
         with patch.dict(os.environ,{'ATTICUS_FRONT':'Google Chrome'},clear=True), patch.object(atticus,'hands_map',return_value=None), patch.object(atticus.subprocess,'run',side_effect=run), patch.object(atticus,'page_ready',return_value=True):
             atticus.web('read'); atticus.web('click','1'); atticus.web('fill','2','Name')
             self.assertEqual(sum('count windows' in c[-1] for c in calls),1)
             scripts = [c[2] for c in calls if c[1] == '-e' and 'count windows' not in c[-1]]
-            self.assertTrue(all('window id 41 whose id is 73' in c and 'front window' not in c for c in scripts))
+            self.assertTrue(all(('window id 41 whose id is 73' in c or 'get {name, bounds} of window id 41' in c) and 'front window' not in c for c in scripts))
             atticus.web('read')
             self.assertEqual(sum('count windows' in c[-1] for c in calls),2)
         with patch.dict(os.environ,{'ATTICUS_FRONT':'Google Chrome'},clear=True), patch.object(atticus.subprocess,'run',return_value=subprocess.CompletedProcess([],1,'','No windows')):
@@ -583,6 +583,7 @@ class WebAndHistoryTests(unittest.TestCase):
         def run(cmd, **kw):
             calls.append(cmd[-1])
             if 'count windows' in cmd[-1]: out = '41\t73'
+            elif 'get {name, bounds}' in cmd[-1]: out = 'Fixture, 0, 0, 300, 200'
             else: out = json.dumps(name if sum('"name"' in c for c in calls) == 1 else {**name,'what':'Delete'})
             return subprocess.CompletedProcess(cmd,0,out,'')
         with patch.dict(os.environ,{'ATTICUS_FRONT':'Google Chrome','ATTICUS_ASK':atticus.DIR},clear=True), patch.object(atticus.subprocess,'run',side_effect=run), patch.object(atticus,'ask_user',return_value='y'):
@@ -594,6 +595,7 @@ class WebAndHistoryTests(unittest.TestCase):
         def run(cmd, **kw):
             calls.append(cmd[-1])
             if 'count windows' in cmd[-1]: return subprocess.CompletedProcess(cmd, 0, '41\t73', '')
+            if 'get {name, bounds}' in cmd[-1]: return subprocess.CompletedProcess(cmd, 0, 'Fixture, 0, 0, 300, 200', '')
             out = json.dumps({'what': 'Confirm', 'short': 'Confirm', 'url': 'https://shop.test/cart'}) if '"name"' in cmd[-1] else 'Clicked 4: Confirm'
             return subprocess.CompletedProcess(cmd, 0, out, '')
         with patch.dict(os.environ, {'ATTICUS_FRONT': 'Google Chrome', 'ATTICUS_ASK': atticus.DIR}), \

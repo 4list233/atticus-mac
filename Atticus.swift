@@ -231,10 +231,21 @@ final class MiniScreen: NSObject, SCStreamOutput, SCStreamDelegate {
         previous.videoGravity = .resizeAspect; previous.cornerRadius = 12; previous.masksToBounds = true
         previous.backgroundColor = NSColor.black.cgColor; previous.opacity = 0; clip.layer?.addSublayer(previous)
     }
+    static func activate(_ pid: Int32) {
+        // System Events addresses the running process; cooperative AppKit activation can be refused from our background panel.
+        let p = Process(); p.executableURL = URL(fileURLWithPath:"/usr/bin/osascript")
+        p.arguments = ["-e", "tell application \"System Events\" to set frontmost of (first application process whose unix id is \(pid)) to true"]
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return }
+        let deadline = Date().addingTimeInterval(2)   // runs on the main thread: a pending Automation prompt must not freeze the app
+        while p.isRunning && Date() < deadline { usleep(10_000) }
+        if p.isRunning { p.terminate() }
+    }
     static func bounds(_ info: [String:Any]) -> CGRect? {
         (info[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation:$0) }
     }
-    static func windowTarget(_ app: NSRunningApplication, title: String = "", windows: [[String:Any]]) -> [String:Any]? {
+    static func windowTarget(_ app: NSRunningApplication, title: String = "", frame: [Double] = [], windows: [[String:Any]]) -> [String:Any]? {
+        if !frame.isEmpty && (frame.count != 4 || !frame.allSatisfy(\.isFinite)) { return nil }
         let root = AXUIElementCreateApplication(app.processIdentifier)
         let elements = axAttribute(root, kAXWindowsAttribute) as? [AXUIElement] ?? []
         let preferred = axAttribute(root,kAXFocusedWindowAttribute).flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? axWindowNumber($0 as! AXUIElement) : nil }
@@ -250,8 +261,10 @@ final class MiniScreen: NSObject, SCStreamOutput, SCStreamDelegate {
         let candidates = named.filter {
             ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == app.processIdentifier &&
             ($0[kCGWindowLayer as String] as? Int) == 0 && bounds($0).map { $0.width > 1 && $0.height > 1 && ($0.height > 40 || $0.width < $0.height * 10) } == true &&
-            (title.isEmpty || ($0[kCGWindowName as String] as? String ?? "").localizedCaseInsensitiveContains(title))
+            (title.isEmpty || ($0[kCGWindowName as String] as? String ?? "").localizedCaseInsensitiveContains(title)) &&
+            (frame.isEmpty || bounds($0).map { abs($0.minX-frame[0]) < 2 && abs($0.minY-frame[1]) < 2 && abs($0.width-frame[2]) < 2 && abs($0.height-frame[3]) < 2 } == true)
         }
+        if !frame.isEmpty && candidates.count != 1 { return nil }   // indistinguishable windows are not a safe preview target
         let real = Set(elements.compactMap(axWindowNumber))   // apps own invisible full-width strips; AX lists only real windows
         let area = { (w: [String:Any]) in bounds(w).map { $0.width * $0.height } ?? 0 }
         guard let w = candidates.first(where: { ($0[kCGWindowNumber as String] as? NSNumber) == preferred })
@@ -393,20 +406,25 @@ final class MiniScreen: NSObject, SCStreamOutput, SCStreamDelegate {
             ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == id && ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid
         }) else { return }
         guard let a = NSRunningApplication(processIdentifier:pid), !a.isTerminated, let f = target?["windowFrame"] as? [Double], f.count == 4 else { return }
-        let windows = axAttribute(AXUIElementCreateApplication(pid),kAXWindowsAttribute) as? [AXUIElement] ?? []
-        let direct = windows.filter { axWindowNumber($0)?.uint32Value == id }
-        let matches = direct.isEmpty ? windows.filter {
-            guard let p = axAttribute($0,kAXPositionAttribute), let s = axAttribute($0,kAXSizeAttribute), CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID() else { return false }
-            var origin = CGPoint.zero, size = CGSize.zero
-            guard AXValueGetValue(p as! AXValue,.cgPoint,&origin), AXValueGetValue(s as! AXValue,.cgSize,&size) else { return false }
-            return abs(origin.x - f[0]) < 2 && abs(origin.y - f[1]) < 2 && abs(size.width - f[2]) < 2 && abs(size.height - f[3]) < 2
-        } : direct
-        if matches.count == 1 {   // never substitute another window of the same app; on another Space or screen AX may not list it, so the app still comes forward
-            AXUIElementSetAttributeValue(matches[0],kAXMinimizedAttribute as CFString,kCFBooleanFalse)
-            AXUIElementPerformAction(matches[0],kAXRaiseAction as CFString)
+        let processID = pid, windowID = id
+        let raise = {
+            let windows = axAttribute(AXUIElementCreateApplication(processID),kAXWindowsAttribute) as? [AXUIElement] ?? []
+            let direct = windows.filter { axWindowNumber($0)?.uint32Value == windowID }
+            let matches = direct.isEmpty ? windows.filter {
+                guard let p = axAttribute($0,kAXPositionAttribute), let s = axAttribute($0,kAXSizeAttribute), CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID() else { return false }
+                var origin = CGPoint.zero, size = CGSize.zero
+                guard AXValueGetValue(p as! AXValue,.cgPoint,&origin), AXValueGetValue(s as! AXValue,.cgSize,&size) else { return false }
+                return abs(origin.x - f[0]) < 2 && abs(origin.y - f[1]) < 2 && abs(size.width - f[2]) < 2 && abs(size.height - f[3]) < 2
+            } : direct
+            if matches.count == 1 {
+                AXUIElementSetAttributeValue(matches[0],kAXMinimizedAttribute as CFString,kCFBooleanFalse)
+                AXUIElementPerformAction(matches[0],kAXRaiseAction as CFString)
+            }
         }
-        // a background app's activate() is refused since macOS 14 (cooperative activation); open -a in its own process is not
-        if let url = a.bundleURL { _ = try? Process.run(URL(fileURLWithPath:"/usr/bin/open"), arguments:["-a", url.path]) } else { a.activate() }
+        Self.activate(processID); raise()
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.3) {   // AX windows on another Space can appear after activation returns
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == processID { raise() }
+        }
     }
 }
 
@@ -603,7 +621,7 @@ final class App: NSObject, WKScriptMessageHandler {
             guard let self, let a = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication, a != .current else { return }
             let now = Date()
             if busy || engine.isRunning || now < guardUntil, !focusFree, now > allowUntil, now.timeIntervalSince(userSwitch) > 0.6,
-               let u = userApp, !u.isTerminated, u != a { u.activate(); return }
+               let u = userApp, !u.isTerminated, u != a { MiniScreen.activate(u.processIdentifier); return }
             mine = a.localizedName ?? ""; userApp = a
         }
         NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] e in
@@ -3123,10 +3141,12 @@ if CommandLine.arguments.count >= 3, ["--window-target","--target-app"].contains
     let name = CommandLine.arguments[2]
     let url = name.contains(":") ? URL(string:name) : FileManager.default.fileExists(atPath:name) ? URL(fileURLWithPath:name) : nil
     let handler = url.flatMap { NSWorkspace.shared.urlForApplication(toOpen:$0) }, bundle = handler.flatMap { Bundle(url:$0)?.bundleIdentifier }
-    let title = CommandLine.arguments.count > 3 && !CommandLine.arguments[3].isEmpty ? CommandLine.arguments.dropFirst(3).joined(separator:" ") : url?.isFileURL == true && FileManager.default.fileExists(atPath:name) ? url!.deletingPathExtension().lastPathComponent : ""
+    let title = CommandLine.arguments.count > 3 && !CommandLine.arguments[3].isEmpty ? CommandLine.arguments[3] : url?.isFileURL == true && FileManager.default.fileExists(atPath:name) ? url!.deletingPathExtension().lastPathComponent : ""
+    let frame = CommandLine.arguments.count == 5 ? (try? JSONSerialization.jsonObject(with:Data(CommandLine.arguments[4].utf8))) as? [Double] ?? [] : []
+    if !frame.isEmpty && (frame.count != 4 || !frame.allSatisfy(\.isFinite)) { exit(1) }
     let apps = NSWorkspace.shared.runningApplications.filter { $0.localizedName?.localizedCaseInsensitiveCompare(name) == .orderedSame || $0.bundleIdentifier == name || (bundle != nil && $0.bundleIdentifier == bundle) || $0.executableURL?.lastPathComponent.localizedCaseInsensitiveCompare(name) == .orderedSame }
     if CommandLine.arguments[1] == "--target-app" { if apps.count == 1 { print(apps[0].localizedName ?? name) } else if let handler { print(handler.deletingPathExtension().lastPathComponent) }; exit(0) }
-    if apps.count == 1, let target = MiniScreen.windowTarget(apps[0],title:title,windows:CGWindowListCopyWindowInfo(.optionAll,kCGNullWindowID) as? [[String:Any]] ?? []),
+    if apps.count == 1, let target = MiniScreen.windowTarget(apps[0],title:title,frame:frame,windows:CGWindowListCopyWindowInfo(.optionAll,kCGNullWindowID) as? [[String:Any]] ?? []),
        let data = try? JSONSerialization.data(withJSONObject:target) { print(String(decoding:data,as:UTF8.self)) }
     exit(0)
 }

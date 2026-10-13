@@ -74,9 +74,9 @@ class BackgroundTests(unittest.TestCase):
             self.assertEqual(run.call_args.args[0], ['open', '-g', os.environ['ATTICUS_ASK']])
 
     def test_safari_web_emits_preview_without_raising(self):
-        with patch.dict(os.environ, {'ATTICUS_FRONT': 'Safari'}), patch.object(atticus, 'preview_app',return_value=None) as preview, patch.object(atticus,'hands_map',return_value=None), patch.object(atticus.subprocess, 'run', side_effect=lambda args,**kw:subprocess.CompletedProcess([], 0, '10\t2' if 'return (id of window' in args[2] else 'page', '')) as run:
+        with patch.dict(os.environ, {'ATTICUS_FRONT': 'Safari'}), patch.object(atticus, 'preview_app',return_value=None) as preview, patch.object(atticus,'hands_map',return_value=None), patch.object(atticus.subprocess, 'run', side_effect=lambda args,**kw:subprocess.CompletedProcess([], 0, '10\t2' if 'return (id of window' in args[2] else 'Fixture, 0, 0, 300, 200' if 'get {name, bounds}' in args[2] else 'page', '')) as run:
             self.assertEqual(atticus.web('read'), 'page')
-            preview.assert_called_once_with('Safari', 'read')
+            preview.assert_called_once_with('Safari', 'read', title='Fixture', frame=[0,0,300,200])
             self.assertNotIn('activate', run.call_args.args[0][2])
 
     def test_restore_does_not_interrupt_a_new_unrelated_app(self):
@@ -108,10 +108,10 @@ class BackgroundTests(unittest.TestCase):
             self.assertEqual(osa.call_args.args[1],'Editor')
 
     def test_browser_preview_stays_with_the_pinned_window_after_focus_changes(self):
-        with patch.dict(os.environ,{'ATTICUS_FRONT':'Google Chrome'}),patch.object(atticus,'preview_app',return_value=self.target) as preview,patch.object(atticus,'hands_map',return_value=None),patch.object(atticus,'emit') as emit,patch.object(atticus.subprocess,'run',side_effect=[subprocess.CompletedProcess([],0,'41\t73',''),subprocess.CompletedProcess([],0,'Page',''),subprocess.CompletedProcess([],0,'Filled',''),subprocess.CompletedProcess([],0,'Reread','')]) as run:
+        with patch.dict(os.environ,{'ATTICUS_FRONT':'Google Chrome'}),patch.object(atticus,'preview_app',return_value=self.target) as preview,patch.object(atticus,'hands_map',return_value=None),patch.object(atticus,'emit') as emit,patch.object(atticus.subprocess,'run',side_effect=[subprocess.CompletedProcess([],0,'41\t73',''),subprocess.CompletedProcess([],0,'Fixture, 0, 0, 300, 200',''),subprocess.CompletedProcess([],0,'Page',''),subprocess.CompletedProcess([],0,'Filled',''),subprocess.CompletedProcess([],0,'Fixture, 10, 20, 410, 320',''),subprocess.CompletedProcess([],0,'Reread','')]) as run:
             atticus.web('read');atticus.web('fill','2','Text');atticus.web('read')
         self.assertIn('window id 41 whose id is 73',run.call_args.args[0][2])
-        preview.assert_called_once_with('Google Chrome','read')
+        self.assertEqual(preview.call_args_list, [unittest.mock.call('Google Chrome','read',title='Fixture',frame=[0,0,300,200]),unittest.mock.call('Google Chrome','read',title='Fixture',frame=[10,20,400,300])])
         target=json.loads(emit.call_args.args[0][0][2:]);self.assertEqual(target['windowID'],'42');self.assertEqual(target['action'],'read')
 
     def test_applescript_ids_and_named_windows_use_the_same_target_helper(self):
