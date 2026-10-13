@@ -67,6 +67,37 @@ class BrainTests(unittest.TestCase):
                 else:
                     start.assert_not_called()
 
+    def test_all_rules_go_while_they_fit_then_word_matches_beyond_five(self):
+        mem = Path(atticus.DIR) / 'memory.md'
+        with patch.object(atticus, 'MEMORY', str(mem)):
+            mem.write_text('When I say dad, use the contact Papa.\n' + 'Keep replies short and friendly please.\n' * 40)   # ~1600 chars, no shared word
+            self.assertIn('dad', atticus.relevant_rules('email Papa'))
+            mem.write_text(''.join(f'Rule {i}: email signs off as S.\n' for i in range(8)) + 'Unrelated padding words here.\n' * 200)
+            got = atticus.relevant_rules('email Papa').splitlines()
+            self.assertEqual(len(got), 8)
+            self.assertTrue(all('email' in r for r in got))
+
+    def test_earlier_chat_keeps_1000_chars_of_older_answers_and_the_last_whole(self):
+        turns = [{'q': f'q{i}', 'a': str(i) * 2000} for i in range(3)]
+        text = atticus.earlier_chat(turns)
+        self.assertIn('A: ' + '0' * 1000 + '\n', text)
+        self.assertNotIn('0' * 1001, text)
+        self.assertIn('A: ' + '2' * 2000 + '\n', text)
+
+    def test_installed_tool_help_is_attached_cached_and_system_tools_are_not(self):
+        bin_ = Path(atticus.DIR) / 'bin'; bin_.mkdir()
+        runs = Path(atticus.DIR) / 'runs'
+        tool = bin_ / 'fixturetool'
+        tool.write_text(f'#!/bin/sh\necho x >> {runs}\necho "usage: fixturetool send <text>"\n')
+        tool.chmod(0o755)
+        with patch.dict(os.environ, {'PATH': f'{bin_}:/usr/bin:/bin'}):
+            got = atticus.tool_help('ask fixturetool to send hi, then env')
+            self.assertIn('usage: fixturetool send <text>', got)
+            self.assertIn('untrusted data', got)
+            self.assertNotIn('`env --help`', got)   # /usr/bin/env is the system's, not the user's
+            self.assertIn('usage: fixturetool', atticus.tool_help('fixturetool again'))
+        self.assertEqual(runs.read_text(), 'x\n')   # cached by (path, mtime): --help ran once
+
     def test_slow_success_gets_memory_tip_even_on_first_ask(self):
         with patch.dict(os.environ, {'ATTICUS_UI': '1'}), patch('sys.stdout', new_callable=io.StringIO) as out:
             atticus.tip('Joined Zoom.', task='join Zoom', elapsed=30)
