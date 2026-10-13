@@ -463,7 +463,9 @@ def place(proc, where='full', screen='current', title=''):
             try:   # already full screen where it should be: leaving and re-entering is a slow animation for nothing
                 fx, fy = map(int, osa(tell + f'get position of {win}').split(', ')); fw, fh = map(int, osa(tell + f'get size of {win}').split(', '))
                 there = next((s for s in screens() if pick(s)), None) if where == 'full' and screen != 'current' else None
-                if there and there[1] <= fx + fw // 2 < there[1] + there[3]: return f'{proc} is already full screen on {there[0]}'
+                if there and there[1] <= fx + fw // 2 < there[1] + there[3]:   # already there, but its full screen Space may not be the one showing: show it
+                    free_focus(); osa(tell + f'perform action "AXRaise" of {win}'); subprocess.run(['open', '-a', proc], capture_output=True)
+                    return f'{proc} is already full screen on {there[0]}; brought it into view'
             except ValueError: pass
             osa(tell + f'set value of attribute "AXFullScreen" of {win} to false')
             time.sleep(1.2)   # the exit animation
