@@ -89,6 +89,12 @@ class MeetingTests(unittest.TestCase):
         self.assertEqual(metrics['usd'], .001)
         self.assertTrue(start.call_args.kwargs['start_new_session'])
 
+    def test_devin_meeting_stays_local(self):
+        with patch.object(atticus, 'client', return_value='devin'), patch.object(atticus.subprocess, 'Popen') as start:
+            with self.assertRaisesRegex(RuntimeError, 'stays on this Mac'):
+                atticus.meeting_call('Stable prefix', 'A question', 'private screenshot')
+        start.assert_not_called()
+
     def test_stop_cancels_claude_group(self):
         class Worker:
             pid = 12345
