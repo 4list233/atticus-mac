@@ -27,6 +27,35 @@ class BrainTests(unittest.TestCase):
         self.prefs.start()
         self.addCleanup(self.prefs.stop)
 
+    def test_custom_server_replaces_claude_sign_in_and_models(self):
+        self.assertEqual(atticus.server(), {})   # empty address: plain Claude
+        prefs = {'apiBase': ' https://api.deepseek.com/anthropic ', 'apiKey': '', 'apiModel': 'deepseek-chat'}
+        with patch.object(atticus, 'pref', side_effect=lambda k, d: prefs.get(k, d)), patch.object(atticus.shutil, 'which', return_value='/bin/claude'), \
+             patch.object(atticus.subprocess, 'run', side_effect=AssertionError('no Claude sign-in check')):
+            env = atticus.server()
+            self.assertEqual(env['ANTHROPIC_BASE_URL'], 'https://api.deepseek.com/anthropic')
+            self.assertEqual((env['ANTHROPIC_AUTH_TOKEN'], env['ANTHROPIC_API_KEY']), ('none', ''))
+            self.assertEqual({env[f'ANTHROPIC_DEFAULT_{m}_MODEL'] for m in ('HAIKU', 'SONNET', 'OPUS')}, {'deepseek-chat'})
+            self.assertEqual(atticus.plan(), {'ok': True, 'need': '', 'text': 'Using your custom server, api.deepseek.com.'})
+
+    def test_custom_server_models_come_from_the_server(self):
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        class Fake(BaseHTTPRequestHandler):   # DeepSeek-style: the Claude address ends in /anthropic, the list is at /models
+            def do_GET(self):
+                ok = self.path == '/models' and self.headers['Authorization'] == 'Bearer k'
+                self.send_response(200 if ok else 404); self.end_headers()
+                if ok: self.wfile.write(b'{"data": [{"id": "a"}, {"id": "b"}]}')
+            def log_message(self, *a): pass
+        srv = HTTPServer(('127.0.0.1', 0), Fake)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close); self.addCleanup(srv.shutdown)
+        prefs = {'apiBase': f'http://127.0.0.1:{srv.server_port}/anthropic', 'apiKey': 'k'}
+        with patch.object(atticus, 'pref', side_effect=lambda k, d: prefs.get(k, d)):
+            self.assertEqual(atticus.models(), ['a', 'b'])
+            prefs['apiBase'] = 'http://127.0.0.1:1'   # nothing listening
+            self.assertEqual(atticus.models(), [])
+        self.assertEqual(atticus.models(), [])   # no address
+
     def test_failure_retry_uses_current_model_once_and_sonnet_remains_explicit(self):
         for answer, model, offer, expected in [('r', 'haiku', True, 'haiku'), ('try again', 'haiku', False, 'haiku'),
                                                 ('retry', 'sonnet', True, 'sonnet'), ('y', 'haiku', True, 'sonnet'),
@@ -66,6 +95,26 @@ class BrainTests(unittest.TestCase):
                     self.assertEqual(log.call_args.args[5], ['first attempted action', 'second action'])
                 else:
                     start.assert_not_called()
+
+    def test_summary_deadline_does_not_start_a_late_unused_capture(self):
+        class NoThread:
+            made = []
+            def __init__(self, target=None, **_): self.target, self.starts = target, 0; self.made.append(self)
+            def start(self): self.starts += 1
+            def join(self, *_): pass
+        brain = unittest.mock.Mock(return_value=('Done.', 0, [])); brain.ok = True; brain.cmds = brain.ran = []
+        with patch.multiple(atticus, licensed=lambda: True, ping=lambda: None, fast=lambda _: None,
+                            front=lambda: ('Fixture', 'Scratch'), osa=lambda *a: '', screens=lambda: [],
+                            describe=lambda *a: '', me_line=lambda: '', selection_context=lambda: '',
+                            relevant_rules=lambda _: '', recent=lambda: [], workflows=lambda *a: '',
+                            screen_for=lambda *a: None, wait_commit=lambda: True, run=brain,
+                            remember_turn=lambda *a: None, restore_focus=lambda *a: None,
+                            remember_workflow=lambda task, reply, *a: (reply, False), learn=lambda *a: False, tip=lambda *a: None), \
+             patch.object(atticus.threading, 'Thread', NoThread), patch('sys.argv', ['atticus.py', 'Do fixture']), \
+             patch('sys.stdout', io.StringIO()):
+            atticus.main()
+        self.assertEqual(NoThread.made[0].starts, 0)
+        self.assertIn('Text head unavailable', brain.call_args.args[0])
 
     def test_all_rules_go_while_they_fit_then_word_matches_beyond_five(self):
         mem = Path(atticus.DIR) / 'memory.md'
@@ -187,15 +236,22 @@ print(json.dumps(atticus.look(cleanup=sys.argv[3] != 'standalone')))
     def test_screen_requests_include_every_display(self):
         snap = unittest.mock.Mock()
         snap.shots = [('laptop.jpg', 'Screen 1: built-in laptop screen'), ('monitor.jpg', 'Screen 2: external monitor')]
+        snap.started = True
+        snap.is_alive.return_value = False
         for task in ['read this screen', 'follow the instructions in Claude in Chrome', 'open the View menu', 'read my monitor']:
             with self.subTest(task=task):
                 self.assertEqual(atticus.screen_for(task, snap), snap.shots)
-        self.assertIsNone(atticus.screen_for('open notes', snap))
+        self.assertIsNone(atticus.screen_for('open notes', snap, 'Readable document. ' * 20))
 
     def test_screen_disabled_and_missing_captures(self):
         snap = unittest.mock.Mock()
         snap.shots = []
+        snap.started = True
+        snap.is_alive.return_value = False
         self.assertEqual(atticus.screen_for('read this screen', snap), [])
+        snap.started = False
+        self.assertIsNone(atticus.screen_for('read this screen', snap))
+        snap.started = True
         snap.join.reset_mock()
         with patch.object(atticus, 'pref', return_value='never'):
             self.assertIsNone(atticus.screen_for('read both screens', snap))
@@ -640,6 +696,7 @@ class WatchAndBudgetTests(unittest.TestCase):
 
     def test_set_flips_a_switch_by_name_safe_mode_only_on(self):
         self.assertIn('askMe', atticus.switches())
+        self.assertIn('quietAudio', atticus.switches())
         self.assertNotIn('paused', atticus.switches())
         with patch.dict(os.environ, {'ATTICUS_ASK': '/fake'}), patch.object(atticus, 'ask_user') as ask, patch('sys.stdout', new_callable=io.StringIO):
             atticus.set_switch('safe mode', 'on')
@@ -712,14 +769,14 @@ class WebAndHistoryTests(unittest.TestCase):
             calls.append(cmd)
             out = '41\t73' if 'count windows' in cmd[-1] else 'Fixture, 0, 0, 300, 200' if 'get {name, bounds}' in cmd[-1] else json.dumps({'what':'Toggle','short':'Toggle','url':'https://fixture.test'}) if '"name"' in cmd[-1] else 'Page read'
             return subprocess.CompletedProcess(cmd,0,out,'')
-        with patch.dict(os.environ,{'ATTICUS_FRONT':'Google Chrome'},clear=True), patch.object(atticus,'hands_map',return_value=None), patch.object(atticus.subprocess,'run',side_effect=run), patch.object(atticus,'page_ready',return_value=True):
+        with patch.dict(os.environ,{'ATTICUS_FRONT':'Google Chrome'},clear=True), patch.object(atticus,'browser_adapter',return_value='chromium'), patch.object(atticus,'hands_map',return_value=None), patch.object(atticus.subprocess,'run',side_effect=run), patch.object(atticus,'page_ready',return_value=True):
             atticus.web('read'); atticus.web('click','1'); atticus.web('fill','2','Name')
             self.assertEqual(sum('count windows' in c[-1] for c in calls),1)
             scripts = [c[2] for c in calls if c[1] == '-e' and 'count windows' not in c[-1]]
             self.assertTrue(all(('window id 41 whose id is 73' in c or 'get {name, bounds} of window id 41' in c) and 'front window' not in c for c in scripts))
             atticus.web('read')
             self.assertEqual(sum('count windows' in c[-1] for c in calls),2)
-        with patch.dict(os.environ,{'ATTICUS_FRONT':'Google Chrome'},clear=True), patch.object(atticus.subprocess,'run',return_value=subprocess.CompletedProcess([],1,'','No windows')):
+        with patch.dict(os.environ,{'ATTICUS_FRONT':'Google Chrome'},clear=True), patch.object(atticus,'browser_adapter',return_value='chromium'), patch.object(atticus.subprocess,'run',return_value=subprocess.CompletedProcess([],1,'','No windows')):
             self.assertIn('--hands see',atticus.web('read'))
 
     def test_web_rechecks_control_after_permission(self):
@@ -731,7 +788,7 @@ class WebAndHistoryTests(unittest.TestCase):
             elif 'get {name, bounds}' in cmd[-1]: out = 'Fixture, 0, 0, 300, 200'
             else: out = json.dumps(name if sum('"name"' in c for c in calls) == 1 else {**name,'what':'Delete'})
             return subprocess.CompletedProcess(cmd,0,out,'')
-        with patch.dict(os.environ,{'ATTICUS_FRONT':'Google Chrome','ATTICUS_ASK':atticus.DIR},clear=True), patch.object(atticus.subprocess,'run',side_effect=run), patch.object(atticus,'ask_user',return_value='y'):
+        with patch.dict(os.environ,{'ATTICUS_FRONT':'Google Chrome','ATTICUS_ASK':atticus.DIR},clear=True), patch.object(atticus,'browser_adapter',return_value='chromium'), patch.object(atticus.subprocess,'run',side_effect=run), patch.object(atticus,'ask_user',return_value='y'):
             self.assertIn('control changed',atticus.web('click','1'))
             self.assertFalse(any('"click"' in c for c in calls))
 
@@ -744,17 +801,17 @@ class WebAndHistoryTests(unittest.TestCase):
             out = json.dumps({'what': 'Confirm', 'short': 'Confirm', 'url': 'https://shop.test/cart'}) if '"name"' in cmd[-1] else 'Clicked 4: Confirm'
             return subprocess.CompletedProcess(cmd, 0, out, '')
         with patch.dict(os.environ, {'ATTICUS_FRONT': 'Google Chrome', 'ATTICUS_ASK': atticus.DIR}), \
-                patch.object(atticus.subprocess, 'run', side_effect=run), patch.object(atticus, 'ask_user', return_value='n') as ask:
+                patch.object(atticus,'browser_adapter',return_value='chromium'), patch.object(atticus.subprocess, 'run', side_effect=run), patch.object(atticus, 'ask_user', return_value='n') as ask:
             self.assertIn('said no', atticus.web('click', '4'))
             self.assertEqual(ask.call_args[0][0]['q'], 'Click "Confirm"?')   # a hidden buy/send asks too
             self.assertFalse(any('"click"' in c for c in calls))
         with patch.dict(os.environ, {'ATTICUS_FRONT': 'Google Chrome', 'ATTICUS_ASK': atticus.DIR}), \
-                patch.object(atticus.subprocess, 'run', side_effect=run), patch.object(atticus, 'ask_user', return_value='y'), \
+                patch.object(atticus,'browser_adapter',return_value='chromium'), patch.object(atticus.subprocess, 'run', side_effect=run), patch.object(atticus, 'ask_user', return_value='y'), \
                 patch.object(atticus,'page_ready',return_value=True):
             self.assertTrue(atticus.web('click', '4').startswith('Clicked 4'))
             self.assertIn('https://shop.test/cart', calls[-2])   # the click is bound to the checked tab
         with patch.dict(os.environ, {'ATTICUS_FRONT': 'Google Chrome'}), patch.dict(os.environ, {}, clear=False), \
-                patch.object(atticus.subprocess, 'run', side_effect=run), patch.object(atticus, 'ask_user') as ask:
+                patch.object(atticus,'browser_adapter',return_value='chromium'), patch.object(atticus.subprocess, 'run', side_effect=run), patch.object(atticus, 'ask_user') as ask:
             os.environ.pop('ATTICUS_ASK', None)
             self.assertIn('needs the user', atticus.web('click', '4'))   # no Allow card (a shortcut): never click blind
             ask.assert_not_called()

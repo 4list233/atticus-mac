@@ -27,7 +27,7 @@ class SelectionTests(unittest.TestCase):
 import CoreFoundation
 let kAXFocusedUIElementAttribute = "focus", kAXSelectedTextAttribute = "text", kAXValueAttribute = "value"
 var keys: [Int] = [], field = "old", deaf = false, hidEvents = 0
-var focused = 1, selected = "old", currentRange = CFRange(location: 3, length: 3), events = 0, directWrites = 0, directOK = true
+var focused = 1, selected = "old", currentRange = CFRange(location: 0, length: 3), events = 0, directWrites = 0, directOK = true
 func AXUIElementCreateApplication(_ pid: Int) -> Int { pid }
 func AXUIElementSetMessagingTimeout(_ element: Int, _ timeout: Double) {}
 func axAttribute(_ e: Any, _ name: String) -> CFTypeRef? { name == "focus" ? NSNumber(value: focused) : name == "value" ? field as CFString : selected as CFString }
@@ -61,11 +61,11 @@ final class CGEvent {
  var flags: Flags = []
  let key: Int
  init?(keyboardEventSource: Int?, virtualKey: Int, keyDown: Bool) { key = virtualKey }
- func postToPid(_ pid: Int) { events += 1; keys.append(key); precondition(pid == 42 && flags == (key == 51 ? [] : .maskCommand)); if !deaf { field = key == 51 ? "ol" : "old draft" } }
+ func postToPid(_ pid: Int) { events += 1; keys.append(key); precondition(pid == 42 && flags == (key == 51 ? [] : .maskCommand)); if !deaf { field = key == 51 ? "" : "draft" } }
  func post(tap: CGEventTapLocation) { hidEvents += 1 }
 }
 struct Harness {
- let element: CFTypeRef = NSNumber(value: 1), app = FakeApp(), text = "old", range: CFRange? = CFRange(location: 3, length: 3)
+ let element: CFTypeRef = NSNumber(value: 1), app = FakeApp(), text = "old", range: CFRange? = CFRange(location: 0, length: 3)
  var editable = false, pastable = true
  static func selectedRange(_ e: CFTypeRef) -> CFRange? { currentRange }
  func replace(_ text: String) -> Bool { if directOK { directWrites += 1; field = text }; return directOK }
@@ -76,7 +76,7 @@ func pump(_ seconds: Double) {
 }
 let h = Harness(), pb = NSPasteboard.general
 let old = NSPasteboardItem(); old.setData(Data("rich original".utf8), forType: .rich)
-func reset() { focused = 1; selected = "old"; field = "old"; deaf = false; currentRange = CFRange(location: 3, length: 3); h.app.isTerminated = false; pb.failWrite = false; pb.writeObjects([old]) }
+func reset() { focused = 1; selected = "old"; field = "old"; deaf = false; currentRange = CFRange(location: 0, length: 3); h.app.isTerminated = false; pb.failWrite = false; pb.writeObjects([old]) }
 for scenario in 0..<6 {
  reset(); let before = events; var result: Bool?, allowed = true
  h.apply(scenario == 4 ? "" : "draft", valid: { allowed }) { result = $0 }

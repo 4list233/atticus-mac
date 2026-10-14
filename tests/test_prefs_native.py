@@ -1,0 +1,50 @@
+"""Native settings and usage regressions in a scratch ATTICUS_DIR."""
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@unittest.skipUnless(sys.platform == "darwin", "macOS Swift regression")
+class PrefsNativeTests(unittest.TestCase):
+    def test_settings_are_private_and_usage_counts_final_rows(self):
+        source = (ROOT / "Atticus.swift").read_text()
+        prefs = source[source.index("enum Prefs"):source.index("func audioProp")]
+        today = source[source.index("    func today()"):source.index("    @objc func toggleMeeting")]
+        today = today.replace('NSString(string: "~/.config/atticus/log.jsonl").expandingTildeInPath',
+                              '(Prefs.path as NSString).deletingLastPathComponent + "/log.jsonl"')
+        swift = """import Foundation
+let controlKey = 1, optionKey = 2
+""" + prefs + "\nfinal class FixtureMenu {\n" + today + """
+}
+Prefs.set("apiKey", "fixture-secret")
+let fm = FileManager.default
+let mode = (try! fm.attributesOfItem(atPath: Prefs.path)[.posixPermissions] as! NSNumber).intValue
+precondition(mode == 0o600, "settings were not private")
+let me = (Prefs.path as NSString).deletingLastPathComponent + "/me.json"
+try! "{\\"name\\":\\"Legacy Name\\"}".write(toFile: me, atomically: true, encoding: .utf8)
+precondition(profileName(me) == "Legacy Name", "legacy profile name was lost")
+try! "{\\"version\\":2,\\"facts\\":[{\\"category\\":\\"basics\\",\\"kind\\":\\"name\\",\\"value\\":\\"Imported Name\\",\\"source\\":\\"contacts\\"},{\\"category\\":\\"basics\\",\\"kind\\":\\"name\\",\\"value\\":\\"Chosen Name\\",\\"source\\":\\"you\\"}]}".write(toFile: me, atomically: true, encoding: .utf8)
+precondition(profileName(me) == "Chosen Name", "categorized profile name priority failed")
+let format = DateFormatter(); format.dateFormat = "yyyy-MM-dd"; let day = format.string(from: Date())
+let log = "{\\"at\\":\\"\\(day) 10:00:00\\",\\"usd\\":9}\\n{\\"at\\":\\"\\(day) 10:00:01\\",\\"reply\\":\\"Done\\",\\"usd\\":0.01}\\n"
+try! log.write(toFile: (Prefs.path as NSString).deletingLastPathComponent + "/log.jsonl", atomically: true, encoding: .utf8)
+let usage = FixtureMenu().today()
+precondition(usage.contains("Today: 1 ask") && usage.contains("1.00¢"), "usage counted checkpoints")
+"""
+        with tempfile.TemporaryDirectory() as root:
+            path, binary = Path(root) / "check.swift", Path(root) / "check"
+            path.write_text(swift)
+            compiled = subprocess.run(["swiftc", str(path), "-o", str(binary)], capture_output=True, text=True)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            result = subprocess.run([str(binary)], capture_output=True, text=True,
+                                    env={**os.environ, "ATTICUS_DIR": root})
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

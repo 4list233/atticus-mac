@@ -127,6 +127,10 @@
   /* memory */
   .rule { display: flex; align-items: center; gap: 10px; }
   .rule .t { color: var(--fg); }
+  .rule .field { text-align: left; }
+  /* a receipt in the box opened Settings here: the item glows once, then settles */
+  .flash { animation: flash 2.2s var(--ease) .35s backwards; }
+  @keyframes flash { 0%, 35% { background: rgba(10,132,255,.2); box-shadow: inset 2px 0 0 var(--accent); } }
   .x { all: unset; width: 22px; height: 22px; border-radius: 11px; display: grid; place-items: center; color: var(--fg3); font-size: 15px; }
   .x:hover { background: var(--sel); color: #ff453a; }
   .add { display: flex; gap: 8px; padding: 10px 14px; box-shadow: inset 0 .5px 0 var(--line); }
@@ -138,7 +142,23 @@
   .field::placeholder, textarea::placeholder { color: var(--fg3); }
   textarea.field { text-align: left; resize: none; height: 56px; line-height: 1.4; padding: 0; font: 13px system-ui; }
   .count { color: var(--fg3); font-size: 11px; font-variant-numeric: tabular-nums; flex: none; }
-  #facts .row { box-shadow: inset 0 .5px 0 var(--line); }
+  .profile-head { display:flex;align-items:center;justify-content:space-between;gap:12px;margin:22px 4px 7px; }
+  .profile-head h3 { margin:0; }
+  .profile-category { overflow:hidden; }
+  .profile-category + .profile-category { box-shadow:inset 0 .5px 0 var(--line); }
+  .profile-category summary { list-style:none;display:flex;align-items:center;gap:10px;min-height:44px;padding:0 14px;cursor:pointer; }
+  .profile-category summary::-webkit-details-marker { display:none; }
+  .profile-category summary::before { content:"›";color:var(--fg3);font-size:18px;transition:transform .15s var(--ease); }
+  .profile-category[open] summary::before { transform:rotate(90deg); }
+  .profile-category summary:focus-visible { outline:2px solid var(--accent);outline-offset:-2px; }
+  .profile-category summary b { flex:1;font-weight:500; }
+  .profile-category summary span { color:var(--fg3);font-size:11.5px;font-variant-numeric:tabular-nums; }
+  .profile-fact { gap:8px;padding-left:38px; }
+  .profile-fact .field { text-align:left; }
+  .source-pill { color:var(--fg2);background:var(--sel);border-radius:9px;padding:2px 7px;font-size:10.5px;white-space:nowrap; }
+  .profile-add { margin-left:24px; }
+  .profile-sources { display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 4px 0; }
+  #profileStatus { color:var(--fg3);font-size:11.5px;line-height:1.4;min-height:16px; }
 
   .status { display: flex; align-items: center; gap: 8px; }
   .dot { width: 8px; height: 8px; border-radius: 4px; background: var(--green); flex: none; }
@@ -172,10 +192,12 @@
   .about h1 { margin: 0; } .about p { color: var(--fg2); margin: 4px 0 0; }
   #feedbacktext { display:block;width:100%;box-sizing:border-box;resize:vertical;font:13px/1.5 system-ui;color:var(--fg);background:transparent;border:0;padding:14px;margin:14px 0 0;outline:none; }
   #feedbackbody { white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 system-ui;color:var(--fg2);padding:14px;margin:14px 0;-webkit-user-select:text; }
+  .meeting-prep { margin:0 0 6px; } .meeting-prep .row { gap:8px; } .meeting-prep .t { margin-right:6px; }
   .meeting-controls { margin:0 0 18px; }
   .meeting-controls summary { color:var(--fg2);cursor:pointer;padding:10px 2px;font-weight:500; }
   .meeting-controls summary:focus-visible { outline:2px solid var(--accent);border-radius:5px; }
   .row:has([data-k="meetingAuto"]) { flex-direction:column;align-items:flex-start;gap:8px; }
+  #styles .field { text-align:left; } #styles .sname { flex:none;width:96px;font-weight:500; }
 </style></head><body>
 
 <nav>
@@ -213,6 +235,9 @@
     <h3>Speech</h3>
     <div class="group">
       <div class="row"><div class="t"><b>Speech model</b><span>Apple’s on-device models, English (US). Free, and your voice stays on this Mac. Speech is Apple’s newest. Dictation is the one your keyboard’s mic uses.</span></div><div class="seg" data-k="speechModel"><button data-v="speech">Speech</button><button data-v="dictation">Dictation</button></div></div>
+      <div class="row"><div class="t"><b>Microphone</b><span>Automatic keeps Bluetooth headphones sounding clear when your Mac has its own mic.</span></div><select data-k="microphone"></select></div>
+      <div class="row"><div class="t"><b>Quiet other audio while I talk</b><span>Turns down your Mac while Atticus listens, then puts it back.</span></div><label class="sw"><input type="checkbox" data-k="quietAudio"></label></div>
+      <div class="row"><div class="t"><b>Audio level while I talk</b></div><input type="range" min="0" max="0.5" step="0.02" data-k="quietLevel"><span class="val" id="quietv"></span></div>
     </div>
     <h3>Atticus</h3>
     <div class="group">
@@ -256,6 +281,12 @@
       <div class="row"><div class="t"><b>Offer Sonnet when stuck</b><span>If a task fails on Haiku, Atticus asks to try that one task again with Sonnet. Your other asks stay on Haiku.</span></div><label class="sw"><input type="checkbox" data-k="escalate"></label></div>
       <div class="row"><div class="t"><b>Without asking</b><span>Retry with Sonnet right away. Slower and uses more of your plan, only when a task fails.</span></div><label class="sw"><input type="checkbox" data-k="escalateAuto"></label></div>
     </div>
+    <h3>Custom server</h3>
+    <div class="group">
+      <div class="row"><div class="t"><b>Address</b><span>Think with DeepSeek, Ollama, LM Studio or any server with Claude’s API instead of your Claude plan. Empty uses Claude.</span></div><input class="field" id="apiBase" placeholder="https://api.deepseek.com/anthropic" spellcheck="false" aria-label="Custom server address"></div>
+      <div class="row"><div class="t"><b>Key</b></div><input class="field" id="apiKey" type="password" placeholder="Not needed for local servers" aria-label="Custom server key"></div>
+      <div class="row"><div class="t"><b>Model</b><span>Screen tasks need a model that can see images.</span></div><input class="field" id="apiModel" list="apimodels" placeholder="deepseek-flash" spellcheck="false" aria-label="Custom server model"><datalist id="apimodels"></datalist></div>
+    </div>
     <h3>Speed</h3>
     <div class="group">
       <div class="row"><div class="t"><b>Instant commands</b><span>Opening apps, moving windows, searches and music run locally with no AI.</span></div><label class="sw"><input type="checkbox" data-k="instant"></label></div>
@@ -282,16 +313,17 @@
 
   <section id="memory">
     <h1>Memory</h1>
-    <h3>About you</h3>
+    <div class="profile-head"><h3>About you</h3><button class="btn blue" id="profileImport">Import from your Mac</button></div>
+    <p class="lede" style="margin:0 4px 9px;font-size:11.5px">Name and answer style stay handy. Other details are shared only when the ask or form needs them.</p>
+    <div class="group" id="profileCategories"></div>
+    <div class="profile-sources" id="profileSources"></div>
+    <div id="profileStatus" role="status" aria-live="polite"></div>
+    <h3>Learning</h3>
     <div class="group">
-      <div class="row"><div class="t"><b>Name</b></div><input class="field" id="myname" maxlength="40" placeholder="What should Atticus call you?" aria-label="Your name"></div>
-      <div class="row" style="align-items:flex-start"><div class="t" style="flex:none;width:120px"><b>A line about you</b><span>Sent with every ask, so keep it short.</span></div><textarea class="field" id="myabout" maxlength="200" placeholder="Student in Chicago. Uses Safari and Spotify." aria-label="About you"></textarea><span class="count" id="abcount"></span></div>
-      <div class="row"><div class="t"><b>Learn about me</b><span>Picks up lasting facts you mention (your city, your apps), 8 at most. Never health, money or passwords.</span></div><label class="sw"><input type="checkbox" data-k="learnMe"></label></div>
-      <div id="facts"></div>
+      <div class="row"><div class="t"><b>Learn about me</b><span>Keeps lasting facts you say. Never learns from screen text, health, money or passwords.</span></div><label class="sw"><input type="checkbox" data-k="learnMe"></label></div>
     </div>
-    <p class="lede" style="margin:8px 4px 0;font-size:11.5px">All of this together stays under 300 characters, about 0.008¢ an ask.</p>
     <h3>Rules</h3>
-    <div class="group" id="rules"></div>
+    <div class="group" id="rules" data-category="rules"></div>
     <p class="lede" style="margin:8px 4px 0;font-size:11.5px">Say “remember…” or “from now on…”, or add one here. Only rules that match what you ask are sent, so more rules don’t cost more.</p>
     <h3>Saved commands and procedures</h3>
     <div class="group" id="skills"></div>
@@ -356,15 +388,19 @@
   <section id="meetings">
     <div id="meetingbrowse">
       <h1>Meetings</h1><p class="lede">A little context, whenever you need it. Saved on this Mac.</p>
+      <div class="group meeting-prep"><div class="row"><div class="t"><b>Prepare for a call</b><span>Notes and files load when your next call starts.</span></div><button class="btn" data-do="meetingDemo" id="meetingDemo">Try Demo</button><button class="btn blue" data-do="meetingPrepOpen" id="meetingPrepOpen">Open Copilot</button></div></div>
       <details class="meeting-controls"><summary>Meeting Copilot settings</summary><div class="group">
       <div class="row"><div class="t"><b>Meeting Copilot</b><span>Hear a call and your microphone in a private panel. On supported calls, listening ends two seconds after the app releases the mic.</span></div><label class="sw"><input type="checkbox" data-k="meeting" aria-label="Meeting Copilot"></label></div>
       <div class="row"><div class="t"><b>Save meeting transcripts</b><span>Keep local transcripts, notes and answers. At the end, choose Save or Don’t save. Turning off offers to keep or delete past meetings.</span></div><label class="sw"><input type="checkbox" data-k="meetingSave" aria-label="Save meeting transcripts"></label></div>
-      <div class="row"><div class="t"><b>AI meeting summaries</b><span>Your AI client reads the transcript once for a recap and action items. Off: a local recap; no transcript is sent for summaries.</span></div><label class="sw"><input type="checkbox" data-k="meetingSummary" aria-label="AI meeting summaries"></label></div>
+      <div class="row"><div class="t"><b>AI meeting summaries</b><span>Claude reads the transcript once for a recap and action items. With Devin, meetings stay on this Mac. Off: a local recap, and prep won’t search connected email or documents.</span></div><label class="sw"><input type="checkbox" data-k="meetingSummary" aria-label="AI meeting summaries"></label></div>
       <div class="row"><div class="t"><b>Get ready before calls</b><span>A minute or two before a call on your calendar, a small card offers to load the invite and notes as context.</span></div><label class="sw"><input type="checkbox" data-k="meetingNudge" aria-label="Get ready before calls"></label></div>
       <div class="row"><div class="t"><b>Notice when you’re in a call</b><span>When Zoom, Meet, Teams, FaceTime, Slack or WhatsApp has used your mic for a few seconds, a small card asks if Atticus should listen.</span></div><label class="sw"><input type="checkbox" data-k="meetingDetect" aria-label="Notice when you’re in a call"></label></div>
-      <div class="row"><div class="t"><b>Answer questions on its own</b><span>It spots questions (a “?”, a question word, or your name). “When it’s sure” answers only from your context, the call, or plain facts.</span></div><div class="seg" data-k="meetingAuto" aria-label="Answer questions on its own"><button data-v="sure">When it’s sure</button><button data-v="always">Always</button><button data-v="ask">Ask me first</button></div></div>
-      <div class="row"><div class="t"><b>Try a demo meeting</b><span>Two voices, about a minute. Demo context loads for you.</span></div><button class="btn" data-do="meetingDemo" id="meetingDemo">Try Demo</button></div>
-      </div></details>
+      <div class="row"><div class="t"><b>Answer questions on its own</b><span>It uses a strict AI check and ignores small talk, rhetoric and anything you say on your own mic.</span></div><div class="seg" data-k="meetingAuto" aria-label="Answer questions on its own"><button data-v="sure">When it’s sure</button><button data-v="always">Always</button><button data-v="ask">Ask me first</button></div></div>
+      <div class="row"><div class="t"><b>Prep in a Claude chat</b><span>Copies a prompt that drafts your call notes.</span></div><button class="btn" data-do="meetingPrepPrompt" id="meetingPrepPrompt">Copy Prompt</button></div>
+      </div>
+      <h3>Answer styles</h3>
+      <div class="group" id="styles"></div>
+      </details>
       <input type="search" id="meetingq" placeholder="Search titles and transcripts" aria-label="Search meetings" autocomplete="off">
       <div id="meetingcount" role="status">Loading meetings…</div>
       <div id="meetinglist" class="group" role="list" aria-label="Saved meetings"></div>
@@ -442,10 +478,11 @@
   document.querySelectorAll('.seg[data-k],input[data-k],select[data-k]').forEach(e=>{if(e.matches('.seg'))e.setAttribute('role','group');if(!e.hasAttribute('aria-label')&&!e.hasAttribute('aria-labelledby'))e.setAttribute('aria-label',e.closest('.row')?.querySelector('.t b')?.textContent||e.dataset.k)});
 
   const SOUNDS = ['None', 'Pop', 'Tink', 'Glass', 'Ping', 'Purr', 'Bottle', 'Blow', 'Hero', 'Funk', 'Morse', 'Submarine', 'Frog', 'Sosumi', 'Basso'];
-  document.querySelectorAll('select').forEach(s => {
+  document.querySelectorAll('select[data-k^="sound"]').forEach(s => {
     s.innerHTML = SOUNDS.map(n => `<option>${n}</option>`).join('');
     s.onchange = () => { set(s.dataset.k, s.value); if (s.value !== 'None') post({ do: 'preview', sound: s.value }); };
   });
+  document.querySelector('[data-k="microphone"]').onchange = e => set('microphone', e.target.value);
   document.querySelectorAll('.seg[data-k]').forEach(g => g.querySelectorAll('button').forEach(b => b.onclick = () => set(g.dataset.k, b.dataset.v)));
   document.querySelectorAll('.sw input[data-k]').forEach(i => i.onchange = () => set(i.dataset.k, i.checked));
   document.querySelectorAll('input[type=range]').forEach(r => {
@@ -465,19 +502,53 @@
     $('talkhint').textContent = P.talkMode === 'toggle' ? 'Press once to listen, again to send. Pauses keep listening.' : 'Hold to listen. Release to send. Hover the box to type.';
     document.querySelector('[data-k=talkMode]').closest('.group').hidden = P.input === 'type';
     document.querySelectorAll('.sw input[data-k]').forEach(i => i.checked = !!P[i.dataset.k]);
-    document.querySelectorAll('select').forEach(s => s.value = P[s.dataset.k]);
+    document.querySelectorAll('select').forEach(s => {
+      const value = P[s.dataset.k];
+      s.value = s.dataset.k === 'microphone' && ![...s.options].some(o => o.value === value) ? 'automatic' : value;
+    });
     document.querySelectorAll('input[type=range]').forEach(r => r.value = P[r.dataset.k]);
     $('volv').textContent = Math.round(P.volume / .6 * 100) + '%';
+    $('quietv').textContent = Math.round(P.quietLevel * 100) + '%'; $('quietv').closest('.row').hidden = !P.quietAudio;
     $('delayv').textContent = (+P.aheadDelay).toFixed(1) + ' s';
     $('modelwhy').textContent = WHY[P.model] || '';
+    SERVER.forEach(k => { if (document.activeElement !== $(k)) $(k).value = P[k] || ''; });
+    document.querySelector('[data-k=model]').closest('.group').style.opacity = P.apiBase ? .45 : 1;
     const devin = P.client === 'devin';
     $('brainlede').textContent = devin ? 'Atticus thinks with Devin, on your Devin plan.' : 'Atticus thinks with Claude, on your Claude plan.';
     $('clientwhy').textContent = devin ? 'Devin CLI. Tools wait for confirmed words; commands use Atticus’s safety check and appear as steps.' : 'Claude Code. Runs on your Claude plan; no API key.';
     ['model', 'escalate', 'escalateAuto'].forEach(k => document.querySelector(`[data-k=${k}]`).closest('.row').hidden = devin);
     $('planname').textContent = devin ? 'Devin' : 'Claude';
     $('safenote').textContent = devin ? 'Safe mode makes every Devin command wait for approval. Direct file-edit, MCP and subagent tools stay off.' : 'AI commands use a scratch folder. Deletes, sends, purchases and commands requesting access outside it need your approval.';
-    $('meetingDemo').disabled = !P.meeting;
+    $('meetingDemo').disabled = $('meetingPrepOpen').disabled = !P.meeting;
+    paintStyles();
     document.querySelector('[data-k=aheadDelay]').closest('.row').style.opacity = P.ahead ? 1 : .45;
+  }
+
+  // Meeting answer styles: rename, rewrite, remove or add; a rename keeps the picked default pointing at it.
+  function paintStyles() {
+    if (document.activeElement?.matches('#styles input')) return;   // a refresh must not wipe what is being typed
+    const now = () => P.meetingStyles || [], save = l => set('meetingStyles', l);   // read at event time: an edit may not have re-rendered yet
+    const rows = now().map((s, i) => {
+      const row = document.createElement('div'); row.className = 'row rule';
+      row.innerHTML = '<input class="field sname" maxlength="24" placeholder="Name" aria-label="Style name"><input class="field" maxlength="300" placeholder="How answers should sound"><button class="x" aria-label="Remove style">×</button>';
+      const [name, text, x] = row.children; name.value = s.name; text.value = s.text; text.setAttribute('aria-label', s.name + ' instructions');
+      name.onchange = () => {
+        const v = name.value.trim(), old = now()[i].name;
+        if (!v || v === 'Custom…' || now().some((o, j) => j !== i && o.name === v)) { name.value = old; return; }
+        if (P.meetingStyle === old) set('meetingStyle', v);
+        save(now().map((o, j) => j === i ? { ...o, name: v } : o));
+      };
+      text.onchange = () => save(now().map((o, j) => j === i ? { ...o, text: text.value.trim() } : o));
+      x.onclick = () => { document.activeElement?.blur(); save(now().filter((_, j) => j !== i)); };
+      return row;
+    });
+    const add = document.createElement('div'); add.className = 'add'; add.innerHTML = '<button class="btn">Add Style</button>';
+    add.firstChild.onclick = () => {
+      document.activeElement?.blur();
+      const list = now(); let n = list.length + 1; while (list.some(o => o.name === 'Style ' + n)) n++;
+      save([...list, { name: 'Style ' + n, text: '' }]); $('styles').querySelectorAll('.rule input:not(.sname)')[list.length]?.focus();
+    };
+    $('styles').replaceChildren(...rows, add);
   }
 
   const money = u => u < 1 ? (u * 100).toFixed(u < .1 ? 2 : 1) + '¢' : '$' + u.toFixed(2);
@@ -489,32 +560,77 @@
     const esc = t => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const typed = $('newrule')?.value || '';
     $('rules').innerHTML = (s.rules.length ? s.rules.map((r, i) =>
-      `<div class="row rule"><div class="t">${esc(r)}</div><button class="x" data-i="${i}" aria-label="Forget this rule">×</button></div>`).join('')
+      `<div class="row rule"><input class="field" data-rule="${i}" value="${esc(r)}" aria-label="Edit rule"><button class="x" data-i="${i}" aria-label="Forget this rule">×</button></div>`).join('')
       : '<div class="empty">No rules yet.</div>') +
       '<div class="add"><input id="newrule" placeholder="When I say focus mode, close Slack and open Notes" aria-label="New rule"><button class="btn blue" id="addrule">Add</button></div>';
     document.querySelectorAll('.x').forEach(b => b.onclick = () => post({ do: 'forget', line: s.rules[+b.dataset.i] }));
+    document.querySelectorAll('[data-rule]').forEach(input => input.onchange = () => {   // emptied = forgotten
+      const v = input.value.trim(), old = s.rules[+input.dataset.rule]; post(v ? { do: 'rule', old, text: v } : { do: 'forget', line: old });
+    });
     const add = () => { const v = $('newrule').value.trim(); if (v) post({ do: 'remember', line: v }); };
     $('newrule').value = typed; $('addrule').onclick = add; $('newrule').onkeydown = e => { if (e.key === 'Enter') add(); };
     $('skills').innerHTML = (s.skills || []).length ? s.skills.map((k, i) =>
       `<div class="row rule"><div class="t"><b>“${esc(k.say)}”</b><span>${esc(k.reply)}</span></div><button class="x" data-u="${i}" aria-label="Forget this command or procedure">×</button></div>`).join('')
       : '<div class="empty">None yet. Ask Atticus to do something; if it works, it lands here.</div>';
     document.querySelectorAll('[data-u]').forEach(b => b.onclick = () => post({ do: 'unlearn', say: s.skills[+b.dataset.u].say }));
-    const m = s.me || { name: '', about: '', facts: [] };
-    if (document.activeElement !== $('myname')) $('myname').value = m.name;
-    if (document.activeElement !== $('myabout')) $('myabout').value = m.about;
-    $('abcount').textContent = $('myabout').value.length + '/200';
-    $('facts').innerHTML = m.facts.map((f, i) =>
-      `<div class="row rule"><div class="t"><span style="margin:0;color:var(--fg)">${esc(f)}</span></div><button class="x" data-f="${i}" aria-label="Forget this">×</button></div>`).join('');
-    document.querySelectorAll('[data-f]').forEach(b => b.onclick = () => post({ do: 'me', what: 'drop', text: m.facts[+b.dataset.f] }));
+    paintProfile(s.me || { facts: [] }, esc);
     $('ptext').textContent = s.plan.text; $('pdot').classList.toggle('bad', !s.plan.ok);
     $('pbtn').style.display = s.plan.ok ? 'none' : '';
+    painted = true; reveal();
   }
 
-  // About you: saved when the field loses focus or on Return
-  const saveMe = (id, what) => { const e = $(id); e.onchange = () => post({ do: 'me', what, text: e.value.trim() });
-    e.onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); e.blur(); } }; };
-  saveMe('myname', 'name'); saveMe('myabout', 'about');
-  $('myabout').oninput = () => $('abcount').textContent = $('myabout').value.length + '/200';
+  // st.reveal({c, t}): a receipt in the box was clicked. Open its category, scroll to the item and let it glow (the category, if it was forgotten).
+  let want = null, painted = false;
+  function reveal() {
+    if (!want || !painted) return;
+    const { c, t } = want, group = document.querySelector(`[data-category="${CSS.escape(c)}"]`);
+    if (!group) return;
+    want = null;
+    if (group.tagName === 'DETAILS') { group.open = true; openProfile.add(c); }
+    const row = [...group.querySelectorAll('input.field')].find(i => i.value === t)?.closest('.row') || group.querySelector('summary') || group;
+    const still = document.body.classList.contains('reduce') || matchMedia('(prefers-reduced-motion: reduce)').matches;
+    row.scrollIntoView({ block: 'center', behavior: still ? 'auto' : 'smooth' });
+    row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
+  }
+
+  const PROFILE = [['basics','Basics','name: Saarth'],['contact','Contact','email: me@example.com'],['places','Places','home address: …'],
+    ['school_work','School & work','school: …'],['links','Links & handles','website: …'],['preferences','Preferences','answers: concise'],
+    ['people','People','dad: Sunil Ranka'],['notes','Notes','Anything else']];
+  const openProfile = new Set();
+  function paintProfile(profile, esc) {
+    document.querySelectorAll('.profile-category[open]').forEach(d => openProfile.add(d.dataset.category));
+    const facts = profile.facts || [], sourceCounts = {};
+    facts.forEach(f => sourceCounts[f.source] = (sourceCounts[f.source] || 0) + 1);
+    $('profileCategories').innerHTML = PROFILE.map(([key,title,hint]) => {
+      const rows = facts.filter(f => f.category === key);
+      return `<details class="profile-category" data-category="${key}" ${openProfile.has(key) ? 'open' : ''}><summary><b>${title}</b><span>${rows.length}</span></summary>` +
+        rows.map(f => `<div class="row profile-fact"><input class="field" data-profile-id="${esc(f.id)}" value="${esc(f.kind + ': ' + f.value)}" aria-label="Edit ${esc(f.kind)}">` +
+          `<span class="source-pill">${esc(f.source)} · ${esc(f.date || '')}</span><button class="x" data-profile-drop="${esc(f.id)}" aria-label="Delete ${esc(f.kind)}">×</button></div>`).join('') +
+        `<div class="add profile-add"><input data-profile-add="${key}" maxlength="345" placeholder="${esc(hint)}" aria-label="Add to ${title}"><button class="btn blue">Add</button></div></details>`;
+    }).join('');
+    document.querySelectorAll('.profile-category').forEach(d => d.ontoggle = () => d.open ? openProfile.add(d.dataset.category) : openProfile.delete(d.dataset.category));
+    document.querySelectorAll('[data-profile-id]').forEach(input => {
+      input.onchange = () => { if (input.value.trim()) post({do:'me',action:'set',id:input.dataset.profileId,text:input.value.trim()}); };
+      input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } };
+    });
+    document.querySelectorAll('[data-profile-drop]').forEach(b => b.onclick = () => post({do:'me',action:'drop',id:b.dataset.profileDrop}));
+    document.querySelectorAll('[data-profile-add]').forEach(input => {
+      const add = () => { if (input.value.trim()) post({do:'me',action:'add',category:input.dataset.profileAdd,text:input.value.trim()}); };
+      input.nextElementSibling.onclick = add; input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
+    });
+    const sourceName = {you:'you',contacts:'contacts',mail:'mail',learned:'learned'};
+    $('profileSources').innerHTML = Object.keys(sourceName).filter(source => sourceCounts[source]).map(source =>
+      `<button class="btn red" data-profile-source="${source}">Forget everything from ${sourceName[source]} · ${sourceCounts[source]}</button>`).join('');
+    document.querySelectorAll('[data-profile-source]').forEach(b => b.onclick = () => post({do:'me',action:'forget-source',source:b.dataset.profileSource}));
+    const imported = (sourceCounts.contacts || 0) + (sourceCounts.mail || 0);
+    $('profileImport').textContent = imported ? 'Refresh' : 'Import from your Mac';
+    if (imported && !$('profileStatus').textContent) $('profileStatus').textContent = `${sourceCounts.contacts || 0} from Contacts · ${sourceCounts.mail || 0} from Mail`;
+  }
+  $('profileImport').onclick = () => { $('profileImport').disabled = true; $('profileStatus').textContent = 'Importing from Contacts and Mail…'; post({do:'profileImport'}); };
+  const SERVER = ['apiBase', 'apiKey', 'apiModel'];   // Intelligence → Custom server, saved like About you
+  SERVER.forEach(k => { const e = $(k); e.onchange = () => { set(k, e.value.trim()); if (k !== 'apiModel' && P.apiBase) post({ do: 'models' }); };
+    e.onkeydown = ev => { if (ev.key === 'Enter') e.blur(); }; });
+  $('apiModel').onfocus = () => { if (P.apiBase) post({ do: 'models' }); };
 
   // Apps: every installed app; suggested ones start ticked. Atticus.swift asks macOS about the ticked ones in one go.
   let APPS = [], pick = null, asking = 0, total = 0, view = 'key';
@@ -616,7 +732,17 @@
   $('feedbackopen').onclick=()=>post({do:'feedbackOpen'});
   window.st = {
     feedback(result){if(result.revision!==feedbackRevision)return;if(result.error){$('feedbackbody').textContent=result.error;$('feedbackopen').disabled=true;return;}if(result.include!==$('feedbackinclude').checked)return;$('feedbackbody').textContent=result.body;$('feedbackopen').disabled=false;},
+    profileImport(result) {
+      $('profileImport').disabled = false;
+      const errors = result.errors || [], counts = result.counts || {};
+      $('profileStatus').textContent = errors.length === 2 ? 'Couldn’t access Contacts or Mail. Nothing changed.'
+        : `${counts.contacts || 0} from Contacts · ${counts.mail || 0} from Mail${errors.length ? ` · ${errors[0]} unavailable` : ''}`;
+    },
     motion(on){document.body.classList.toggle('reduce',on)},
+    models(list) {   // the custom server's models; an empty Model box takes the first
+      $('apimodels').innerHTML = list.map(m => `<option value="${m.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))}">`).join('');
+      if (list.length && !P.apiModel && document.activeElement !== $('apiModel')) set('apiModel', list[0]);
+    },
     meetings(result){
       if(result.error){meetingNotice(result.error);$('meetingcount').textContent='Could not load meetings.';return;}
       if(result.notice){meetingNotice(result.notice);return;}
@@ -628,6 +754,7 @@
       document.querySelectorAll('[data-g]').forEach(b => { b.hidden = !!p[b.dataset.g]; b.previousElementSibling.hidden = !p[b.dataset.g]; });
     },
     tab(name) { document.querySelector(`nav button[data-s="${name}"]`).click(); },
+    reveal(item) { want = item; reveal(); },
     apps(list) {
       if (asking) return;
       if (!pick) pick = new Set(list.filter(a => a.suggested && a.status === 'new').map(a => a.id));
@@ -640,12 +767,18 @@
     },
     allowDone() { asking = 0; post({ do: 'apps' }); },
     load(d) {
-      P = {talkMode: 'hold', meetingSave: true, meetingSummary: true, client: 'claude', ...d.prefs}; recording = false;
+      P = {talkMode: 'hold', microphone: 'automatic', quietAudio: false, quietLevel: 0.18, meetingSave: true, meetingSummary: true, client: 'claude', ...d.prefs}; recording = false;
       $('shortcut').classList.remove('rec'); $('change').textContent = 'Change Shortcut';
       if (d.icon) $('icon').src = $('bigicon').src = d.icon;
       $('ver').textContent = $('aboutver').textContent = d.version ? 'Version ' + d.version : 'Atticus';
       if (d.update) $('upstatus').textContent = d.update;
+      if (d.mics) this.mics(d.mics);
       paint(); if (d.state) state(d.state);
+    },
+    mics(list) {
+      const select = document.querySelector('[data-k="microphone"]'), value = P.microphone;
+      select.replaceChildren(new Option('Automatic (recommended)', 'automatic'), ...list.map(m => new Option(m.name, m.uid)));
+      select.value = [...select.options].some(o => o.value === value) ? value : 'automatic';
     },
     rec(m) { if (recording) /^Add/.test(m) ? showCaps('', m) : showCaps(m, m ? '' : 'Press your shortcut'); },   // held modifiers, live
     taken() { $('schint').textContent = 'Another app already uses that shortcut. Kept your old one.'; $('schint').className = 'warn';

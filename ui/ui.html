@@ -192,17 +192,58 @@
   .ok.offer .off { display: block; margin: 9px auto 0; height: auto; flex: none; border-radius: 0; background: none; box-shadow: none; }
   .tip.gone { opacity: 0; transform: translateY(-4px); transition: opacity .4s, transform .4s; }
 
+  /* memory receipt: one quiet row under an answer that remembered or forgot something. Click: it opens in place; click an item: Settings → Memory there */
+  .mem { margin-top: 8px; animation: in .35s var(--ease) .15s both; }
+  .mem-h { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0; border: 0; cursor: pointer;
+    font: 500 12px -apple-system, system-ui, sans-serif; color: #8e8e93; background: none; transition: color .2s; }
+  .mem-h:hover, .mem.open .mem-h { color: #f5f5f7; }
+  .mem-h .ic { width: 14px; height: 14px; flex: none; border-radius: 50%; display: grid; place-items: center; background: rgba(48,209,88,.2); }
+  .mem.off .mem-h .ic { background: rgba(142,142,147,.22); }
+  .mem svg { fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .mem-h .ic svg { width: 8px; height: 8px; stroke: #30d158; } .mem.off .mem-h .ic svg { stroke: #a1a1a6; }
+  .mem.off .mem-h b { text-decoration: line-through; text-decoration-color: rgba(161,161,166,.7); }
+  .mem-h b { font-weight: 500; } .mem-h .cat { color: #8e8e93; }
+  .mem-h .chev { width: 8px; height: 8px; stroke: currentColor; opacity: .7; transition: transform .38s var(--spring); }
+  .mem.open .mem-h .chev { transform: rotate(90deg); }
+  .mem-b { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows .36s var(--ease), opacity .24s var(--ease); }
+  .mem.open .mem-b { grid-template-rows: 1fr; opacity: 1; }
+  .mem-b > div { min-height: 0; overflow: hidden; }
+  .mem-card { margin-top: 6px; padding: 4px; border-radius: 12px; background: rgba(255,255,255,.05); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.1); }
+  .mem-c { padding: 6px 9px 2px; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: #8e8e93; }
+  .mem-i { display: flex; align-items: baseline; gap: 8px; width: 100%; padding: 6px 9px; border: 0; border-radius: 8px; text-align: left; cursor: pointer;
+    font: 12.5px/1.4 -apple-system, system-ui, sans-serif; color: #e5e5ea; background: none; opacity: 0; transform: translateY(-4px);
+    transition: background .15s, opacity .25s var(--ease), transform .36s var(--ease); }
+  .mem.open .mem-i { opacity: 1; transform: none; transition-delay: 0s, calc(60ms + var(--i) * 35ms), calc(60ms + var(--i) * 35ms); }
+  .mem-i:hover { background: rgba(255,255,255,.07); }
+  .mem-i svg { width: 9px; height: 9px; flex: none; stroke: #30d158; transform: translateY(1px); }
+  .mem-i.del svg { stroke: #8e8e93; } .mem-i.del span { color: #8e8e93; text-decoration: line-through; }
+  .mem-i span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .mem-i em { flex: none; font: 500 11px -apple-system, system-ui, sans-serif; color: #8e8e93; opacity: 0; transition: opacity .2s; }
+  .mem-i:hover em, .mem-i:focus-visible em { opacity: 1; }
+
   /* typing box: grows in on hover (or the shortcut, in typing mode); the mic goes back to voice */
-  #comp { display: flex; align-items: center; gap: 8px; margin-top: 0; height: 0; opacity: 0; overflow: hidden; flex: none; transition: height .24s var(--ease), margin-top .24s var(--ease), opacity .18s; }
+  #comp { position: relative; display: flex; align-items: center; gap: 8px; margin-top: 0; height: 0; opacity: 0; overflow: hidden; flex: none; transition: height .24s var(--ease), margin-top .24s var(--ease), opacity .18s; }
   #comp.open { height: 36px; margin-top: 12px; opacity: 1; }
+  #model, #models button { flex: none; height: 34px; max-width: 132px; padding: 0 12px; border: 0; border-radius: 17px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font: 500 12px -apple-system, system-ui, sans-serif; color: #8e8e93; background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14);
+    transition: color .2s, background .25s, opacity .22s var(--ease), transform .38s var(--ease); }
+  #model:hover, #models button:hover { color: #fff; }
+  /* the model row: the choices fan out of the chip while the field and mic fade back; a click mid-way just reverses */
+  #models { position: absolute; inset: 1px 0; display: flex; justify-content: flex-end; gap: 6px; overflow-x: auto; scrollbar-width: none; pointer-events: none; }
+  #models button { opacity: 0; transform: translateX(var(--dx, 0px)) scale(.9); transition-duration: .2s, .25s, .12s, .3s; }   /* folding back: labels fade before they overlap */
+  #models button.on { color: #fff; background: rgba(10,132,255,.35); }
+  #comp.pick #models { pointer-events: auto; }
+  #comp.pick #models button { opacity: 1; transform: none; transition-duration: .2s, .25s, .22s, .38s; transition-delay: 0s, 0s, calc(var(--i) * 30ms), calc(var(--i) * 30ms); }
+  #ask { transform-origin: left center; } #comp.pick #ask { opacity: 0; transform: scale(.97); pointer-events: none; }
+  #comp.pick #model, #comp.pick #mic { opacity: 0; transform: scale(.8); pointer-events: none; }
   #ask { flex: 1; min-width: 0; height: 34px; box-sizing: border-box; padding: 0 13px; border: 0; outline: 0; border-radius: 17px;
     font: 13.5px -apple-system, system-ui, sans-serif; color: #fff; caret-color: #0a84ff; -webkit-user-select: text; cursor: text;
-    background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14); transition: background .25s, box-shadow .25s; }
+    background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14); transition: background .25s, box-shadow .25s, opacity .22s var(--ease), transform .38s var(--ease); }
   #ask::placeholder { color: #8e8e93; }
   #ask:focus { background: rgba(255,255,255,.12); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.22), 0 0 0 3px rgba(10,132,255,.35); }
   #mic { flex: none; width: 34px; height: 34px; border-radius: 50%; border: 0; padding: 0; display: grid; place-items: center; cursor: pointer;
     background: radial-gradient(120% 120% at 30% 15%, rgba(255,255,255,.26), rgba(255,255,255,.07) 60%);
-    box-shadow: inset 0 0 0 .5px rgba(255,255,255,.3), 0 2px 6px rgba(0,0,0,.22); transition: transform .35s var(--spring), background .25s; }
+    box-shadow: inset 0 0 0 .5px rgba(255,255,255,.3), 0 2px 6px rgba(0,0,0,.22); transition: transform .35s var(--spring), background .25s, opacity .22s var(--ease); }
   #mic:hover { transform: scale(1.1); background: radial-gradient(120% 120% at 30% 15%, rgba(255,255,255,.4), rgba(255,255,255,.12) 60%); }
   #mic:active { transform: scale(.94); }
   #mic svg { width: 15px; height: 15px; fill: none; stroke: #fff; stroke-width: 1.8; stroke-linecap: round; }
@@ -240,6 +281,7 @@
   <div id="head"><canvas id="orb"></canvas><div id="status"></div></div>
   <div id="thread"></div>
   <div id="comp" inert><input id="ask" placeholder="Ask Atticus…" autocomplete="off" spellcheck="false" aria-label="Ask Atticus">
+    <div id="models" role="menu" aria-label="Model"></div><button id="model" title="Model" aria-label="Model" hidden></button>
     <button id="mic" title="Talk instead" aria-label="Talk instead"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button></div>
 </div>
 <div class="e" id="eL"></div><div class="e" id="eR"></div><div class="e" id="eT"></div><div class="e" id="eB"></div>
@@ -310,6 +352,24 @@
     const t = $('ask').value.trim();
     if (t && !window.ui.respond(t)) post({ send: t });
   };
+  // the model row: one click picks. Each choice starts where the chip is (--dx) and fans out; the label changes while the chip is faded out
+  let pickTimer = 0;
+  const spread = () => [...$('models').children].forEach((b, i) => { b.style.setProperty('--i', i); b.style.setProperty('--dx', $('model').offsetLeft - b.offsetLeft + 'px'); });
+  const pickRow = on => {
+    clearTimeout(pickTimer);
+    if (on) spread();
+    $('comp').classList.toggle('pick', on); $('models').inert = !on; $('ask').inert = on; $('model').setAttribute('aria-expanded', on);
+    if (on) ($('models').querySelector('.on') || $('models').firstChild)?.focus({ preventScroll: true });
+  };
+  $('models').inert = true;
+  $('model').onclick = () => { pickRow(true); post({ models: true }); };
+  $('models').onclick = e => {
+    const b = e.target.closest('button'); if (!b) return;
+    $('models').querySelectorAll('button').forEach(o => { o.classList.toggle('on', o === b); o.setAttribute('aria-checked', o === b); });   // the highlight lands first
+    post({ model: b.dataset.v }); $('model').textContent = b.textContent;
+    pickTimer = setTimeout(() => pickRow(false), reduced.matches ? 0 : 170);
+  };
+  $('models').onkeydown = e => { if (e.key === 'Escape') { e.preventDefault(); pickRow(false); $('model').focus(); } };
   $('mic').onclick = () => { $('ask').value = ''; comp(false); post({ mic: 1 }); };
   const status = (s, live) => {
     if (s && listening) s = 'Listening…';   // early AI notes never replace it while the user talks
@@ -318,6 +378,34 @@
   };
   let followFrame=0;
   const follow = ms => { cancelAnimationFrame(followFrame); const end = performance.now() + ms; (function f() { fit(); if (performance.now() < end) followFrame=requestAnimationFrame(f); })(); };   // interrupt a prior transition instead of stacking geometry loops
+  // ✎ [{c, label, t, add}]: what this ask remembered (✓) or forgot (struck through), as one row; Settings opens on the item
+  const CHECK = '<svg viewBox="0 0 10 10"><path d="M2 5.3l2 2L8 3"/></svg>', DASH = '<svg viewBox="0 0 10 10"><path d="M2.5 5h5"/></svg>';
+  const receipt = items => {
+    if (!items.length) return;
+    const adds = items.some(i => i.add), dels = items.some(i => !i.add), d = document.createElement('div');
+    d.className = 'mem' + (adds ? '' : ' off');
+    d.innerHTML = `<button class="mem-h" aria-expanded="false"><i class="ic">${adds ? CHECK : DASH}</i><b></b><span class="cat"></span><svg class="chev" viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3"/></svg></button><div class="mem-b" inert><div><div class="mem-card"></div></div></div>`;
+    d.querySelector('b').textContent = adds && dels ? 'Updated' : adds ? 'Remembered' : 'Forgot';
+    d.querySelector('.cat').textContent = '· ' + [...new Set(items.map(i => i.label))].join(', ');
+    const card = d.querySelector('.mem-card'), body = d.querySelector('.mem-b');
+    let i = 0;
+    for (const label of new Set(items.map(i => i.label))) {
+      const c = document.createElement('div'); c.className = 'mem-c'; c.textContent = label; card.append(c);
+      for (const item of items.filter(x => x.label === label)) {
+        const b = document.createElement('button'); b.className = 'mem-i' + (item.add ? '' : ' del'); b.style.setProperty('--i', i++);
+        b.innerHTML = (item.add ? CHECK : DASH) + '<span></span><em>Settings ›</em>'; b.querySelector('span').textContent = item.t;
+        b.setAttribute('aria-label', (item.add ? 'Remembered' : 'Forgot') + ` in ${label}: ${item.t}. Open in Settings`);
+        b.onclick = e => { e.stopPropagation(); post({ memory: { c: item.c, t: item.t } }); };
+        card.append(b);
+      }
+    }
+    d.querySelector('.mem-h').onclick = e => {
+      e.stopPropagation();
+      const open = d.classList.toggle('open'); body.inert = !open; e.currentTarget.setAttribute('aria-expanded', open);
+      follow(420);   // the box grows and shrinks with it, frame by frame
+    };
+    const a = part('a'); a ? a.after(d) : turn().append(d); fit();
+  };
   const settle = () => turn()?.querySelectorAll('.step.live').forEach(e => { e.classList.remove('live'); e.classList.add('done'); });
   const reveal = (el, text) => {   // the answer fades in word by word, under a second in total
     el.textContent = '';
@@ -398,7 +486,7 @@
   new ResizeObserver(miniRect).observe($('thread'));
 
   let clockStart = null, clockHeld = null, clockFrame = 0, clock = null;   // clockHeld: ms so far while a card waits for the user
-  const clockPaint = () => { clock.querySelector('b').textContent = ((performance.now() - clockStart) / 1000).toFixed(2) + ' s'; };
+  const clockPaint = () => { const t = (performance.now() - clockStart) / 1000; clock.querySelector('b').textContent = t < 60 ? t.toFixed(2) + ' s' : Math.floor(t / 60) + ':' + (t % 60).toFixed(2).padStart(5, '0'); };   // past a minute, stopwatch style: 4:01.27
   const clockTick = () => {
     if (clockStart === null) return;
     clockPaint();
@@ -488,12 +576,16 @@
       else if (tag === '·') status(s, true);
       else if (tag === '▸') {
         settle();
-        const st = part('steps'), positions = mini?.classList.contains('on') && !reduced.matches ? new Map([...st.children].map(e => [e, {top:e.getBoundingClientRect().top,opacity:+getComputedStyle(e).opacity}])) : null;
+        const st = part('steps'), last = st.lastElementChild, verb = t => t.split(/[\s→]/)[0];
+        if (last?.classList.contains('step') && verb(last.textContent) === verb(s)) { last.classList.add('live'); last.firstChild.textContent = s; }   // the same kind of step again (scroll, scroll): one row that updates, not a list
+        else {
+        const positions = mini?.classList.contains('on') && !reduced.matches ? new Map([...st.children].map(e => [e, {top:e.getBoundingClientRect().top,opacity:+getComputedStyle(e).opacity}])) : null;
         if (positions) for(const e of positions.keys())e.getAnimations().forEach(a=>a.cancel());
         const d = document.createElement('div'); d.className = 'step live'; d.innerHTML = '<span></span>'; d.firstChild.textContent = s;
         st.append(d);
         while (st.children.length > 4) { st.firstChild.remove(); st.dataset.more = (+st.dataset.more || 0) + 1; }   // long tasks: a quiet count, not a wall of steps
         if (positions) for (const e of st.children) e.animate([{transform:`translateY(${positions.has(e) ? positions.get(e).top - e.getBoundingClientRect().top : 19}px)`,opacity:positions.get(e)?.opacity??0},{transform:'none',opacity:1}],{duration:350,easing:'cubic-bezier(.2,.8,.2,1)'});
+        }
         status(s, true);
         setState(/^(Searching|Reading|Looking|Taking|Checking|Finding|Waiting)/.test(s) ? 'searching' : /^(Moving|Opening|Using|Clicking|Scrolling|Pressing|Dragging|Typing)/.test(s) ? 'working' : 'connecting');
       } else if (tag === '✓') {
@@ -508,6 +600,7 @@
           b.onclick = e => { e.stopPropagation(); b.remove(); post({ send: `That's wrong, try again: ${q}\n(If it isn't clear what to change, ask me what was wrong.)` }); };
           clock.append(b);
         }
+      } else if (tag === '✎' && turn()) { try { receipt(JSON.parse(s)); } catch {}
       } else if (tag === 'i' && turn()) {
         const learned = s.startsWith('Learned: '), d = document.createElement('div');   // "Learned" when it saved a rule, else "Tip"
         d.className = 'tip' + (learned ? ' learned' : ''); d.dataset.k = learned ? 'Learned' : 'Tip'; d.textContent = learned ? s.slice(9) : s;
@@ -545,11 +638,12 @@
     compose(on) { comp(on, on); },
     draft(t) { $('ask').value = t; comp(true, true); },
     tap([x, y]) {   // a click on the box, not a drag: on the answer = copy it, anywhere else = type
-      const el = document.elementFromPoint(x, y), b = el?.closest('.ok button, .ok, .pk button, .pk, .rewrite button, .mini-view');
+      const el = document.elementFromPoint(x, y), b = el?.closest('.ok button, .ok, .pk button, .pk, .rewrite button, .mini-view, .mem-i, .mem-h, .mem');
       const field = el?.closest('.ok input, .ok textarea, .pk input, .pk textarea');   // "Something else…": a text field in a card takes the cursor
       if (field) return field.focus();
       if (b) return b.click();
       if (el?.closest('#mode')) return post({ safe: true });
+      if ($('comp').classList.contains('pick')) pickRow(false);   // a click anywhere else closes the model row
       if (el?.closest('.tip .off')) { post({ off: 'tips' }); el.closest('.tip').remove(); return fit(); }   // its own "Turn off": no more tips
       if (el?.closest('.tip')) { el.closest('.tip').remove(); return fit(); }   // click a tip: it goes
       const on = el?.closest('.a:not(.stopped):not(.cancel)'), q = el?.closest('.q:not(.empty)');
@@ -664,6 +758,12 @@
       setTimeout(() => d.isConnected && done(-1, 'Pick expired'), 105000);   // the brain stops waiting at 110 s
     },
     mode(safe) { $('mode').classList.toggle('on', !safe); },
+    models({ list, pick }) {   // Claude's models, or the custom server's; none for a client without a choice
+      const name = v => /^(haiku|sonnet|opus)$/.test(v) ? v[0].toUpperCase() + v.slice(1) : v;
+      $('model').hidden = !list.length; $('model').textContent = name(pick);
+      $('models').replaceChildren(...list.map(v => { const b = document.createElement('button'); b.dataset.v = v; b.textContent = name(v); b.classList.toggle('on', v === pick); b.setAttribute('role', 'menuitemradio'); b.setAttribute('aria-checked', v === pick); return b; }));
+      spread();
+    },
     xhot(on) { $('x').classList.toggle('hot', on); },
     copied() { status('Copied to clipboard'); setTimeout(() => $('status').textContent === 'Copied to clipboard' && status(''), 1400); },
   };

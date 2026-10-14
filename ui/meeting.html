@@ -36,16 +36,18 @@ header,#nudge>div{cursor:grab}
 canvas{width:30px;height:30px;flex:none;margin-left:-3px}
 #title{flex:1;min-width:0;display:flex;flex-direction:column}
 #title b{font-size:13px;font-weight:600;letter-spacing:-.1px;white-space:nowrap}
-#saving{font-size:10px!important;color:#8cbda1!important;white-space:nowrap}
-#saving::before{content:"";display:inline-block;width:4px;height:4px;border-radius:50%;background:currentColor;margin-right:4px;vertical-align:2px}
+#saving,#prepstatus.ok{font-size:10px!important;color:#8cbda1!important;white-space:nowrap}
+#prepstatus.ok{font-size:11.5px!important}
+:is(#saving,#prepstatus.ok)::before{content:"";display:inline-block;width:4px;height:4px;border-radius:50%;background:currentColor;margin-right:4px;vertical-align:2px}
 #recap{white-space:pre-wrap;user-select:text;-webkit-user-select:text;color:var(--fg2);font-size:12px;line-height:1.5;margin:12px 0;overflow-wrap:anywhere}
 body.saved #pillow::after{content:"";position:absolute;right:5px;top:5px;width:4px;height:4px;border-radius:50%;background:#8cbda1}
-#title span{font-size:11.5px;color:var(--fg2);font-variant-numeric:tabular-nums}
+#title span{font-size:11.5px;color:var(--fg2);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #stop{background:rgba(255,69,58,.16);box-shadow:inset 0 0 0 .5px rgba(255,69,58,.35);color:#ff6961;font-weight:500}
 #stop.hover{background:rgba(255,69,58,.26)}
 .icon{width:26px;height:26px;padding:0;flex:none}
 .icon svg{display:block;width:14px;height:14px;margin:auto;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round}
 .icon svg.solid{fill:currentColor;stroke:none}
+#close.done{width:auto;padding:0 10px;font-weight:600;color:var(--accent)}#close.done svg{display:none}#close.done::after{content:'Done'}   /* prep: notes autosave, so closing reads as finishing, not discarding */
 
 /* nudge: the small "call soon" card */
 html:has(#nudge:not([hidden])){min-width:var(--panel-width,340px);overflow:hidden}   /* lays out at full width while the nudge is still a corner blob */
@@ -54,16 +56,23 @@ html:has(#nudge:not([hidden])){min-width:var(--panel-width,340px);overflow:hidde
 #nudge .bar{display:flex;gap:8px}#nudge .bar button{flex:1}
 
 /* prep */
-#prep{flex:none;margin-top:14px}
+#prep{flex:none;margin-top:12px}
 h1{font-size:17px;font-weight:600;letter-spacing:-.3px;margin:0}
-#prep .note{margin:5px 0 12px;font-size:12px;color:var(--fg2)}
-#context{height:118px}
-#attach{display:flex;align-items:center;gap:6px;margin:8px 0 14px;min-height:28px}
-#attach button{font-size:12px;padding:5px 10px}
+/* notes: one field with its own small toolbar (files, fill in) */
+#notes{border-radius:12px;background:rgba(0,0,0,.18);box-shadow:inset 0 0 0 .5px var(--line);transition:box-shadow .18s var(--ease),background .18s var(--ease)}
+#notes:focus-within{box-shadow:inset 0 0 0 1px rgba(10,132,255,.7)}
+#context{height:128px;background:none;box-shadow:none;padding:10px 12px 4px}
+#context:focus{box-shadow:none}
+#attach{display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:2px 6px 6px}
+#attach button{font-size:12px;padding:4px 9px}
+#gather{margin-left:auto}
 #filechip{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg2);background:var(--card);border-radius:999px;padding:3px 4px 3px 10px;box-shadow:inset 0 0 0 .5px var(--line)}
 #filechip button{width:18px;height:18px;padding:0;font-size:11px;line-height:18px;background:none;box-shadow:none;color:var(--fg3)}
-#prep.over #context{box-shadow:inset 0 0 0 1.5px var(--accent);background:rgba(10,132,255,.08)}
-#prep .fine{margin-top:10px;text-align:center}
+#prep.over #notes{box-shadow:inset 0 0 0 1.5px var(--accent);background:rgba(10,132,255,.08)}
+#stylerow{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:10px 0 14px;padding:5px 5px 5px 12px;border-radius:12px;background:var(--card);box-shadow:inset 0 0 0 .5px var(--line);font-size:12.5px}
+#style{appearance:none;max-width:62%;font-size:12px;color:var(--fg);background:var(--card2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a1a1a6' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 10px center/8px;border:0;border-radius:999px;box-shadow:inset 0 0 0 .5px var(--line);padding:4px 26px 4px 11px;text-overflow:ellipsis;cursor:pointer;outline:none}
+#style:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+#custom{margin:-4px 0 14px;font-size:12px;border-radius:12px}
 
 .attachments{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
 .attachment{max-width:100%;text-align:left;border-radius:10px;font-size:11.5px;overflow:hidden}
@@ -86,11 +95,11 @@ h1{font-size:17px;font-weight:600;letter-spacing:-.3px;margin:0}
 #retry{margin:10px 0 0;width:100%}
 #empty{text-align:center;color:var(--fg3);font-size:12px;padding:48px 12px 20px;line-height:1.5}
 #empty b{display:block;color:var(--fg2);font-weight:500;font-size:13px;margin-bottom:2px}
+#latest{position:sticky;bottom:8px;margin:8px auto 0;display:block;padding:5px 11px;background:#3a3a3e;z-index:1}
 .question{position:relative;padding:12px;border-radius:11px;background:var(--card);box-shadow:inset 0 0 0 .5px var(--line);margin:10px 0;overflow-wrap:anywhere;animation:rise .2s var(--ease) both;transition:opacity .2s var(--ease),transform .2s var(--ease)}
 .question.gone{opacity:0;transform:scale(.96)}
 .meta{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--fg3);font-variant-numeric:tabular-nums}
-.meta .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px rgba(10,132,255,.18)}
-.question p{margin:4px 0 0;font-size:12.5px;line-height:1.4;color:var(--fg2)}
+.question p{margin:4px 0 0;font-size:12.5px;line-height:1.4;color:var(--fg)}
 .answer{margin-top:9px;font-size:12px;padding:5px 12px;color:#64b0ff;background:rgba(10,132,255,.14);box-shadow:inset 0 0 0 .5px rgba(10,132,255,.35)}
 .answer.hover{background:rgba(10,132,255,.24)}
 .answer.thinking{color:var(--fg3);background:none;box-shadow:none;padding-left:0}
@@ -98,12 +107,13 @@ h1{font-size:17px;font-weight:600;letter-spacing:-.3px;margin:0}
 .response{display:block;width:100%;margin:10px 0 0;padding:10px 0 0;text-align:left;background:none;box-shadow:none;border-radius:0;border-top:.5px solid var(--line);animation:reveal .18s var(--ease) both}
 .response.hover{background:none;transform:none}
 .response strong{display:block;font-size:14px;font-weight:600;line-height:1.38;letter-spacing:-.1px}
-.response span{display:block;font-size:12px;color:var(--fg2);margin-top:4px;line-height:1.4}
+.response span{display:block;font-size:12px;color:var(--fg);margin-top:4px;line-height:1.4}
+.response.streaming strong{white-space:pre-wrap}
 .response em{display:block;font-style:normal;font-size:10.5px;color:var(--fg3);margin-top:8px}
 .response.copied em{color:#30d158}
 .response small{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:500;color:var(--fg3);margin-bottom:5px;letter-spacing:.1px}
 .response small::before{content:'';width:5px;height:5px;border-radius:50%;background:#bf5af2}
-#mode{margin:0 0 12px}
+#mode{margin:12px 0}
 #history{margin:2px 0 4px}
 #history summary{list-style:none;cursor:pointer;color:var(--fg3);font-size:11.5px;padding:6px 0}
 #history summary::-webkit-details-marker{display:none}
@@ -170,7 +180,7 @@ body.compact{padding:8px 12px;overflow:hidden}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 body.reduce *{animation:none!important;transition:none!important}
 </style></head><body class="fit">
-<header id="head" hidden><canvas id="orb" aria-hidden="true"></canvas><div id="title"><b id="h1">Meeting Copilot</b><span id="status">Getting ready</span><span id="saving" hidden>Saving transcript</span></div><button id="minimize" class="quiet icon" aria-label="Minimize meeting panel" title="Minimize" hidden><svg viewBox="0 0 16 16"><path d="M4 8h8"/></svg></button><button id="pause" class="quiet icon" aria-label="Pause meeting" title="Pause" hidden><svg class="solid" viewBox="0 0 16 16"><rect x="4.5" y="3.5" width="2.4" height="9" rx="1"/><rect x="9.1" y="3.5" width="2.4" height="9" rx="1"/></svg></button><button id="stop" hidden>End</button><button id="close" class="quiet icon" aria-label="Close" title="Close (Esc)"><svg viewBox="0 0 16 16"><path d="M5 5l6 6M11 5l-6 6"/></svg></button></header>
+<header id="head" hidden><canvas id="orb" aria-hidden="true"></canvas><div id="title"><b id="h1">Meeting Copilot</b><span id="status">Getting ready</span><span id="prepstatus" role="status" hidden>Before the call</span><span id="saving" hidden>Saving transcript</span></div><button id="minimize" class="quiet icon" aria-label="Minimize meeting panel" title="Minimize" hidden><svg viewBox="0 0 16 16"><path d="M4 8h8"/></svg></button><button id="pause" class="quiet icon" aria-label="Pause meeting" title="Pause" hidden><svg class="solid" viewBox="0 0 16 16"><rect x="4.5" y="3.5" width="2.4" height="9" rx="1"/><rect x="9.1" y="3.5" width="2.4" height="9" rx="1"/></svg></button><button id="stop" hidden>End</button><button id="close" class="quiet icon" aria-label="Close" title="Close (Esc)"><svg viewBox="0 0 16 16"><path d="M5 5l6 6M11 5l-6 6"/></svg></button></header>
 
 <section id="pillow" hidden><button id="restore" aria-label="Restore meeting panel" title="Restore"><span id="wave" aria-hidden="true"></span><canvas id="orb3" aria-hidden="true"></canvas></button></section>
 <button id="resize" aria-label="Resize meeting panel" title="Drag to resize · arrow keys to adjust" hidden>◢</button>
@@ -182,13 +192,13 @@ body.reduce *{animation:none!important;transition:none!important}
 
 <section id="prep" hidden>
   <h1>Get ready for your call</h1>
-  <p class="note">Atticus listens for questions and suggests answers. Add notes or files to make them more useful.</p>
-  <textarea id="context" maxlength="20000" aria-label="What's this call about" placeholder="Interview with Dana at Stripe. I want the summer internship.&#10;&#10;Or paste an agenda, notes or a link."></textarea>
-  <div id="attach"><button id="choose" class="quiet">＋ Add files</button><span id="filechip" hidden><span id="filename">Files added</span><button id="unfile" aria-label="Remove files">✕</button></span></div>
-  <div id="prepfiles" class="attachments"></div>
   <div id="mode" role="group" aria-label="Where is this meeting"><button data-mode="call" aria-pressed="true">On a call</button><button data-mode="room" aria-pressed="false">In person</button></div>
+  <div id="notes"><textarea id="context" maxlength="20000" aria-label="What's this call about" placeholder="Interview with Dana at Stripe. I want the summer internship.&#10;&#10;Or paste an agenda, notes or a link."></textarea>
+  <div id="attach"><button id="choose" class="quiet">＋ Add files</button><span id="filechip" hidden><span id="filename">Files added</span><button id="unfile" aria-label="Remove files">✕</button></span><button id="gather" class="quiet" title="Drafts notes from your calendar, email and documents" disabled>✦ Fill in for me</button></div></div>
+  <div id="prepfiles" class="attachments"></div>
+  <label id="stylerow"><span>Answer style</span><select id="style"></select></label>
+  <input id="custom" maxlength="300" aria-label="Custom answer style" placeholder="Speak to feelings first, then the facts" hidden>
   <button id="start" class="blue big" disabled>Start listening</button>
-  <p class="note fine">Hears the call and your microphone. Transcripts save only on this Mac. Change this in Settings.</p>
 </section>
 
 <section id="live" hidden>
@@ -197,9 +207,10 @@ body.reduce *{animation:none!important;transition:none!important}
     <div id="empty"><b>Listening for questions</b>Answers show up here.<br>Missed one? Find it in Transcript.</div>
     <div id="questions" aria-live="polite"></div>
     <details id="history" hidden><summary>Earlier questions</summary><div id="older"></div></details>
+    <button id="latest" hidden>Latest ↓</button>
   </div>
   <section id="transcript" class="pane" role="tabpanel" hidden><div id="nolines">Words show up here as people talk.</div><div id="lines"></div><div id="partial" class="line live" hidden></div><div id="micpartial" class="line live mine" hidden></div><button id="selected" hidden>Ask about selected text</button></section>
-  <section id="ctx" class="pane" role="tabpanel" hidden><p id="ctxhelp">Facts Atticus should use. Edit them any time.</p><textarea id="brief" maxlength="1500" aria-label="Meeting notes" placeholder="Who’s on the call, what it’s about, what you want."></textarea><button id="livechoose" class="quiet">＋ Add files</button><div id="livefiles" class="attachments"></div><button id="retry" class="blue" hidden>Answer with these notes</button></section>
+  <section id="ctx" class="pane" role="tabpanel" hidden><p id="ctxhelp">Facts Atticus should use. Edit them any time.</p><textarea id="brief" maxlength="6000" aria-label="Meeting notes" placeholder="Who’s on the call, what it’s about, what you want."></textarea><button id="livechoose" class="quiet">＋ Add files</button><div id="livefiles" class="attachments"></div><button id="retry" class="blue" hidden>Answer with these notes</button></section>
 </section>
 
 <footer id="askbar" hidden><div class="chips"><button data-ask="What did I miss?">Catch me up</button><button id="screen">Explain the screen</button></div><form id="askform"><input id="ask" placeholder="Ask about the call…" aria-label="Ask about the call" maxlength="1500" autocomplete="off"><button id="send" type="button" aria-label="Ask by voice" title="Ask by voice"><b>↑</b><svg class="mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button></form><div id="voicebar" hidden><p id="heard" class="waiting">Listening…</p><button id="voicein" aria-label="Type instead" title="Click to type instead"><span id="askwave" aria-hidden="true"></span></button><button id="voicesend" class="blue" aria-label="Send">↑</button></div></footer>
@@ -212,12 +223,12 @@ body.reduce *{animation:none!important;transition:none!important}
 <script type="module">
 const $=id=>document.getElementById(id), post=m=>window.webkit?.messageHandlers.meeting.postMessage(m);
 const savedTranscript=[];
-let saving=false, voicing=false, running=false, capturing=false, minimized=false, seconds=0, touched=new Set(), cards=new Map(), selection='', selectionContext='', files='', lineCount=0, toastTimer, viewTransition=0, retryId=null;
+let saving=false, voicing=false, running=false, gathering=false, capturing=false, minimized=false, seconds=0, touched=new Set(), cards=new Map(), selection='', selectionContext='', files='', savedPrep='', lineCount=0, toastTimer, prepSaveTimer, viewTransition=0, retryId=null;
 const time=s=>`${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
 const show=(id,on)=>$(id).hidden=!on;
 const status=t=>{$('status').textContent=t;$('restore').setAttribute('aria-label','Restore meeting panel · '+(capturing?'Listening':t))};
 // Native mouse tracking keeps the original anchor even when the window moves under the pointer.
-const dragTarget=e=>!!e.target.closest('#restore')||!e.target.closest('button,input,textarea,a,summary,.line,.question,.note,h1,#notice,#toast')&&(e.target.closest('header,#nudge>div')||![...e.target.childNodes].some(n=>n.nodeType===3&&n.textContent.trim()));
+const dragTarget=e=>!!e.target.closest('#restore')||!e.target.closest('button,input,textarea,select,a,summary,.line,.question,.note,h1,#notice,#toast')&&(e.target.closest('header,#nudge>div')||![...e.target.childNodes].some(n=>n.nodeType===3&&n.textContent.trim()));
 document.addEventListener('pointerdown',e=>{if(e.button===0&&dragTarget(e))post({do:'drag'})});
 document.addEventListener('dblclick',e=>{if(dragTarget(e)&&e.target.closest('header,#nudge>div,#pillow'))post({do:'resetFrame'})});
 // Short states size the panel to their content; the live view takes the full height.
@@ -225,7 +236,7 @@ function fit(reveal){requestAnimationFrame(()=>post({do:'size',h:minimized?44:ru
 function view(name){
   document.body.classList.remove('revealing');document.body.classList.add('transitioning');const reveal=++viewTransition;
   for(const s of ['nudge','prep','live','ended','pillow'])show(s,s===name);
-  show('head',!['nudge','pillow'].includes(name));show('minimize',name==='live');show('resize',name==='live');show('askbar',name==='live');show('stop',name==='live');show('pause',name==='live');show('close',name!=='live');show('saving',name==='live'&&saving);
+  show('head',!['nudge','pillow'].includes(name));show('status',name!=='prep');show('prepstatus',name==='prep');$('close').classList.toggle('done',name==='prep');$('close').title=name==='prep'?'Close · notes stay saved (Esc)':'Close (Esc)';$('close').setAttribute('aria-label',name==='prep'?'Close, notes stay saved':'Close');show('minimize',name==='live');show('resize',name==='live');show('askbar',name==='live');show('stop',name==='live');show('pause',name==='live');show('close',name!=='live');show('saving',name==='live'&&saving);
   document.body.classList.toggle('fit',name!=='live');fit(reveal);
   setTimeout(()=>meeting.settled(reveal),600);   // never stay blank if the native resize never reports back
 }
@@ -236,8 +247,15 @@ function tab(name){
 }
 const atEnd=()=>$('transcript').scrollHeight-$('transcript').scrollTop-$('transcript').clientHeight<40;
 const follow=(was)=>{if(was)$('transcript').scrollTop=$('transcript').scrollHeight};
+const answersAtEnd=()=>$('scroll').scrollHeight-$('scroll').scrollTop-$('scroll').clientHeight<40;
+const followAnswers=was=>{if(was){$('scroll').scrollTop=$('scroll').scrollHeight;show('latest',false)}else show('latest',true)};
 function toast(text){$('toast').textContent=text;show('toast',true);clearTimeout(toastTimer);toastTimer=setTimeout(()=>show('toast',false),4000)}
-function begin(){const context=($('context').value.trim()+(files?'\n'+files:'')).trim();$('brief').value=context.slice(0,1500);$('start').disabled=true;post({do:'start',context,room:room()})}
+const prepContext=()=>($('context').value.trim()+(files?'\n'+files:'')).trim();
+let calendarOn=true;
+const prepNote=(text,ok)=>{$('prepstatus').textContent=text;$('prepstatus').classList.toggle('ok',!!ok)};
+const savePrep=()=>{clearTimeout(prepSaveTimer);prepSaveTimer=setTimeout(()=>{post({do:'savePrep',text:prepContext()});if(!gathering)prepNote(prepContext()?'Notes saved for next time':'Before the call',!!prepContext())},180)};
+function begin(){const context=prepContext();$('brief').value=context.slice(0,6000);$('start').disabled=true;post({do:'start',context,room:room(),...($('style').value&&{style:$('style').value,custom:$('custom').value.trim()})})}
+function gather(){if(gathering){post({do:'cancelGather'});return}if(!calendarOn){post({do:'allowCalendar',context:prepContext()});return}gathering=true;$('gather').textContent='Cancel';$('start').disabled=true;prepNote('Reading your calendar…');post({do:'gather',context:prepContext()})}
 function ask(text){if(!running||!text.trim())return;post({do:'ask',text:selectionContext?`Context: ${selectionContext}\nQuestion: ${text}`:text});selectionContext='';$('ask').value='';syncSend();$('ask').placeholder='Ask about the call…'}
 function syncSend(){const has=!!$('ask').value.trim();$('send').classList.toggle('blue',has);$('send').title=has?'Send':'Ask by voice';$('send').setAttribute('aria-label',$('send').title)}
 // Voice ask: the box becomes waves and a bubble of what you say. Send asks it; clicking the waves goes back to typing with those words; Esc cancels.
@@ -250,10 +268,13 @@ function voice(on,then){
 
 window.addEventListener('resize',()=>{if(!running)fit()});
 $('start').onclick=begin;
+$('gather').onclick=gather;
+$('style').onchange=()=>{show('custom',$('style').value==='Custom…');if(!$('custom').hidden)$('custom').focus();fit()};
 const room=()=>$('mode').querySelector('[aria-pressed=true]').dataset.mode==='room';
 for(const b of $('mode').children)b.onclick=()=>meeting.mode(b.dataset.mode);
 $('context').onkeydown=e=>{if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){e.preventDefault();begin()}};
-$('close').onclick=$('later').onclick=()=>post({do:'delete'});
+$('context').oninput=savePrep;
+$('close').onclick=$('later').onclick=()=>{clearTimeout(prepSaveTimer);if(!$('prep').hidden)post({do:'savePrep',text:prepContext()});post({do:'delete'})};
 $('ready').onclick=()=>{post({do:'focus'});view('prep');$('context').focus()};
 $('stop').onclick=()=>post({do:'stop'});
 $('pause').onclick=()=>post({do:'pause'});
@@ -272,10 +293,12 @@ $('delete').onclick=()=>post({do:'deleteSaved'});
 $('endcopy').onclick=()=>{post({do:'copy',text:savedTranscript.map(r=>`${time(r.seconds||0)}  ${r.mic?'You':'Them'}: ${r.text}`).join('\n')});toast('Transcript copied')};
 $('allmeetings').onclick=()=>post({do:'meetings'});
 $('choose').onclick=$('livechoose').onclick=()=>post({do:'chooseFiles'});
-$('unfile').onclick=()=>{files='';$('prepfiles').replaceChildren();show('filechip',false);fit()};
+$('unfile').onclick=()=>{files='';$('prepfiles').replaceChildren();show('filechip',false);savePrep();fit()};
 for(const b of $('tabs').children)b.onclick=()=>tab(b.dataset.tab);
+$('scroll').onscroll=()=>{if(answersAtEnd())show('latest',false)};
+$('latest').onclick=()=>{$('scroll').scrollTop=$('scroll').scrollHeight;show('latest',false)};
 $('brief').oninput=()=>post({do:'brief',text:$('brief').value});
-$('retry').onclick=()=>{const d=cards.get(retryId);if(!d)return;post({do:'answer',id:retryId,text:d.querySelector('p').textContent});retryId=null;show('retry',false);tab('answers')};
+$('retry').onclick=()=>{const d=cards.get(retryId);if(!d)return;post({do:'answer',id:retryId,text:d.dataset.question});retryId=null;show('retry',false);tab('answers')};
 $('askform').onsubmit=e=>{e.preventDefault();ask($('ask').value)};
 $('ask').oninput=syncSend;
 $('send').onclick=()=>$('ask').value.trim()?ask($('ask').value):voice(true);
@@ -292,23 +315,25 @@ $('prep').ondrop=e=>{e.preventDefault();$('prep').classList.remove('over')};
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();if(voicing){voice(false);return}if(document.activeElement===$('brief')){tab('answers');return}post({do:running?'stop':'delete'})}});
 
 function card(row){
-  if(cards.has(row.id))return;
+  if(cards.has(row.id)){const d=cards.get(row.id),text=d.querySelector('.body>p');d.dataset.question=row.text;if(text)text.textContent=`“${row.text.length>180?row.text.slice(0,179)+'…':row.text}”`;return}
+  const was=answersAtEnd();
   const d=document.createElement('article');d.className='question';d.dataset.id=row.id;d.hidden=!!(row.auto&&row.heard);if(!d.hidden)show('empty',false);   // heard questions appear only once answered
+  d.dataset.question=row.text;
   const collapsed=document.createElement('button');collapsed.className='collapsed';collapsed.textContent=row.text;collapsed.onclick=()=>{d.classList.add('expanded');touched.add(row.id)};
   const body=document.createElement('div');body.className='body';
-  const meta=document.createElement('div');meta.className='meta';const dot=document.createElement('span');dot.className='dot';const when=document.createElement('span');when.textContent=time(row.seconds||0);meta.append(dot,when);
-  const q=document.createElement('p');q.textContent=row.text;
+  const meta=document.createElement('div');meta.className='meta';meta.textContent=`${row.speaker||'Someone else'} asked · ${time(row.seconds||0)}`;
+  const q=document.createElement('p');q.textContent=`“${row.text.length>180?row.text.slice(0,179)+'…':row.text}”`;
   const answer=document.createElement('button');answer.className='answer';answer.textContent=row.auto?'Waiting…':'Suggest an answer';answer.disabled=!!row.auto;answer.onclick=()=>{touched.add(row.id);post({do:'answer',id:row.id,text:row.text})};
   body.append(meta,q,answer);d.append(collapsed,body);
   d.onpointerdown=d.onfocusin=()=>touched.add(row.id);
-  cards.set(row.id,d);$('questions').prepend(d);$('scroll').scrollTop=0;
-  setTimeout(()=>dot.remove(),6000);
-  while($('questions').children.length>4){$('older').prepend($('questions').lastElementChild);show('history',true)}
+  cards.set(row.id,d);$('questions').append(d);if(!d.hidden)requestAnimationFrame(()=>followAnswers(was));
+  while($('questions').children.length>4){$('older').append($('questions').firstElementChild);show('history',true)}
 }
 document.addEventListener('click',e=>{if(!e.target.closest('.attachment'))document.querySelectorAll('.attachment.expanded').forEach(b=>b.classList.remove('expanded'))});
 window.meeting={
+  toast(text){toast(text)},
   privacy(on){saving=on;this.mode()},
-  mode(m){if(m)for(const b of $('mode').children)b.setAttribute('aria-pressed',String(b.dataset.mode===m));document.querySelector('#prep h1').textContent=room()?'Get ready for your meeting':'Get ready for your call';$('notice').textContent=(room()?'Atticus hears the room through your microphone.':'Atticus hears this call and your microphone.')+' Transcripts stay on this Mac.';document.querySelector('#prep .fine').textContent=(room()?'Hears the room through your microphone. No call needed.':'Hears the call and your microphone.')+(saving?' Transcripts save only on this Mac.':' Transcript saving is off.')},
+  mode(m){if(m)for(const b of $('mode').children)b.setAttribute('aria-pressed',String(b.dataset.mode===m));document.querySelector('#prep h1').textContent=room()?'Get ready for your meeting':'Get ready for your call';$('notice').textContent=(room()?'Atticus hears the room through your microphone.':'Atticus hears this call and your microphone.')+' Transcripts stay on this Mac.'},
   saving(on){saving=on;document.body.classList.toggle('saved',on);show('saving',running&&!minimized&&on);$('endnote').textContent=on?'Saved on this Mac.':'This transcript isn’t saved. Copy it before closing. Enable saving in Settings for future meetings.';$('delete').disabled=!on;$('restore').title=on?'Restore · Saving transcript':'Restore'},
   recap(m){$('recap').textContent=m.summary+(m.action_items?.length?'\n\nAction items\n'+m.action_items.map(s=>'• '+s).join('\n'):'');show('recap',!!m.summary);if(!running)fit()},
   settled(id){if(id!==viewTransition)return;document.body.classList.remove('transitioning');document.body.classList.add('revealing')},
@@ -318,11 +343,17 @@ window.meeting={
   hover(point){const el=point.length?document.elementFromPoint(...point):null,hits=[el?.closest('button'),el?.closest('.line')].filter(Boolean);document.querySelectorAll('.hover').forEach(b=>{if(!hits.includes(b))b.classList.remove('hover')});hits.forEach(h=>h.classList.add('hover'))},
   attachment(file){const b=document.createElement('button');b.className='attachment';b.textContent=file.name;const folder=document.createElement('span');folder.textContent=file.folder;b.append(folder);if(file.img){const img=new Image();img.alt='Preview of '+file.name;img.src=file.img;b.append(img)}b.onclick=()=>{b.classList.toggle('expanded');fit()};$(running?'livefiles':'prepfiles').append(b);fit()},
   motion(on){document.body.classList.toggle('reduce',on)},
-  nudge(e){$('ntitle').textContent=e.title||'Call';$('nwhen').textContent=[e.when,e.who].filter(Boolean).join(' · ');$('context').value=e.context||'';$('ready').textContent='Get ready';view('nudge');this.prep(true)},
-  prep(quiet){status('Before the call');$('start').disabled=false;if(quiet!==true)view('prep')},   // native js("prep") sends {}, which is truthy
+  nudge(e){$('ntitle').textContent=e.title||'Call';$('nwhen').textContent=[e.when,e.who].filter(Boolean).join(' · ');$('context').value=[e.context,savedPrep].filter(Boolean).join('\n\n');$('ready').textContent='Get ready';view('nudge');this.prep(true)},
+  prep(quiet){status('Before the call');if(!$('context').value)$('context').value=savedPrep;const kept=!!savedPrep&&$('context').value===savedPrep;prepNote(kept?'Notes saved for next time':'Before the call',kept);$('gather').disabled=false;$('start').disabled=false;if(quiet!==true)view('prep')},   // native js("prep") sends {}, which is truthy
+  savedPrep(text){savedPrep=text||'';if(!$('context').value)$('context').value=savedPrep},
   demoPrep(r){$('context').value=r.brief;this.prep()},
-  material(text){if(running){files=(files+'\n'+text).slice(0,20000);post({do:'prepare',context:$('brief').value+'\n'+files});toast('Adding file context…');return}files=(files+'\n'+text).slice(0,20000);const n=Math.round(files.length/100)/10;$('filename').textContent=`Files added · ${n}k characters`;show('filechip',true);fit()},
+  calendar(on){calendarOn=on;$('gather').textContent=on?'✦ Fill in for me':'Allow Calendar';$('gather').title=on?'Drafts notes from your calendar, email and documents':'Fill in for me reads your current or next calendar event'},
+  styles({list,pick,custom}){$('style').replaceChildren(...[...list.map(s=>s.name),'Custom…'].map(n=>new Option(n)));$('style').value=[...$('style').options].some(o=>o.value===pick)?pick:$('style').options[0].value;$('custom').value=custom||'';show('custom',$('style').value==='Custom…')},
+  material(text){if(running){files=(files+'\n'+text).slice(0,20000);post({do:'prepare',context:$('brief').value+'\n'+files});toast('Adding file context…');return}files=(files+'\n'+text).slice(0,20000);$('filechip').title=`${Math.round(files.length/100)/10}k characters`;show('filechip',true);savePrep();fit()},
   prepared(r){if(r.error){toast('Using your notes as written.');return}$('brief').value=r.brief},
+  gathering(text){gathering=true;$('gather').textContent='Cancel';$('start').disabled=true;prepNote(text)},
+  gathered(r){gathering=false;$('gather').textContent='✦ Fill in for me';$('gather').disabled=false;$('start').disabled=false;if(r.brief!==undefined){$('context').value=r.brief;files='';$('prepfiles').replaceChildren();show('filechip',false);savePrep()}prepNote('Ready to edit');if(r.notice)toast(r.notice);$('context').focus();fit()},
+  gatherCancelled(){gathering=false;$('gather').textContent='✦ Fill in for me';$('gather').disabled=false;$('start').disabled=false;prepNote('Preparation cancelled')},
   focus(){if(minimized){post({do:'compact',on:false});return}(running?$('ask'):!$('ended').hidden?($('resume').hidden?$('save'):$('resume')):!$('prep').hidden?$('context'):$('ready')).focus()},
   listen(){running=true;capturing=false;minimized=false;document.body.classList.remove('compact');while($('prepfiles').firstChild)$('livefiles').append($('prepfiles').firstChild);$('h1').textContent='Meeting Copilot';$('resume').disabled=false;view('live');status('Getting ready');show('notice',true);setTimeout(()=>show('notice',false),8000)},
   capturing(){if(running){capturing=true;status('Listening · '+time(seconds))}},
@@ -340,22 +371,32 @@ window.meeting={
   },
   question(row){card(row);$('lines').querySelector(`[data-id="${row.id}"]`)?.classList.add('asked')},
   thinking(id){const d=cards.get(id),b=d?.querySelector('.answer');d?.querySelector('.reason')?.remove();if(b){b.disabled=true;b.classList.add('thinking');b.textContent='Thinking…'}},
+  answerChunk(r){
+    const d=cards.get(r.id);if(!d||!running)return;const was=answersAtEnd();d.hidden=false;show('empty',false);
+    if($('scroll').hidden)$('tabs').children[0].classList.add('new');
+    d.querySelector('.answer')?.remove();let res=d.querySelector('.response');
+    if(!res){res=document.createElement('button');res.className='response streaming';res.disabled=true;const line=document.createElement('strong'),hint=document.createElement('em');hint.textContent='Answer is still coming…';res.append(line,hint);d.querySelector('.body').append(res)}
+    res.querySelector('strong').textContent+=r.text;requestAnimationFrame(()=>followAnswers(was));
+    if(!d.dataset.measured){d.dataset.measured='1';requestAnimationFrame(()=>requestAnimationFrame(()=>post({do:'measured',id:r.id,shownAt:Date.now()/1000,timing:r.timing||{}})))}
+  },
   answer(r){
     const d=cards.get(r.id);if(!d||!running)return;const b=d.querySelector('.answer');
-    const reset=()=>{if(b){b.disabled=false;b.classList.remove('thinking');b.textContent='Try again';b.onclick=()=>post({do:'answer',id:r.id,text:d.querySelector('p').textContent})}};
+    const reset=()=>{
+      if(b){b.disabled=false;b.classList.remove('thinking');b.textContent='Try again';b.onclick=()=>post({do:'answer',id:r.id,text:d.dataset.question})}
+    };
     const shown=!d.hidden;
     if(r.kind==='SKIP'&&!shown){d.remove();cards.delete(r.id);$('lines').querySelector(`[data-id="${r.id}"]`)?.classList.remove('asked');return}
     d.hidden=false;show('empty',false);if($('scroll').hidden&&r.kind!=='SKIP')$('tabs').children[0].classList.add('new');
     if(r.error){reset();toast(r.error);return}
     if(r.kind==='SKIP'){reset();setTimeout(()=>{if(touched.has(r.id))return;d.classList.add('gone');setTimeout(()=>{d.remove();cards.delete(r.id);if(!document.querySelector('.question:not([hidden])'))show('empty',true)},300)},4000);return}
     if(r.kind==='UNSURE'){reset();const reason=document.createElement('p');reason.className='reason';reason.textContent=r.reason||'There isn’t enough meeting context to answer this reliably.';d.querySelector('.reason')?.remove();b.before(reason);b.textContent='Add notes';b.onclick=()=>{retryId=r.id;touched.add(r.id);show('retry',true);tab('notes')};return}
-    d.querySelector('.reason')?.remove();const lines=r.lines||[], res=document.createElement('button');res.className='response';res.setAttribute('aria-label','Copy answer');
+    const was=answersAtEnd();d.querySelector('.reason')?.remove();const lines=r.lines||[], res=document.createElement('button');res.className='response';res.setAttribute('aria-label','Copy answer');
     if(r.general){const g=document.createElement('small');g.textContent='General knowledge';res.append(g)}
     lines.forEach((line,i)=>{const el=document.createElement(i?'span':'strong');el.textContent=line;res.append(el)});
     const hint=document.createElement('em');hint.textContent='Copy answer';res.append(hint);
     res.onclick=()=>{post({do:'copy',text:lines.join('\n')});res.classList.add('copied');hint.textContent='Copied';setTimeout(()=>{res.classList.remove('copied');hint.textContent='Copy answer'},1500)};
     d.querySelector('.response')?.remove();b?.remove();d.querySelector('.body').append(res);
-    requestAnimationFrame(()=>requestAnimationFrame(()=>post({do:'measured',id:r.id,shownAt:Date.now()/1000,usd:r.usd,secs:r.secs})));
+    requestAnimationFrame(()=>followAnswers(was));
   },
   heard(text){if(!voicing)return;$('heard').textContent=text||'Listening…';$('heard').classList.toggle('waiting',!text)},
   voiceEnd(){if(voicing){voicing=false;show('voicebar',false);show('askform',true)}},

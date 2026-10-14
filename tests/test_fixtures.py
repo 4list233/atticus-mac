@@ -49,7 +49,8 @@ app.run()
             binary = Path(root) / 'fixture'
             compiled = subprocess.run(['swiftc', str(source), '-o', str(binary)], text=True, capture_output=True)
             self.assertEqual(compiled.returncode, 0, compiled.stderr)
-            for name in ['ui', 'settings', 'meeting', 'onboarding', 'web']:
+            for name in ['settings', 'worksheet', 'ui', 'meeting', 'onboarding', 'web']:
                 with self.subTest(fixture=name):
                     result = subprocess.run([str(binary), f'http://127.0.0.1:{server.server_port}/tests/{name}.html'], capture_output=True, text=True, timeout=25)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    if 'MEASURED:' in result.stdout: print(result.stdout.rsplit('MEASURED:', 1)[1].strip(), flush=True)

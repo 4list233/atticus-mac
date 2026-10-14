@@ -21,14 +21,14 @@ cat > "$APP/Contents/Info.plist" <<P
 <key>CFBundleName</key><string>Atticus</string>
 <key>CFBundleExecutable</key><string>Atticus</string>
 <key>CFBundleVersion</key><string>1</string>
-<key>CFBundleShortVersionString</key><string>1.0</string>
+<key>CFBundleShortVersionString</key><string>1.1</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>AtticusSource</key><string>$(pwd)</string>
 <key>LSUIElement</key><true/>
 <key>NSMicrophoneUsageDescription</key><string>Atticus listens when you use its shortcut or microphone button.</string>
 <key>NSAppleEventsUsageDescription</key><string>Atticus controls apps like Finder, Chrome and Music when you ask it to.</string>
-<key>NSCalendarsFullAccessUsageDescription</key><string>Meeting Copilot checks for calls starting soon so it can offer to get ready. Nothing leaves your Mac.</string>
+<key>NSCalendarsFullAccessUsageDescription</key><string>When you ask it to prepare, Meeting Copilot reads your current or next event. Prep stays on this Mac except for the Claude model call.</string>
 <key>NSSpeechRecognitionUsageDescription</key><string>Atticus turns your words into text on this Mac.</string>
 </dict></plist>
 P

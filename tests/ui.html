@@ -40,6 +40,25 @@ try {
   assert(d.getElementById('comp').classList.contains('open'), 'Focused typing stays open on mouse exit');
   d.getElementById('ask').value = 'Keep my draft'; d.getElementById('ask').blur();
   assert(d.getElementById('comp').classList.contains('open'), 'A typed draft survives mouse exit and blur');
+  ui.models({list: ['haiku', 'sonnet', 'opus'], pick: 'haiku'});
+  assert(!d.getElementById('model').hidden && d.getElementById('model').textContent === 'Haiku', 'The box shows the current model');
+  d.getElementById('model').click();
+  assert(d.getElementById('comp').classList.contains('pick') && d.querySelectorAll('#models button').length === 3 && d.querySelector('#models .on').dataset.v === 'haiku', 'Clicking the model shows the choices, current one marked');
+  assert(!d.getElementById('models').inert && d.getElementById('ask').inert, 'The open row takes keyboard focus from the field');
+  const sonnet = d.querySelector('#models [data-v=sonnet]');
+  assert(sonnet.style.getPropertyValue('--dx') !== '' && w.getComputedStyle(sonnet).transitionProperty.includes('transform'), 'Choices fan out of the chip with transitions');
+  d.querySelector('#models [data-v=sonnet]').click();
+  assert(d.querySelector('#models .on').dataset.v === 'sonnet' && d.querySelector('#models [aria-checked=true]').dataset.v === 'sonnet', 'The pick lands on the choice before the row closes');
+  await new Promise(r => setTimeout(r, 50));
+  assert(messages.some(m => m.model === 'sonnet'), 'Picking posts the model');
+  assert(d.getElementById('comp').classList.contains('pick'), 'The row holds a beat so the pick is seen');
+  await new Promise(r => setTimeout(r, 200));
+  assert(!d.getElementById('comp').classList.contains('pick') && d.getElementById('models').inert && !d.getElementById('ask').inert, 'Picking closes the row');
+  d.getElementById('model').click(); d.getElementById('models').dispatchEvent(new w.KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+  assert(!d.getElementById('comp').classList.contains('pick'), 'Escape folds the row back');
+  assert(d.getElementById('model').textContent === 'Sonnet', 'Picking relabels the chip: ' + d.getElementById('model').textContent);
+  ui.models({list: [], pick: ''});
+  assert(d.getElementById('model').hidden, 'No model choice for a client without one');
   d.getElementById('ask').value = ''; ui.reset(); ui.listen();
   assert(d.querySelectorAll('.turn').length === 1 && ((d.getElementById('status').textContent + d.getElementById('thread').textContent).match(/Listening…/g) || []).length === 1, 'Listening is shown once');
   assert(w.getComputedStyle(d.querySelector('.q')).display !== 'none' && w.getComputedStyle(d.querySelector('.q'), '::before').content.includes('Listening'), 'Voice shows a Listening bubble before speech');
@@ -147,7 +166,7 @@ try {
   assert(d.getElementById('thread').style.maxHeight === '', 'New conversation clears stale resize constraints');
   ui.listen(true); ui.words('A'.repeat(400)); ui.think(); ui.line('✓ ' + 'https://example.com/' + 'a'.repeat(400));
   assert(d.getElementById('card').scrollWidth <= 460, 'Long URLs and transcripts do not overflow the card');
-  { const t = d.getElementById('thread'); t.style.maxHeight = '120px'; for (let i = 0; i < 30; i++) ui.line('▸ Scrolling down ' + i);
+  { const t = d.getElementById('thread'); t.style.maxHeight = '120px'; for (let i = 0; i < 30; i++) ui.line((i % 2 ? '▸ Reading part ' : '▸ Scrolling down ') + i);
     t.scrollTo({ top: 0, behavior: 'instant' }); t.dispatchEvent(new w.WheelEvent('wheel', { deltaY: -40 })); await new Promise(r => setTimeout(r, 30)); ui.line('▸ One more step'); await new Promise(r => setTimeout(r, 120));
     assert(t.scrollTop === 0, 'Scrolled up to read: a new step does not pull the list back down');
     t.scrollTo({ top: t.scrollHeight, behavior: 'instant' }); t.dispatchEvent(new w.WheelEvent('wheel', { deltaY: 40 })); await new Promise(r => setTimeout(r, 30)); ui.line('▸ And another'); await new Promise(r => setTimeout(r, 120));
@@ -157,7 +176,9 @@ try {
   await new Promise(resolve => setTimeout(resolve, 65));
   assert(d.querySelector('.elapsed b').textContent === finishedTime, 'Worker exit freezes time even without a final answer');
   ui.msg('Worker stopped');
-  ui.reset(); ui.listen(true); ui.words('Find tablecloths'); ui.think(); ui.line('▸ Reading the page'); ui.line('✓ Here are tablecloths.');
+  ui.reset(); ui.listen(true); ui.words('Find tablecloths'); ui.think(); ui.line('▸ Scrolling down'); ui.line('▸ Scrolling down 2 pages'); ui.line('▸ Reading the page');
+  { const steps = [...d.querySelectorAll('.turn:last-child .step')].map(e => e.textContent); assert(steps.length === 2 && steps[0] === 'Scrolling down 2 pages', 'Repeated steps of one kind share one updating row: ' + steps.join(' | ')); }
+  ui.line('✓ Here are tablecloths.');
   d.querySelector('.redo').click(); await new Promise(resolve => setTimeout(resolve, 30));
   assert(messages.some(m => m.send?.startsWith("That's wrong, try again: Find tablecloths")), 'Try again resends the ask as a correction');
   ui.reset(); ui.limit(700); ui.listen(true); ui.words('Work in the background'); ui.think();
@@ -169,7 +190,7 @@ try {
   assert(d.querySelector('.mini-tag span').textContent === target.app, 'Mini tag names the app; the steps show the action');
   const fixedTop=d.querySelector('.mini-view').getBoundingClientRect().top;
   for(let i=2;i<=12;i++){
-    ui.line('▸ Background step '+i);
+    ui.line('▸ '+['Reading','Clicking','Typing','Scrolling'][i%4]+' step '+i);
     if(i===4||i===12){const shown=()=>{const v=d.querySelector('.mini-view').getBoundingClientRect(),t=d.getElementById('thread').getBoundingClientRect();return Math.abs(v.top-fixedTop)<1&&v.top>=t.top&&v.bottom<=t.bottom};
       for(let ms=0;ms<2000&&(ms<400||!shown());ms+=50)await new Promise(r=>setTimeout(r,50));   // settled, or 2 s on a slow machine
       const rect=d.querySelector('.mini-view').getBoundingClientRect(),thread=d.getElementById('thread').getBoundingClientRect(),latest=d.querySelector('.step:last-child').getBoundingClientRect();
@@ -211,6 +232,24 @@ try {
   ui.mini(target); ui.line('✓ Finished'); ui.listen(true); ui.words('Next task'); ui.mini(target);
   await new Promise(resolve => setTimeout(resolve, 2500)); assert(d.querySelector('.mini.on'), 'An old completion timer cannot remove the next turn’s thumbnail');
   ui.stopped('Stopped'); assert(!d.querySelector('.mini'), 'Cancellation clears the thumbnail immediately');
+  ui.reset(); ui.listen(true); ui.words('Remember that'); ui.think(); ui.line('✓ Saved.');
+  ui.line('✎ ' + JSON.stringify([{c:'people', label:'People', t:'dad email: pat@example.test', add:true}, {c:'rules', label:'Rules', t:'Use Safari', add:false}]));
+  const mem = d.querySelector('.mem');
+  assert(mem && mem.previousElementSibling.classList.contains('a') && mem.querySelector('.mem-h').textContent.includes('Updated') && mem.querySelector('.mem-h').textContent.includes('People, Rules'), 'A receipt row sits under the answer');
+  assert(!mem.classList.contains('open') && mem.querySelector('.mem-b').offsetHeight === 0 && mem.querySelector('.mem-b').inert, 'The receipt starts as one quiet row');
+  tap(mem.querySelector('.mem-h'));
+  assert(mem.classList.contains('open') && mem.querySelector('.mem-h').getAttribute('aria-expanded') === 'true' && !mem.querySelector('.mem-b').inert, 'Clicking the row opens it in place');
+  await new Promise(r => setTimeout(r, 450));
+  assert(mem.querySelector('.mem-b').offsetHeight > 40 && mem.querySelectorAll('.mem-c').length === 2 && mem.querySelector('.mem-i.del span').textContent === 'Use Safari', 'It shows each category and the exact items, forgotten ones struck');
+  tap(mem.querySelector('.mem-i')); await new Promise(r => setTimeout(r, 20));
+  assert(messages.some(m => m.memory?.c === 'people' && m.memory.t === 'dad email: pat@example.test'), 'Clicking an item asks for Settings → Memory at it');
+  tap(mem.querySelector('.mem-h')); assert(!mem.classList.contains('open') && mem.querySelector('.mem-b').inert, 'Clicking the row again folds it');
+  ui.line('✎ ' + JSON.stringify([{c:'rules', label:'Rules', t:'Use Safari', add:false}]));
+  assert(d.querySelector('.mem.off .mem-h b').textContent === 'Forgot' && w.getComputedStyle(d.querySelector('.mem.off .mem-h b')).textDecorationLine === 'line-through', 'Forgetting reads as struck through');
+  ui.models({list: ['haiku', 'sonnet', 'opus'], pick: 'sonnet'}); w.fixtureReduced(true);
+  d.getElementById('model').click(); d.querySelector('#models [data-v=opus]').click(); await new Promise(r => setTimeout(r, 20));
+  assert(!d.getElementById('comp').classList.contains('pick') && d.getElementById('model').textContent === 'Opus', 'Reduce Motion: the pick closes the row at once');
+  w.fixtureReduced(false);
   ui.reset(); ui.listen(true); ui.words('Put Notes on the left.'); ui.think();
   ui.line('▸ Moving Notes → left'); ui.line('✓ Notes is on the left.'); ui.compose(true);
   results.textContent = checks.join('\n') + `\n\n${checks.length} checks passed.`; results.className = 'pass';

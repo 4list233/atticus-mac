@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def harness(root):
     source = (ROOT / 'Atticus.swift').read_text()
-    methods = source[source.index('    func cancelFast()'):source.index('    func stop()')]
+    methods = source[source.index('    func cancelFast()'):source.index('    func stop()', source.index('    func cancelFast()'))]
     key = source[source.index('func transcriptKey('):source.index('// atticus.py with')]
     worker = root / 'worker.py'
     worker.write_text('''import os, sys, time
@@ -122,6 +122,26 @@ if CommandLine.arguments.contains("--benchmark") {
 
 @unittest.skipUnless(sys.platform == 'darwin', 'macOS Swift worker regression')
 class NativeTests(unittest.TestCase):
+    def test_typing_requires_a_zero_length_caret(self):
+        source = (ROOT / 'Atticus.swift').read_text()
+        caret = source[source.index('    var caret: Bool'):source.index('    static func selectedRange',source.index('    var caret: Bool'))]
+        swift = '''import Foundation
+struct Harness { let text:String, range:CFRange?
+''' + caret + '''
+}
+precondition(Harness(text:"",range:CFRange(location:2,length:0)).caret)
+precondition(!Harness(text:" ",range:CFRange(location:2,length:1)).caret)
+precondition(!Harness(text:"selected",range:CFRange(location:2,length:8)).caret)
+print("caret safety ok")
+'''
+        with tempfile.TemporaryDirectory() as path:
+            file = Path(path) / 'caret.swift'; file.write_text(swift)
+            binary = Path(path) / 'caret'
+            compiled = subprocess.run(['swiftc',str(file),'-o',str(binary)],capture_output=True,text=True)
+            self.assertEqual(compiled.returncode,0,compiled.stderr)
+            result = subprocess.run([str(binary)],capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
     def test_final_words_after_live_action_preserve_raw_remainder(self):
         source = (ROOT / 'Atticus.swift').read_text()
         finish = source[source.index('    func finish()', source.index('    func typed(')):source.index('    // atticus.py --wait, started')]
@@ -162,11 +182,12 @@ print("confirmed remainder regressions ok")
 
     def test_replace_checks_original_text_range_and_app(self):
         source = (ROOT / 'Atticus.swift').read_text()
-        method = source[source.index('    func replace(_ draft:'):source.index('// Sees the mouse')]
+        method = source[source.index('    var value: String?'):source.index('// Sees the mouse')]
         # Reuse the production method with fake AX writes; never address a real app.
         swift = """import Foundation
 import CoreFoundation
 let kAXSelectedTextAttribute = "selected"
+let kAXValueAttribute = "value"
 enum Status { case success, failure }
 var currentText = "old", currentRange: CFRange? = CFRange(location: 3, length: 3), writes = 0
 func axAttribute(_ element: Int, _ name: String) -> String? { currentText }
@@ -177,6 +198,11 @@ struct Harness {
  static func selectedRange(_ element: Int) -> CFRange? { currentRange }
 """ + method + """
 let h = Harness()
+currentText = "abcdraftgh"
+precondition(h.landed("draft","abcdefgh"))
+currentText = "xxdraftxx"
+precondition(!h.landed("draft","abcdefgh"))
+currentText = "old"
 precondition(h.replace("draft") && writes == 1)
 currentText = "new"; precondition(!h.replace("draft") && writes == 1)
 currentText = "old"; currentRange = CFRange(location: 4, length: 3)
@@ -297,18 +323,20 @@ print("calendar/update safety ok")
         methods += source[source.index('    func recordingLimit('):source.index('    func captureSelection()')]
         methods += source[source.index('    func stopOfferInput()'):source.index('    func dismiss()')]
         methods += source[source.index('    func escape()'):source.index('    func hush()')]
-        stop = source[source.index('    func stop()'):source.index('        engine.stop(); engine.inputNode.removeTap', source.index('    func stop()'))]
+        at = source.index('    func stop()', source.index('final class App'))   # the App's stop, not the Mic class's
+        stop = source[at:source.index('        engine.stop(); feed?.finish()', at)]
         swift = """import Foundation
 struct Prefs { static var paused = false, toggle = false; static func bool(_ k: String) -> Bool { paused } }
 final class MeetingStub { var running = false, focuses = 0; func focus() { focuses += 1 } }
 let meeting = MeetingStub()
 final class Node { var removed=false; func removeTap(onBus: Int) {removed=true} }
-final class Engine { var isRunning = false; let inputNode=Node(); func stop() {isRunning=false} }
+final class Engine { var isRunning = false, stopped = false; func stop() {isRunning=false; stopped=true} }
 final class Input { var cancelled=false; func finish() {cancelled=true}; func cancel() {cancelled=true} }
 final class Analyzer { func cancelAndFinishNow() async {} }
+final class QuietAudio { func end() {} }
 final class Panel { var isVisible = true; func makeKey() {}; func makeFirstResponder(_ value: Int) {} }
 final class Harness {
-    let engine = Engine(), panel = Panel()
+    let engine = Engine(), panel = Panel(), quietAudio = QuietAudio()
     var retryOffer=false,offerText:String?,askFile="fixture-answer",listenID=0,stops=0
     var feed:Input?,reading:Input?,quiet:Input?,analyzer:Analyzer?
     var shortcutDown = false, toggleTalk = false, clickTalk = false, busy = false, speaking = false
@@ -346,8 +374,8 @@ let escape = Harness(); escape.shortcut(true); escape.escape(); precondition(!es
 let limit = Harness(); limit.shortcut(true); limit.recordingLimit(); precondition(limit.events.contains("review") && !limit.events.contains("send"), "timeout submitted toggle request")
 let reply=Harness();reply.retryOffer=true;reply.busy=true;reply.offerText="Original task";reply.text="retry";reply.engine.isRunning=true;reply.feed=Input();reply.reading=Input()
 reply.stopOfferInput()
-precondition(reply.engine.inputNode.removed, "reply tap stayed installed")
-let failedStart=Harness();failedStart.retryOffer=true;failedStart.busy=true;failedStart.stopOfferInput();precondition(failedStart.engine.inputNode.removed && failedStart.busy && failedStart.askFile=="fixture-answer", "failed engine start left its tap or lost its worker")
+precondition(reply.engine.stopped, "reply mic stayed open")
+let failedStart=Harness();failedStart.retryOffer=true;failedStart.busy=true;failedStart.stopOfferInput();precondition(failedStart.engine.stopped && failedStart.busy && failedStart.askFile=="fixture-answer", "failed engine start left its tap or lost its worker")
 precondition(!reply.engine.isRunning && reply.text=="Original task" && reply.offerText==nil && reply.busy && reply.retryOffer && reply.askFile=="fixture-answer", "stopping reply input lost the waiting task")
 precondition(reply.feed!.cancelled && reply.reading!.cancelled, "reply input stayed alive")
 reply.shortcut(true);precondition(reply.events==["start"], "retry shortcut cancelled its worker")

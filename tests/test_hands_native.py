@@ -91,7 +91,7 @@ class NativeHandsTests(unittest.TestCase):
             self.assertFalse(path.exists())
         timing, net = {}, {}
         screen = self.call('see', pid); timing['see'] = self.elapsed; net['see'] = self.net_elapsed
-        for label in ('Export', 'Send', 'Delete draft', 'Password', 'Name', 'File'):
+        for label in ('Export', 'Send', 'Delete draft', 'Password', 'Name', 'Enabled', 'File'):
             self.assertIn(label, screen)
         self.assertNotIn('never-print-me', screen)
         self.assertNotIn('4111', screen)
@@ -117,12 +117,17 @@ class NativeHandsTests(unittest.TestCase):
         self.assertIn('Row 150', self.call('see', pid))
         self.call('scroll', 'up', 'all')
         self.assertIn('Already at the end', self.call('scroll', 'up'))
+        self.assertIn('Window settled', self.call('wait', '2'))
         self.assertIn('Typed into', self.action('type', 'Name', 'Sam', 'submit'))
         data = json.loads((self.root / 'hands.json').read_text())
         self.assertEqual(next(n['value'] for n in data['nodes'] if n['label'] == 'Name'), 'Sam')
         self.action('type', 'Name', 'append') # Text "append" is not the append option.
         self.action('type', 'Name', '!', 'append')
         self.assertIn('append!', self.call('see', pid))
+        began = time.perf_counter()
+        self.assertIn('Clicked "Enabled"', self.action('click', 'Enabled'))
+        timing['verified switch'] = (time.perf_counter() - began) * 1000
+        self.assertRegex(self.call('see', pid), r'CheckBox "Enabled" = "(?:1|true)"')
         self.call('press', 'cmd+shift+a') # Posted only to the fixture PID, never global.
         self.assertIn('Window settled', self.call('wait', '.5'))
         if os.environ.get('ATTICUS_LIVE_MOUSE') == '1':
@@ -148,6 +153,18 @@ class NativeHandsTests(unittest.TestCase):
         (self.root / 'settings.json').write_text('{"safe":false}')
         self.call('click', 'Delete draft')
         self.assertEqual((self.root / 'fixture-result').read_text(), 'Delete draft')
+        command('long-text')
+        document = json.loads(self.call('read', pid))
+        self.assertIn('DOCUMENT END', document['text'])
+        self.assertGreater(len(document['text']), 12000)
+        command('rich-table'); rich = self.call('see', pid)
+        self.assertIn('Explain the observed relationship:', rich)
+        began = time.perf_counter()
+        self.assertIn('Typed after', self.action('type-after', 'Explain the observed relationship:', ' Answer.'))
+        timing['type after'] = (time.perf_counter() - began) * 1000
+        document = json.loads(self.call('read', pid))
+        self.assertIn('Explain the observed relationship: Answer.', document['text'])
+        self.assertIn('A second prompt must remain.', document['text'])
         print('HANDS TIMINGS (fixture): ' + ', '.join(f'{name} {value:.1f} ms' for name,value in timing.items()), flush=True)
         print('HANDS NET TIMINGS (fixture): ' + ', '.join(f'{name} {value:.2f} ms' for name,value in net.items() if value is not None), flush=True)
 
@@ -219,9 +236,10 @@ print("hands Quartz spies ok")
         source = (ROOT / 'Atticus.swift').read_text()
         section = source[source.index('enum Hands {'):source.index('// MARK: - End Hands')]
         header = section[:section.index('    static func attribute(')]
+        header = header.replace('AXUIElement','TestElement')
         header = header.replace('ProcessInfo.processInfo.environment', '["ATTICUS_DIR":CommandLine.arguments[1], "ATTICUS_AX_ONLY":"1"]')
-        names = ['children','array','name','capture','save','load','at','point','visibleFrame','resolve','menuItem','menu',
-                 'pixelsChanged','contentMoved','pageKeysAllowed','scrollArea','scroll','findText','scrollTo','typeText',
+        names = ['documentIdentity','identify','read','children','array','name','capture','save','load','at','point','visibleFrame','resolve','menuItem','menu',
+                 'pixelsChanged','contentMoved','pageKeysAllowed','scrollArea','scroll','findText','scrollTo','stringValue','selectedRange','insertionTarget','insertAfter','typeText',
                  'settle','validate','clickOptions','targets','freshIDs','checked','selftest','windowElement','root']
         matches = list(re.finditer(r'^    static func (\w+)\(', section, re.M))
         methods = ''.join(section[m.start():matches[i+1].start() if i+1<len(matches) else section.rfind('\n}')]
@@ -240,15 +258,19 @@ final class TestElement:NSObject {
 func axWindowNumber(_ e:TestElement) -> NSNumber? { e.attrs["AXWindowNumber"] as? NSNumber }
 struct TestApp { let processIdentifier:Int32 = 123; let localizedName:String? = "Fixture"; var isTerminated=false; let bundleURL:URL?=nil }
 let application = TestElement("AXApplication"), window = TestElement("AXWindow","Fixture",CGRect(x:0,y:0,width:400,height:400))
+window.attrs["AXWindowNumber"]=NSNumber(value:42)
 let menuBar=TestElement("AXMenuBar"), file=TestElement("AXMenuBarItem","File"), fileMenu=TestElement("AXMenu"), exportTo=TestElement("AXMenuItem","Export To"), formats=TestElement("AXMenu"), pdf=TestElement("AXMenuItem","PDF…")
 application.add(window); application.attrs[kAXWindowsAttribute]=[window] as NSArray; application.attrs[kAXMenuBarAttribute]=menuBar
 menuBar.add(file); file.add(fileMenu); fileMenu.add(exportTo); exportTo.add(formats); formats.add(pdf)
 file.supported=["AXPress"]; exportTo.supported=["AXPress"]; pdf.supported=["AXPress"]
 let export=TestElement("AXButton","Export",CGRect(x:10,y:10,width:80,height:24)), send=TestElement("AXButton","Send",CGRect(x:100,y:10,width:80,height:24))
 window.add(export); window.add(send); export.supported=["AXPress"]
+let row=TestElement("AXRow","",CGRect(x:10,y:80,width:180,height:24)), rowText=TestElement("AXStaticText","Destination",CGRect(x:20,y:80,width:120,height:24))
+row.add(rowText); row.supported=["AXPress"]; window.add(row)
 let name=TestElement("AXTextField","Name",CGRect(x:10,y:50,width:150,height:24)), secure=TestElement("AXSecureTextField","Password",CGRect(x:200,y:50,width:150,height:24))
 name.attrs[kAXValueAttribute]="4111 1111 1111 1111" as NSString; secure.attrs[kAXValueAttribute]="never-print-me" as NSString
 window.add(name); window.add(secure); application.attrs[kAXFocusedUIElementAttribute]=name
+var caret=CFRange(location:0,length:0); name.attrs[kAXSelectedTextRangeAttribute]=AXValueCreate(.cfRange,&caret)!
 let area=TestElement("AXScrollArea","Rows",CGRect(x:10,y:100,width:370,height:200)), document=TestElement("AXGroup","",CGRect(x:10,y:100,width:370,height:4800)), bar=TestElement("AXScrollBar","Scroll",CGRect(x:370,y:100,width:10,height:200))
 window.add(area); area.add(document); area.add(bar); area.attrs[kAXVerticalScrollBarAttribute]=bar; bar.attrs[kAXValueAttribute]=NSNumber(value:0)
 final class Clipboard {
@@ -258,7 +280,7 @@ final class Clipboard {
  func setString(_ s:String,forType:NSPasteboard.PasteboardType)->Bool { text=s; changeCount += 1; return true }
  func writeObjects(_ items:[NSPasteboardItem]) { text=items.first?.string(forType:.string) ?? ""; changeCount += 1 }
 }
-var refuseValueWrite=false, offset=0.0, pagePushes=0, menuPressed=false, keysSent:[String]=[]
+var refuseValueWrite=false, offset=0.0, pagePushes=0, menuPressed=false, enhancedWrites=0, keysSent:[String]=[]
 func move(_ value:Double) {
  offset=max(0,min(4600,value)); bar.attrs[kAXValueAttribute]=NSNumber(value:offset/4600)
  for (i,e) in document.kids.enumerated() { e.rect.origin.y=100 + Double(i)*24-offset }
@@ -274,9 +296,13 @@ func AXUIElementSetMessagingTimeout(_ e:TestElement,_ timeout:Float)->AXError { 
 func AXUIElementIsAttributeSettable(_ e:TestElement,_ key:CFString,_ result:UnsafeMutablePointer<DarwinBoolean>)->AXError { result.pointee=DarwinBoolean(e === bar); return .success }
 func AXUIElementSetAttributeValue(_ e:TestElement,_ key:CFString,_ value:CFTypeRef)->AXError {
  let k=key as String
+ if e === application && k == "AXEnhancedUserInterface" { enhancedWrites += 1 }
  if refuseValueWrite && e === name && k == kAXValueAttribute { return .cannotComplete }
  if e === bar, k == kAXValueAttribute { move((value as! NSNumber).doubleValue*4600) }
  else if k == kAXFocusedAttribute { application.attrs[kAXFocusedUIElementAttribute]=e }
+ else if k == kAXSelectedTextAttribute, let old=e.attrs[kAXValueAttribute] as? String, let range=Hands.selectedRange(e) {
+  e.attrs[kAXValueAttribute]=(old as NSString).replacingCharacters(in:NSRange(location:range.location,length:range.length),with:value as! String) as NSString
+ }
  else { e.attrs[k]=value }
  return .success
 }
@@ -308,6 +334,23 @@ Hands.selftest()
 precondition(!Hands.riskyLabel("Fixture > Start meeting") && Hands.riskyLabel("File > Delete") && Hands.riskyLabel("OK"))
 precondition(!Hands.windowElement(application,app:application) && Hands.windowElement(window,app:application))
 let app=TestApp()
+application.attrs["AXEnhancedUserInterface"]=kCFBooleanFalse
+var writes=enhancedWrites; _=try! Hands.root(app)
+precondition(CFEqual(application.attrs["AXEnhancedUserInterface"]!,kCFBooleanFalse) && enhancedWrites == writes + 2)
+writes=enhancedWrites; _=try! Hands.read(app,head:true)
+precondition(CFEqual(application.attrs["AXEnhancedUserInterface"]!,kCFBooleanFalse) && enhancedWrites == writes + 2)
+application.attrs["AXEnhancedUserInterface"]=kCFBooleanTrue; writes=enhancedWrites; _=try! Hands.root(app)
+precondition(CFEqual(application.attrs["AXEnhancedUserInterface"]!,kCFBooleanTrue) && enhancedWrites == writes)
+application.attrs["AXEnhancedUserInterface"]=kCFBooleanFalse
+let stableIdentity=Hands.documentIdentity(app,window), stableFrame=window.rect
+window.rect.origin.x += 100; window.attrs[kAXTitleAttribute]="Fixture — Edited" as NSString
+precondition(Hands.documentIdentity(app,window)==stableIdentity)
+window.attrs["AXWindowNumber"]=NSNumber(value:43); precondition(Hands.documentIdentity(app,window) != stableIdentity)
+window.attrs.removeValue(forKey:"AXWindowNumber"); window.attrs[kAXTitleAttribute]="Untitled — Edited" as NSString
+let fallbackIdentity=Hands.documentIdentity(app,window)
+window.attrs[kAXTitleAttribute]="Untitled — Modified" as NSString; precondition(Hands.documentIdentity(app,window)==fallbackIdentity)
+window.attrs[kAXTitleAttribute]="Another document" as NSString; precondition(Hands.documentIdentity(app,window) != fallbackIdentity)
+window.attrs["AXWindowNumber"]=NSNumber(value:42); window.attrs[kAXTitleAttribute]="Fixture" as NSString; window.rect=stableFrame
 application.attrs[kAXFocusedWindowAttribute]=application; application.attrs[kAXMainWindowAttribute]=application
 precondition(try! Hands.root(app).1 === window) // Invalid focused/main references must fall back to AXWindows.
 application.attrs[kAXWindowsAttribute]=[application] as NSArray
@@ -319,8 +362,53 @@ do { _=try Hands.root(app); preconditionFailure("Application accepted as a windo
 let foreign=TestElement("AXWindow"); foreign.pid=999; rootHit=foreign
 do { _=try Hands.root(app); preconditionFailure("Another app's window accepted") } catch {}
 rootHit=nil; cgWindows=[]; application.attrs[kAXWindowsAttribute]=[window] as NSArray
+let nestedText=String(repeating:"Deep document words. ",count:100)
+let level1=TestElement("AXGroup"), level2=TestElement("AXGroup"), level3=TestElement("AXGroup"), deepEditor=TestElement("AXTextArea","Deep document")
+deepEditor.attrs[kAXValueAttribute]=nestedText as NSString; level1.add(level2); level2.add(level3); level3.add(deepEditor)
+let shallowToolbar=TestElement("AXToolbar","Shallow tools")
+for i in 1...300 { shallowToolbar.add(TestElement("AXStaticText","Shallow tool \\(i)")) }
+let savedChildren=window.kids; window.kids=[]; window.add(shallowToolbar); window.add(level1)
+precondition((try! Hands.read(app,head:true)["text"] as? String)?.contains("Deep document words")==true)
+window.kids=savedChildren; for child in savedChildren { child.parent=window }
+let longText=String(repeating:"Document paragraph with unfamiliar words. ",count:300) + "DOCUMENT END"
+let editor=TestElement("AXTextArea","Document",CGRect(x:10,y:5000,width:380,height:300))
+editor.attrs[kAXValueAttribute]=longText as NSString; window.add(editor)
+let toolbar=TestElement("AXToolbar","Tools",CGRect(x:0,y:0,width:400,height:80))
+for i in 1...300 { toolbar.add(TestElement("AXStaticText","Tool \\(i)")) }; window.kids.insert(toolbar,at:0)
+let headRead=try Hands.read(app,head:true)
+precondition((headRead["text"] as? String)?.contains("Document paragraph")==true && (headRead["text"] as! String).count<=1510)
+window.kids.removeFirst()
+let documentRead=try Hands.read(app)
+precondition((documentRead["text"] as? String)?.contains(longText)==true)
+precondition(!(documentRead["text"] as! String).contains("never-print-me"))
+precondition((documentRead["text"] as! String).contains("Row 200"))
+let tail=TestElement("AXStaticText",String(repeating:"Tail paragraph. ",count:3000)); window.add(tail)
+let finalText=TestElement("AXStaticText","NATIVE FINAL"); window.add(finalText)
+let firstChunk=try Hands.read(app); precondition(firstChunk["incomplete"] as? Bool == true)
+let readState=try! JSONSerialization.jsonObject(with:Data(contentsOf:Hands.state.deletingLastPathComponent().appendingPathComponent("document-read.json"))) as! [String:Any]
+precondition((readState["guards"] as! [[String:Any]]).count<=64)
+let nextChunk=try Hands.read(app,more:true); precondition((nextChunk["text"] as! String).contains("NATIVE FINAL"))
+_=try Hands.read(app); name.attrs[kAXValueAttribute]="Changed document" as NSString
+do { _=try Hands.read(app,more:true); preconditionFailure("Mixed document states accepted") } catch {}
+name.attrs[kAXValueAttribute]="4111 1111 1111 1111" as NSString
+window.kids.removeLast(2)
+let secretAlias=TestElement("AXTextField"); secretAlias.attrs["AXLabel"]="Client Secret" as NSString; secretAlias.attrs[kAXValueAttribute]="never-expose-alias" as NSString
+window.add(secretAlias)
+precondition(!(try! Hands.read(app)["text"] as! String).contains("never-expose-alias"))
+window.kids.removeLast()
+let secretStatic=TestElement("AXStaticText","Recovery phrase"); secretStatic.attrs[kAXValueAttribute]="alpha beta gamma delta" as NSString
+let maskedStatic=TestElement("AXStaticText","Reference"); maskedStatic.attrs[kAXValueAttribute]="654321" as NSString
+window.add(secretStatic); window.add(maskedStatic)
+let privateRead=try! Hands.read(app)["text"] as! String
+precondition(!privateRead.contains("alpha beta") && !privateRead.contains("654321"))
+window.kids.removeLast(2)
+window.attrs[kAXTitleAttribute]="Password policy worksheet" as NSString
+precondition((try! Hands.read(app)["text"] as! String).contains("DOCUMENT END"))
+window.attrs[kAXTitleAttribute]="Fixture" as NSString
+
 var initial=try Hands.capture(app)
 precondition(initial.nodes.contains { $0.label == "Export" } && initial.nodes.contains { $0.label == "File" })
+precondition(initial.nodes.contains { $0.role == "AXRow" && $0.label == "Destination" })
 precondition(initial.texts.contains("Row 1") && !initial.texts.contains("Row 150"))
 precondition(!initial.description.contains("never-print-me") && !initial.description.contains("4111") && initial.description.contains("[SECRET]"))
 try Hands.save(initial); let saved=try Hands.load(); precondition(saved.signature==initial.signature)
@@ -360,6 +448,10 @@ let pushes=pagePushes; _=try Hands.scroll("down",pages:0.25,all:false,a:app); pr
 let field=(try Hands.capture(app)).nodes.first { $0.label=="Name" }!
 try Hands.typeText("Sam",field,name,app,append:false); try Hands.typeText("!",field,name,app,append:true)
 precondition(name.attrs[kAXValueAttribute] as? String == "Sam!")
+name.attrs[kAXValueAttribute]="Question remains:\\nNext line remains." as NSString; caret=CFRange(location:0,length:0); name.attrs[kAXSelectedTextRangeAttribute]=AXValueCreate(.cfRange,&caret)!
+precondition((try! Hands.insertAfter("Question remains:"," Answer.",app)).contains("Typed after"))
+precondition(name.attrs[kAXValueAttribute] as? String == "Question remains: Answer.\\nNext line remains.")
+do { _=try Hands.checked(["press","backspace"],try Hands.capture(app),app); preconditionFailure("Destructive key accepted in editable text") } catch {}
 refuseValueWrite=true; try Hands.typeText("Background paste",field,name,app,append:false)
 precondition(name.attrs[kAXValueAttribute] as? String == "Background paste" && Clipboard.general.text == "Original clipboard")
 precondition(keysSent.suffix(2) == ["cmd+a","cmd+v"]); refuseValueWrite=false

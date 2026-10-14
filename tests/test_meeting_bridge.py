@@ -18,7 +18,7 @@ class MeetingBridgeTests(unittest.TestCase):
         # Keep the actual start guards and state transition; replace hardware work with no-op capture.
         begin = classes.index('        let g = generation', classes.index('    func start(_ context: String)'))
         end = classes.index('    func speech(', begin)
-        classes = classes[:begin] + '    }\n' + classes[end:]
+        classes = classes[:begin] + '        Prefs.set("meetingPrep", "")\n    }\n' + classes[end:]
         prefs = source[source.index('enum Prefs'):source.index('// Read-aloud uses')]
         swift = '''import Cocoa
 import Carbon
@@ -29,8 +29,10 @@ import ScreenCaptureKit
 import PDFKit
 import QuickLookThumbnailing
 import UniformTypeIdentifiers
+import EventKit
 let dir = CommandLine.arguments[1]
 ''' + prefs + '''
+let calendar = EKEventStore()
 final class KeyPanel: NSPanel { override var canBecomeKey: Bool { true } }
 final class AppStub { var shortcutDown = false; func close(clear: Bool) {} }
 final class BarStub { func paint() {} }
@@ -47,9 +49,10 @@ func py(_ args: [String]) -> Process {
 }
 ''' + source[source.index('final class Tracker'):source.index('// The box can take typing')] + classes + '''
 let meeting = MeetingCopilot()
+meeting.calendarContext = { done in done(["title":"Pilot review","time":"Today at 4:00 PM","attendees":["Dana <dana@example.com>"],"notes":"Agenda"], nil) }
 let nsapp = NSApplication.shared
 nsapp.setActivationPolicy(.accessory)
-var stage = 0, tries = 0, savedFrame = NSRect.zero
+var stage = 0, tries = 0, savedFrame = NSRect.zero, latencyReady = Date.distantPast
 var cancelledFinishes: [Process] = []
 func fail(_ message: String) -> Never { print(message); meeting.discard(); exit(1) }
 func evaluate(_ script: String, _ done: @escaping (Any?) -> Void) {
@@ -84,12 +87,39 @@ Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
   evaluate("!!window.meeting && !document.getElementById('start').disabled") { value in
    guard value as? Bool == true else { return }
    guard !meeting.running else { fail("Normal prep started capture") }
+   stage = 21
+   evaluate("document.getElementById('context').value='Pilot notes';document.getElementById('gather').click()") { _ in }
+  }
+ case 21:
+  guard meeting.gathering, meeting.process != nil else { return }
+  stage = 22
+  evaluate("document.getElementById('gather').click()") { _ in }
+ case 22:
+  guard !meeting.gathering, meeting.process == nil else { return }
+  stage = 23
+  evaluate("document.getElementById('gather').click()") { _ in }
+ case 23:
+  guard !meeting.gathering, meeting.process == nil else { return }
+  let payload = (try? Data(contentsOf: URL(fileURLWithPath: dir + "/gather.json"))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+  guard (payload?["event"] as? [String: Any])?["title"] as? String == "Pilot review",
+        (payload?["text"] as? String) == "Pilot notes" else { fail("Gather lost fake calendar or typed context") }
+  evaluate("document.getElementById('context').value") { value in
+   guard value as? String == "[Calendar] Pilot review\\n[Email] Decision" else { return }
    stage = 3
-   evaluate("document.getElementById('context').value='Pilot notes';document.getElementById('start').click()") { _ in }
+   evaluate("document.getElementById('style').value='Persuasive';document.getElementById('context').value='Pilot notes';document.getElementById('start').click()") { _ in }
   }
  case 3:
   guard meeting.running else { return }
   guard meeting.brief == "Pilot notes" else { fail("Short context was not used as-is") }
+  if latencyReady == .distantPast { latencyReady = Date(); return }
+  guard Date().timeIntervalSince(latencyReady) > 0.3 else { return }
+  meeting.speech("Tell me the budget?", final: true)
+  stage = 31
+ case 31:
+  guard meeting.answering == nil, FileManager.default.fileExists(atPath: dir + "/answer.json") else { return }
+  try? FileManager.default.removeItem(atPath: dir + "/answer.json")
+  let saved = (try? Data(contentsOf: URL(fileURLWithPath: Prefs.path))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+  guard saved?["meetingStyle"] as? String == "Persuasive", meeting.style.hasPrefix("Speak to feelings first") else { fail("Picked answer style was not saved as the default") }
   guard !FileManager.default.fileExists(atPath: dir + "/meetings") else { fail("Saving switch off wrote a meeting") }
   Prefs.set("meetingSave", true); meeting.savingChanged(true)
   guard meeting.archive != nil else { fail("Saving switch on did not start the journal") }
@@ -99,22 +129,29 @@ Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
   guard meeting.brief == "Edited brief" else { return }
   stage = 5; meeting.discard(); meeting.open()
  case 5:
-  evaluate("!!window.meeting && !document.getElementById('start').disabled") { value in
-   guard value as? Bool == true else { return }; stage = 6
-   evaluate("document.getElementById('context').value='x'.repeat(2000);document.getElementById('start').click()") { _ in }
+  evaluate("!!window.meeting && !document.getElementById('start').disabled && document.getElementById('style').value") { value in
+   guard let value = value as? String, !value.isEmpty else { return }
+   guard value == "Persuasive" else { fail("Next prep did not restore the default answer style") }; stage = 6
+   evaluate("document.getElementById('context').value='x'.repeat(7000);document.getElementById('start').click()") { _ in }
   }
  case 6:
   guard meeting.running, meeting.process != nil else { return }
-  stage = 9; meeting.enqueue(100, "Budget?", best: true)
+  meeting.speech("Should you answer me?", final: true, mic: true)
+  guard meeting.micPartialQuestion == nil, meeting.queue.isEmpty, meeting.answering == nil else { fail("Own microphone triggered an automatic answer") }
+  meeting.speech("What is the budget?", final: false)
+  guard meeting.partialQuestion != nil else { fail("Clear partial question waited for final speech") }
+  meeting.speech("What is the budget?", final: true)
+  stage = 9
  case 9:
   guard meeting.brief == "Boiled down", meeting.process == nil else { return }
   let payload = (try? Data(contentsOf: URL(fileURLWithPath: dir + "/answer.json"))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
   guard payload?["brief"] as? String == "Boiled down" else { fail("Queued answer used context from before prep") }
+  guard (payload?["style"] as? String ?? "").hasPrefix("Speak to feelings first") else { fail("Answer worker did not get the picked style") }
   stage = 10; meeting.discard(); meeting.open()
  case 10:
   evaluate("!!window.meeting && !document.getElementById('start').disabled") { value in
    guard value as? Bool == true else { return }; stage = 11
-   evaluate("document.getElementById('context').value='x'.repeat(2000);document.getElementById('start').click()") { _ in }
+   evaluate("document.getElementById('context').value='x'.repeat(7000);document.getElementById('start').click()") { _ in }
   }
  case 11:
   guard meeting.running, meeting.process != nil else { return }; stage = 12
@@ -129,11 +166,12 @@ Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
  case 7:
   evaluate("!!window.meeting && !document.getElementById('start').disabled") { value in
    guard value as? Bool == true else { return }; stage = 8
-   evaluate("document.getElementById('start').click()") { _ in }
+   evaluate("const s=document.getElementById('style');s.value='Custom…';s.dispatchEvent(new Event('change'));document.getElementById('custom').value='  Tell a short story first ';document.getElementById('start').click()") { _ in }
   }
  case 8:
   guard meeting.running else { return }
   guard meeting.brief.isEmpty else { fail("Empty start retained old context") }
+  guard meeting.style == "Tell a short story first", Prefs.str("meetingCustom") == "Tell a short story first" else { fail("Custom answer style was not used or remembered") }
   meeting.speech("Earlier partial", final: false); meeting.speech("Earlier final. ", final: true)
   meeting.speech("Unfinished question", final: false); meeting.stop()
   guard meeting.transcript.count == 2, meeting.transcript.last?["text"] as? String == "Unfinished question",
@@ -212,10 +250,19 @@ nsapp.run()
             html = (ROOT / 'ui/meeting.html').read_text().replace('<script type="module">', '<script type="module">\nawait new Promise(resolve => setTimeout(resolve, 350));')
             (root / 'ui/meeting.html').write_text(html)
             (root / 'ui/orbs.js').write_text((ROOT / 'ui/orbs.js').read_text())
-            (root / 'worker.py').write_text("import json,sys,time\nfrom pathlib import Path\nif sys.argv[1]=='--meeting-demo-brief':\n print(json.dumps({'brief':'Demo pilot budget: $18,000.'}))\nelif sys.argv[1]=='--meetings':\n time.sleep(30); print('{}')\nelse:\n data=json.load(sys.stdin)\n if sys.argv[1]=='--meeting-prep':\n  Path(sys.argv[0]).with_name('prep.json').write_text(json.dumps(data)); time.sleep(.7); print(json.dumps({'brief':'Boiled down'}))\n else:\n  Path(sys.argv[0]).with_name('answer.json').write_text(json.dumps(data)); print(json.dumps({'kind':'answer','lines':['Answer']}))\n")
+            (root / 'worker.py').write_text("import json,sys,time\nfrom pathlib import Path\nif sys.argv[1]=='--meeting-demo-brief':\n print(json.dumps({'brief':'Demo pilot budget: $18,000.'}))\nelif sys.argv[1]=='--meetings':\n time.sleep(30); print('{}')\nelse:\n data=json.load(sys.stdin)\n if sys.argv[1]=='--meeting-gather':\n  Path(sys.argv[0]).with_name('gather.json').write_text(json.dumps(data)); time.sleep(.3); print(json.dumps({'brief':'[Calendar] Pilot review\\n[Email] Decision'}))\n elif sys.argv[1]=='--meeting-prep':\n  Path(sys.argv[0]).with_name('prep.json').write_text(json.dumps(data)); time.sleep(.7); print(json.dumps({'brief':'Boiled down'}))\n else:\n  Path(sys.argv[0]).with_name('answer.json').write_text(json.dumps(data)); print(json.dumps({'kind':'answer','lines':['Answer']}))\n")
+            (root / 'worker.py').write_text("import json,sys,time\nfrom pathlib import Path\nif sys.argv[1]=='--meeting-demo-brief':\n print(json.dumps({'brief':'Demo pilot budget: $18,000.'}))\nelif sys.argv[1]=='--meetings':\n time.sleep(30); print('{}')\nelse:\n data=json.load(sys.stdin)\n if sys.argv[1]=='--meeting-gather':\n  Path(sys.argv[0]).with_name('gather.json').write_text(json.dumps(data)); time.sleep(.3); print(json.dumps({'brief':'[Calendar] Pilot review\\n[Email] Decision'}))\n elif sys.argv[1]=='--meeting-prep':\n  Path(sys.argv[0]).with_name('prep.json').write_text(json.dumps(data)); time.sleep(.7); print(json.dumps({'brief':'Boiled down'}))\n else:\n  Path(sys.argv[0]).with_name('answer.json').write_text(json.dumps(data)); time.sleep(.12); print(json.dumps({'event':'text','text':'Answer','at':time.time()}),flush=True); time.sleep(.38); print(json.dumps({'event':'result','result':{'kind':'answer','lines':['Answer'],'secs':.5,'first_secs':.12}}),flush=True)\n")
             file = root / 'bridge.swift'; file.write_text(swift)
             binary = root / 'bridge'
             compiled = subprocess.run(['swiftc', str(file), '-o', str(binary)], text=True, capture_output=True)
             self.assertEqual(compiled.returncode, 0, compiled.stderr)
             result = subprocess.run([str(binary), str(root), sys.executable], env={**os.environ, 'ATTICUS_DIR': str(root)}, text=True, capture_output=True, timeout=20)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            timings = [json.loads(line) for line in result.stdout.splitlines() if line.startswith('{') and 'meeting-answer-latency' in line]
+            self.assertTrue(timings, result.stdout)
+            measured = timings[0]
+            self.assertLess(measured['detectedToModelMs'], 50)
+            self.assertGreaterEqual(measured['modelToFirstMs'], 100)
+            self.assertLess(measured['modelToFirstMs'], 350)
+            self.assertLess(abs(measured['firstToShownMs']), 200)
+            print('fake transcript latency:', json.dumps(measured, sort_keys=True))
