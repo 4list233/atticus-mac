@@ -101,7 +101,7 @@ Choose **Report Feedback…** in the menu bar, **Report feedback** in Settings, 
 
 You need:
 - **macOS 26** or later (Atticus uses Apple's new on-device speech)
-- **A paid Claude plan** (Pro or Max) and [Claude Code](https://claude.com/claude-code) — or the [Devin CLI](https://docs.devin.ai/cli) signed in to a Devin plan. Pick one in the setup window (“Use Devin instead”) or Settings → Intelligence; setup installs it and signs you in.
+- **A paid Claude plan** (Pro or Max) and [Claude Code](https://claude.com/claude-code) — or the [Devin CLI](https://docs.devin.ai/cli) signed in to a Devin plan. Or a custom server (Ollama, LM Studio, DeepSeek) through Claude Code, no Claude account needed. Pick one in setup (“Change provider”) or Settings → Intelligence; setup installs it and signs you in.
 - Apple's command line tools: `xcode-select --install`
 - Accessibility permission enables native clicks, scrolling, menus, keys, dragging and field typing.
 

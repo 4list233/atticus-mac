@@ -1929,6 +1929,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
                 self?.web?.evaluateJavaScript("ob.set(\(j))")
                 self?.web?.evaluateJavaScript("ob.mode(\(Prefs.str("talkMode") == "toggle"))")
                 self?.web?.evaluateJavaScript("ob.prefs({meeting: \(Prefs.bool("meeting")), pointer: \(Prefs.bool("pointer"))})")
+                self?.call("ob.server", ["apiBase": Prefs.str("apiBase"), "apiModel": Prefs.str("apiModel")])
             }
         }
     }
@@ -1961,11 +1962,11 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
     func fixPlan() {
         Onboarding.plan { [weak self] c in
             let need = c["need"] as? String ?? ""
-            let devin = (c["client"] as? String) == "devin"
+            let devin = (c["client"] as? String) == "devin", server = (c["client"] as? String) == "server"
             if need == "upgrade" { NSWorkspace.shared.open(URL(string: "https://claude.ai/upgrade")!); return }
             let cmd = need == "install"
                 ? devin ? "curl -fsSL https://cli.devin.ai/install.sh | bash && devin auth login"
-                        : "curl -fsSL https://claude.ai/install.sh | bash && ~/.local/bin/claude auth login"
+                        : "curl -fsSL https://claude.ai/install.sh | bash" + (server ? "" : " && ~/.local/bin/claude auth login")   // a custom server needs Claude Code, not a Claude account
                 : devin ? "devin auth login" : "claude auth login"
             let f = NSTemporaryDirectory() + (devin ? "atticus-devin.command" : "atticus-claude.command")
             try? "#!/bin/zsh\nexport PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"\necho 'Atticus: setting up \(devin ? "Devin" : "Claude Code")'\n\(cmd)\necho; echo 'Done. You can close this window.'\n".write(toFile: f, atomically: true, encoding: .utf8)
@@ -2082,7 +2083,19 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
         if b["do"] == "done" { return finish() }
         if b["do"] == "kofi" { NSWorkspace.shared.open(kofi); return }
         if b["do"] == "enableAll" { return enableAll(connected: b["connected"] == "true") }
-        if b["do"] == "client", let v = b["v"], ["claude", "devin"].contains(v) { Atticus.settings.apply("client", v); Atticus.settings.push(); return checkPlan() }   // the plan row's "Use … instead" link
+        if b["do"] == "provider", let c = b["client"], ["claude", "devin"].contains(c) {   // the plan row's Change provider sheet
+            Atticus.settings.apply("client", c)
+            for k in ["apiBase", "apiKey", "apiModel"] { if let v = b[k] { Atticus.settings.apply(k, v) } }
+            Atticus.settings.push(); return checkPlan()
+        }
+        if b["do"] == "probe", let base = b["base"] {   // a server typed in the sheet, not saved yet: its models
+            return DispatchQueue.global().async { [weak self] in
+                let p = py(["--models"], ["ATTICUS_PROBE_BASE": base, "ATTICUS_PROBE_KEY": (b["key"] ?? "").isEmpty && base == Prefs.str("apiBase") ? Prefs.str("apiKey") : b["key"] ?? ""]), out = Pipe(); p.standardOutput = out
+                try? p.run(); let d = out.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+                let list = (try? JSONSerialization.jsonObject(with: d)) as? [String] ?? []
+                DispatchQueue.main.async { self?.call("ob.models", list) }
+            }
+        }
         if b["do"] == "connectors" { return Onboarding.connectors { [weak self] c in self?.call("ob.connectors", c) } }
         if b["do"] == "set", let k = b["k"], ["meeting", "pointer", "improve"].contains(k) { Atticus.settings.apply(k, b["v"] == "true"); Atticus.settings.push(); return }   // the extras switches
         grant(b["id"] ?? "")

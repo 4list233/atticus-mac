@@ -6,11 +6,11 @@
   :root {
     --fg: #1d1d1f; --fg2: #6e6e73; --fg3: #86868b; --card: rgba(255,255,255,.62); --line: rgba(0,0,0,.08);
     --key-top: #fdfdfd; --key-bot: #e8e8ed; --key-edge: rgba(0,0,0,.16); --accent: #0a84ff; --green: #28c840;
-    --glow: rgba(120,140,255,.28); --ease: cubic-bezier(.4,0,.2,1); --out: cubic-bezier(.16,1,.3,1); --spring: cubic-bezier(.34,1.56,.64,1);
+    --glow: rgba(120,140,255,.28); --sheet: #fbfbfd; --field: #fff; --ease: cubic-bezier(.4,0,.2,1); --out: cubic-bezier(.16,1,.3,1); --spring: cubic-bezier(.34,1.56,.64,1);
   }
   @media (prefers-color-scheme: dark) { :root {
     --fg: #f5f5f7; --fg2: #a1a1a6; --fg3: #8e8e93; --card: rgba(255,255,255,.06); --line: rgba(255,255,255,.08);
-    --key-top: #3a3a3c; --key-bot: #2c2c2e; --key-edge: rgba(0,0,0,.55); --glow: rgba(110,130,255,.22);
+    --key-top: #3a3a3c; --key-bot: #2c2c2e; --key-edge: rgba(0,0,0,.55); --glow: rgba(110,130,255,.22); --sheet: #2a2a2c; --field: rgba(255,255,255,.07);
   } }
   html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; -webkit-user-select: none; cursor: default;
     font: 13px -apple-system, system-ui, sans-serif; color: var(--fg); -webkit-font-smoothing: antialiased; }
@@ -80,6 +80,32 @@
     stroke-dasharray: 14; stroke-dashoffset: 14; animation: draw .35s .15s var(--ease) forwards; }
   .alt { display: inline-block; margin: 3px 0 0; padding: 0; border: 0; background: none; cursor: pointer; font: 500 11.5px system-ui; color: var(--accent); }
   .alt:hover { text-decoration: underline; } .alt:focus-visible { outline: 2px solid rgba(10,132,255,.45); outline-offset: 2px; border-radius: 3px; }
+  [hidden] { display: none !important; }
+  /* Change provider: a sheet over the setup page */
+  #prov { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(0,0,0,.18);
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); opacity: 0; transition: opacity .25s var(--ease); }
+  #prov.on { opacity: 1; }
+  #prov .card { width: 420px; box-sizing: border-box; padding: 20px; border-radius: 16px; text-align: left; background: var(--sheet);
+    box-shadow: 0 0 0 .5px var(--line), 0 18px 50px rgba(0,0,0,.22); transform: translateY(10px) scale(.98); transition: transform .35s var(--out); }
+  #prov.on .card { transform: none; }
+  #prov h3 { margin: 0; font: 600 16px system-ui; } #prov .card > p { margin: 4px 0 14px; font-size: 12px; color: var(--fg2); }
+  .opt { width: 100%; display: flex; align-items: center; gap: 12px; padding: 9px 12px; border: 0; border-radius: 10px; cursor: pointer; text-align: left;
+    color: var(--fg); background: transparent; box-shadow: inset 0 0 0 .5px var(--line); font: inherit; transition: background .2s, box-shadow .2s; }
+  .opt + .opt { margin-top: 6px; } .opt:hover { background: rgba(127,127,127,.08); }
+  .opt[aria-checked="true"] { background: rgba(10,132,255,.1); box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .opt .txt span { margin-top: 2px; }
+  .opt .dot { flex: none; width: 16px; height: 16px; border-radius: 50%; box-sizing: border-box; box-shadow: inset 0 0 0 1.5px var(--fg3); }
+  .opt[aria-checked="true"] .dot { box-shadow: inset 0 0 0 5px var(--accent); }
+  .opt:focus-visible, .chip:focus-visible, .fld:focus-visible { outline: 3px solid rgba(10,132,255,.45); outline-offset: 1px; }
+  #srv { margin-top: 12px; display: grid; gap: 8px; }
+  .chips { display: flex; gap: 6px; } .chips span { align-self: center; font-size: 11.5px; color: var(--fg3); margin-right: 2px; }
+  .chip { height: 24px; padding: 0 10px; border: 0; border-radius: 12px; cursor: pointer; font: 500 11.5px system-ui; color: var(--fg); background: rgba(127,127,127,.14); }
+  .chip:hover { background: rgba(127,127,127,.22); } .chip.on { color: #fff; background: var(--accent); }
+  .fld { width: 100%; box-sizing: border-box; height: 30px; padding: 0 10px; border: 0; border-radius: 8px; font: 13px system-ui; color: var(--fg);
+    background: var(--field); box-shadow: inset 0 0 0 .5px var(--line); -webkit-user-select: text; outline: none; }
+  #srv-note { min-height: 15px; font-size: 11.5px; color: var(--fg3); } #srv-note.bad { color: #ff453a; }
+  #prov .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; } #prov .acts .btn { margin: 0; height: 30px; padding: 0 16px; font-size: 13px; }
+  #prov .acts .btn:disabled { opacity: .45; pointer-events: none; }
   .row.ok .allow { display: none; } .row.ok .check { display: block; margin: 0 21px; }
   #count { margin-top: 14px; font-size: 12px; color: var(--fg3); font-variant-numeric: tabular-nums; transition: color .3s; }
   #count.all { color: var(--green); }
@@ -343,6 +369,26 @@
   <button class="btn r" id="finish">Start Using Atticus</button>
 </section>
 
+<div id="prov" hidden role="dialog" aria-modal="true" aria-labelledby="prov-h">
+  <div class="card">
+    <h3 id="prov-h">Choose your AI provider</h3>
+    <p>Atticus thinks with one of these. Change it anytime in Settings.</p>
+    <div role="radiogroup" aria-labelledby="prov-h">
+      <button class="opt" role="radio" data-p="claude"><span class="dot"></span><div class="txt"><b>Claude</b><span>Your Claude Pro or Max plan, through Claude Code.</span></div></button>
+      <button class="opt" role="radio" data-p="devin"><span class="dot"></span><div class="txt"><b>Devin</b><span>Your Devin plan, through the Devin CLI.</span></div></button>
+      <button class="opt" role="radio" data-p="server"><span class="dot"></span><div class="txt"><b>Custom server</b><span>Ollama, LM Studio, DeepSeek or any Claude-style API.</span></div></button>
+    </div>
+    <div id="srv" hidden>
+      <div class="chips"><span>Quick fill</span><button class="chip" data-base="http://localhost:11434">Ollama</button><button class="chip" data-base="http://localhost:1234">LM Studio</button><button class="chip" data-base="https://api.deepseek.com/anthropic">DeepSeek</button></div>
+      <input class="fld" id="srv-base" placeholder="Server address, like http://localhost:11434" spellcheck="false" aria-label="Server address">
+      <input class="fld" id="srv-key" type="password" placeholder="Key (not needed for local servers)" aria-label="Server key">
+      <input class="fld" id="srv-model" list="srv-models" placeholder="Model" spellcheck="false" aria-label="Model"><datalist id="srv-models"></datalist>
+      <div id="srv-note" aria-live="polite"></div>
+    </div>
+    <div class="acts"><button class="btn quiet" id="prov-cancel">Cancel</button><button class="btn" id="prov-use">Use Claude</button></div>
+  </div>
+</div>
+
 <div id="dots"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
 
 <script type="text/plain" id="orbsrc">/*ORBS*/</script>
@@ -381,15 +427,66 @@
       <svg class="check" viewBox="0 0 22 22"><circle cx="11" cy="11" r="11"/><path d="M6.5 11.3l3 3 6-6.3"/></svg>
     </div>`).join('');
   $('list').innerHTML = rows(P, 'p-');
-  // Not everyone has a Claude plan: one small link flips the AI client (the same switch as Settings → AI client); the row re-checks it.
-  $('p-claude').querySelector('.txt').insertAdjacentHTML('beforeend', '<button class="alt" id="client-alt" data-v="devin">Use Devin instead</button>');
-  let want = null;   // the client just picked: a check already running for the old one must not flip the row back
-  $('client-alt').onclick = e => {
-    const v = want = e.target.dataset.v;
-    post({ do: 'client', v });
+  // Not everyone has a Claude plan: "Change provider" picks Claude, Devin or a custom server (the same prefs as Settings → Intelligence).
+  $('p-claude').querySelector('.txt').insertAdjacentHTML('beforeend', '<button class="alt" id="client-alt">Change provider</button>');
+  const NAMES = { claude: 'Claude Plan', devin: 'Devin', server: 'Custom Server' };
+  let want = null, provider = 'claude', saved = { apiBase: '', apiModel: '' }, pick = 'claude', probeTimer = 0;
+  const srvOK = () => /^https?:\/\/\S+$/.test($('srv-base').value.trim()) && !!$('srv-model').value.trim();
+  const paintProv = () => {
+    document.querySelectorAll('.opt').forEach(o => o.setAttribute('aria-checked', String(o.dataset.p === pick)));
+    $('srv').hidden = pick !== 'server';
+    document.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.base === $('srv-base').value.trim()));
+    $('prov-use').textContent = 'Use ' + { claude: 'Claude', devin: 'Devin', server: 'This Server' }[pick];
+    $('prov-use').disabled = pick === 'server' && !srvOK();
+  };
+  const probe = () => {   // ask the server for its models, so the Model box can offer them
+    clearTimeout(probeTimer);
+    const base = $('srv-base').value.trim();
+    $('srv-note').classList.remove('bad'); $('srv-note').textContent = '';
+    if (!/^https?:\/\/\S+$/.test(base)) return;
+    $('srv-note').textContent = 'Looking for models…';
+    probeTimer = setTimeout(() => post({ do: 'probe', base, key: $('srv-key').value.trim() }), 400);
+  };
+  const closeProv = () => { $('prov').classList.remove('on'); setTimeout(() => { $('prov').hidden = true; }, 250); $('client-alt').focus(); };
+  $('client-alt').onclick = () => {
+    pick = provider;
+    $('srv-base').value = saved.apiBase; $('srv-model').value = saved.apiModel; $('srv-key').value = '';
+    $('srv-key').placeholder = saved.apiBase ? 'Key (leave empty to keep the saved one)' : 'Key (not needed for local servers)';
+    $('srv-note').textContent = ''; paintProv();
+    $('prov').hidden = false; requestAnimationFrame(() => $('prov').classList.add('on'));
+    document.querySelector('.opt[aria-checked="true"]').focus();
+    if (pick === 'server') probe();
+  };
+  document.querySelectorAll('.opt').forEach(o => o.onclick = () => { pick = o.dataset.p; paintProv(); if (pick === 'server') { if ($('srv-base').value) probe(); else $('srv-base').focus(); } });
+  document.querySelectorAll('.chip').forEach(c => c.onclick = () => { $('srv-base').value = c.dataset.base; $('srv-model').value = ''; paintProv(); probe(); });
+  $('srv-base').oninput = () => { paintProv(); probe(); };
+  $('srv-key').oninput = () => probe();
+  $('srv-model').oninput = paintProv;
+  $('prov-cancel').onclick = closeProv;
+  $('prov').addEventListener('keydown', e => {
+    if (e.key === 'Escape') { e.preventDefault(); closeProv(); }
+    if (e.key === 'Enter' && e.target.classList.contains('fld') && !$('prov-use').disabled) $('prov-use').click();
+    if (e.key === 'Tab') {   // keep focus inside the sheet
+      const f = [...$('prov').querySelectorAll('button, input')].filter(x => !x.disabled && x.offsetParent);
+      if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f[f.length - 1].focus(); }
+      else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
+    }
+  });
+  $('prov-use').onclick = () => {
+    const m = { do: 'provider', client: pick === 'devin' ? 'devin' : 'claude' };
+    if (pick === 'claude') m.apiBase = '';
+    if (pick === 'server') {
+      m.apiBase = $('srv-base').value.trim(); m.apiModel = $('srv-model').value.trim();
+      if ($('srv-key').value.trim() || m.apiBase !== saved.apiBase) m.apiKey = $('srv-key').value.trim();   // empty key + same server keeps the saved key
+      saved = { apiBase: m.apiBase, apiModel: m.apiModel };
+    }
+    if (pick === 'claude') saved.apiBase = '';
+    post(m); want = provider = pick;
     $('p-claude').classList.remove('ok'); planOK = false;
-    $('p-claude').querySelector('.txt b').textContent = v === 'devin' ? 'Devin' : 'Claude Plan';
-    $('p-claude').querySelector('.txt span').textContent = v === 'devin' ? 'Checking your Devin sign-in…' : 'Checking your Claude sign-in…';
+    $('p-claude').querySelector('.txt b').textContent = NAMES[pick];
+    $('p-claude').querySelector('.txt span').textContent = 'Checking…';
+    if (last) ob.set(last);
+    closeProv();
   };
   // Agents: what Atticus turns on itself, then what only the user can (macOS privacy switches, a claude.ai sign-in). Status is live; done rows show a check.
   const glyph = id => P.find(p => p[0] === id);
@@ -430,13 +527,11 @@
       $('try-skip').hidden = true; $('try-next').hidden = false;
     },
     plan(c) {   // the AI client (Claude Code or Devin): installed, signed in, paid plan? The row says which, the button fixes it
-      if (want && (c.client || 'claude') !== want) return; want = null;
-      planOK = !!c.ok;
-      $('p-claude').querySelector('.txt b').textContent = c.client === 'devin' ? 'Devin' : 'Claude Plan';
+      if (want && c.client !== want) return; want = null;
+      planOK = !!c.ok; provider = c.client || 'claude';
+      $('p-claude').querySelector('.txt b').textContent = NAMES[provider] || NAMES.claude;
       $('p-claude').querySelector('.txt span').textContent = c.text;
       $('p-claude').querySelector('.allow').textContent = { install: 'Install', login: 'Sign In', upgrade: 'Upgrade' }[c.need] || 'Allow';
-      const alt = c.client === 'devin' ? 'claude' : 'devin';
-      $('client-alt').dataset.v = alt; $('client-alt').textContent = alt === 'devin' ? 'Use Devin instead' : 'Use Claude instead';
       if (last) ob.set(last);
     },
     walk(id) {   // Enable All: the step it is on says what to do there; the button waits until the walk ends
@@ -454,6 +549,14 @@
       $('a-connectors').querySelector('.txt span').textContent = n ? c.connected.slice(0, 2).join(', ') + (n > 2 ? ` and ${n - 2} more` : '') + ' connected' + (s ? ` · ${s} need sign-in` : '')
         : s ? `${s} need sign-in in Claude` : 'Gmail, Drive and more, from your Claude account.';
     },
+    models(list) {   // the custom server's models, from Change provider's probe
+      $('srv-models').innerHTML = list.map(m => `<option value="${m.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))}">`).join('');
+      if (list.length && !$('srv-model').value.trim()) $('srv-model').value = list[0];
+      $('srv-note').classList.toggle('bad', !list.length);
+      $('srv-note').textContent = list.length ? `Found ${list.length} model${list.length > 1 ? 's' : ''}. Screen tasks need one that can see images.` : 'No models found there. Is the server running? You can still type a model name.';
+      paintProv();
+    },
+    server(s) { saved = { apiBase: s.apiBase || '', apiModel: s.apiModel || '' }; },
     prefs(p) { document.querySelectorAll('.sw input').forEach(i => { if (document.activeElement !== i) i.checked = !!p[i.dataset.k]; }); },
     set(s) {
       last = s; s = { ...s, claude: planOK };

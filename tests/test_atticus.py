@@ -36,7 +36,7 @@ class BrainTests(unittest.TestCase):
             self.assertEqual(env['ANTHROPIC_BASE_URL'], 'https://api.deepseek.com/anthropic')
             self.assertEqual((env['ANTHROPIC_AUTH_TOKEN'], env['ANTHROPIC_API_KEY']), ('none', ''))
             self.assertEqual({env[f'ANTHROPIC_DEFAULT_{m}_MODEL'] for m in ('HAIKU', 'SONNET', 'OPUS')}, {'deepseek-chat'})
-            self.assertEqual(atticus.plan(), {'ok': True, 'need': '', 'text': 'Using your custom server, api.deepseek.com.'})
+            self.assertEqual(atticus.plan(), {'ok': True, 'need': '', 'text': 'Using your custom server, api.deepseek.com.', 'client': 'server'})
 
     def test_custom_server_models_come_from_the_server(self):
         from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -426,6 +426,25 @@ raise SystemExit(4)
         with patch.object(atticus.shutil, 'which', return_value='/fake/devin'), patch.object(atticus.subprocess, 'run', side_effect=[ok, bad]):
             self.assertTrue(atticus.devin_plan()['ok'])
             self.assertFalse(atticus.devin_plan()['ok'])
+
+    def test_custom_server_plan_needs_claude_code_not_an_account(self):
+        prefs = {'apiBase': 'http://localhost:11434', 'apiModel': 'qwen3'}
+        with patch.object(atticus, 'pref', side_effect=lambda k, d='': prefs.get(k, d)), patch.object(atticus.shutil, 'which', return_value=None):
+            c = atticus.plan()
+        self.assertEqual((c['client'], c['need']), ('server', 'install'))
+        with patch.object(atticus, 'pref', side_effect=lambda k, d='': prefs.get(k, d)), patch.object(atticus.shutil, 'which', return_value='/fake/claude'):
+            self.assertTrue(atticus.plan()['ok'])
+
+    def test_models_probe_uses_the_unsaved_server(self):
+        seen = []
+        def fake(req, timeout):
+            seen.append((req.full_url, req.headers.get('X-api-key')))
+            raise OSError
+        with patch.dict(os.environ, {'ATTICUS_PROBE_BASE': 'http://localhost:1234', 'ATTICUS_PROBE_KEY': 'k'}), \
+             patch.object(atticus, 'pref', side_effect=lambda k, d='': 'https://saved.example' if k == 'apiBase' else d), \
+             patch.object(atticus.urllib.request, 'urlopen', side_effect=fake):
+            self.assertEqual(atticus.models(), [])
+        self.assertTrue(seen and all(u.startswith('http://localhost:1234') and k == 'k' for u, k in seen))
 
     def test_cancelled_parent_cannot_use_leftover_commit(self):
         with patch.dict(os.environ, {'ATTICUS_COMMIT': '/fake/commit'}), \

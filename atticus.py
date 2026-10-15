@@ -384,7 +384,9 @@ def server(model=None):
 
 def models():
     """The custom server's model names, for Settings' Model box. /v1/models is the same list shape on OpenAI-style and Anthropic-style servers."""
-    base, key = str(pref('apiBase', '')).strip().rstrip('/'), str(pref('apiKey', '')).strip()
+    probe = os.environ.get('ATTICUS_PROBE_BASE')   # setup's Change provider asks about a server before it is saved
+    base = str(pref('apiBase', '') if probe is None else probe).strip().rstrip('/')
+    key = str(pref('apiKey', '') if probe is None else os.environ.get('ATTICUS_PROBE_KEY', '')).strip()
     u = urllib.parse.urlparse(base)
     root = f'{u.scheme}://{u.netloc}'   # DeepSeek's Claude address ends in /anthropic; its list lives at the root
     for url in dict.fromkeys([base + '/v1/models', root + '/v1/models', root + '/models']) if u.netloc else []:
@@ -2546,13 +2548,15 @@ def tip(reply, taught='', task='', elapsed=0):
 def plan():
     """Can Atticus think? The configured AI client must be installed and signed in.
     -> {'ok': bool, 'need': '' | 'install' | 'login' | 'upgrade', 'client': name, 'text': one line for the user}"""
-    return {**devin_plan(), 'client': 'devin'} if client() == 'devin' else claude_plan()
+    return {**devin_plan(), 'client': 'devin'} if client() == 'devin' else {**claude_plan(), 'client': 'server' if server() else 'claude'}
 
 
 def claude_plan():
     """Claude Code must be installed and signed in to a paid Claude plan (or an API key)."""
     if server() and shutil.which('claude'):   # no Claude sign-in needed
         return {'ok': True, 'need': '', 'text': f"Using your custom server, {urllib.parse.urlparse(server()['ANTHROPIC_BASE_URL']).hostname or 'unknown'}."}
+    if server():
+        return {'ok': False, 'need': 'install', 'text': 'Custom servers run through Claude Code. Install it; no Claude account needed.'}
     try:
         s = json.loads(subprocess.run(['claude', 'auth', 'status'], capture_output=True, text=True, timeout=20).stdout)
     except FileNotFoundError:
