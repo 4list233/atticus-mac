@@ -91,6 +91,14 @@ class AgentTests(unittest.TestCase):
         self.assertLessEqual(len(prompt.replace(atticus.ME,installed)),10000)
         self.assertLess(prompt.index(atticus.AGENT_HANDOFF),250);self.assertEqual(prompt.count(atticus.AGENT_HANDOFF),1)
 
+    def test_sole_live_agent_is_steered_without_a_new_agent_question(self):
+        self.assertIn('If exactly one is live, use it',atticus.AGENT_HANDOFF)
+        self.assertIn('never ask which or start another',atticus.AGENT_HANDOFF)
+        live=self.manager.new();live.update(status='running',title='Live task',brief='Keep working',created=1);self.manager.save(live)
+        for i in range(12):
+            row=self.manager.new();row.update(status='done',title='Old task',brief='Done',created=i+2);self.manager.save(row)
+        self.assertIn(live['id'],atticus.agent_context())   # recent history cannot crowd out the steering target
+
     def test_move_offer_uses_elapsed_work_or_three_calls_without_pausing(self):
         p=unittest.mock.Mock();p.ask=self.root.name;p.waiting=threading.Event()
         move=atticus.MainMove('Request: Continue the task',p);self.addCleanup(move.close)
@@ -162,6 +170,39 @@ class AgentTests(unittest.TestCase):
         self.assertIn('Write,Edit',args[args.index('--tools')+1]);self.assertIn('mcp__fixture__inspect',args[args.index('--tools')+1])
         self.assertEqual(args[args.index('--permission-mode')+1],'dontAsk')
 
+    def test_agent_model_uses_its_own_router_model_and_explicit_credentials(self):
+        for model in ('haiku','sonnet','opus'):
+            self.prefs['agentModel']=model
+            self.assertEqual(atticus.agent_model(),model)
+        self.prefs.update(apiBase='https://fixture.invalid/anthropic',apiModel='main-model',apiKey='fixture-key')
+        self.assertEqual(atticus.agent_model(),'main-model')
+        self.prefs['agentApiModel']='agent-model'
+        row=self.manager.new()
+        with patch.object(atticus.shutil,'which',return_value='/fixture/claude'),patch.object(atticus.subprocess,'Popen') as launch, \
+             patch.object(atticus.atexit,'register'),patch.dict(os.environ,{'ANTHROPIC_AUTH_TOKEN':'inherited-fixture'}):
+            process=atticus.start_claude(atticus.agent_model(),row);process.errors.close()
+            args=launch.call_args.args[0];env=launch.call_args.kwargs['env']
+            self.assertEqual(args[args.index('--model')+1],'agent-model')
+            self.assertEqual(env['ANTHROPIC_AUTH_TOKEN'],'fixture-key')
+            self.assertEqual(env['ANTHROPIC_BASE_URL'],self.prefs['apiBase'])
+            self.assertEqual({env[f'ANTHROPIC_DEFAULT_{m}_MODEL'] for m in ('HAIKU','SONNET','OPUS')},{'agent-model'})
+            process=atticus.start_claude();process.errors.close()
+            self.assertEqual(launch.call_args.kwargs['env']['ANTHROPIC_DEFAULT_HAIKU_MODEL'],'main-model')
+        self.prefs.pop('apiBase')
+        self.assertEqual(atticus.agent_model(),'opus')
+
+    def test_changing_router_agent_model_replaces_only_the_idle_worker(self):
+        self.prefs.update(apiBase='https://fixture.invalid',apiModel='main-model',agentApiModel='first-model')
+        running=self.prepare();self.manager.start(running['id']);idle=self.manager.idle
+        self.until(lambda:idle['id'] in self.manager.processes)
+        old=self.manager.processes[idle['id']]
+        self.prefs['agentApiModel']='next-model'
+        offered=self.prepare('WAIT another task')
+        self.assertIsNotNone(old.poll())
+        self.assertEqual(offered['_model'],'next-model')
+        self.assertEqual(running['_model'],'first-model')
+        self.assertIsNone(self.manager.processes[running['id']].poll())
+
     def test_warm_offer_sends_no_user_message_and_not_now_kills_group(self):
         row=self.prepare();p=self.manager.processes[row['id']]
         self.assertEqual(row['status'],'offered');self.assertNotIn(row['id'],self.manager.outstanding)
@@ -188,6 +229,13 @@ class AgentTests(unittest.TestCase):
         self.manager.start(idle['id']);unused=self.manager.idle;p=self.manager.processes[unused['id']]
         self.manager.idle_at=time.monotonic()-601;self.manager.tick();p.wait(timeout=2)
         self.assertIsNone(self.manager.idle);self.assertNotIn(unused['id'],self.manager.processes)
+
+    def test_prewarmed_process_is_never_persisted_as_idle_history(self):
+        row=self.prepare();self.manager.start(row['id']);idle=self.manager.idle
+        self.until(lambda:idle['id'] in self.manager.processes)
+        self.assertFalse((Path(idle['directory'])/'state.json').exists())
+        atticus.private_json(str(Path(idle['directory'])/'state.json'),idle)   # stale state written by 1.2
+        self.assertNotIn(idle['id'],[r['id'] for r in atticus.agent_history()])
 
     def test_result_log_private_resume_and_main_context(self):
         row=self.prepare('DONE fixture');self.manager.start(row['id'])
@@ -223,7 +271,7 @@ class AgentTests(unittest.TestCase):
         row=self.prepare('RATE original');self.manager.start(row['id'])
         self.manager.command({'action':'box','busy':False,'visible':True})
         self.manager.prepare({'steer':row['id'],'brief':'RATE only products under $200','title':'','ack':'Got it'})
-        self.until(lambda:row['status']=='done')
+        self.until(lambda:any(e.get('event')=='done' for e in self.events))
         self.assertEqual(row['summary'],'Finished after steering.')
         self.until(lambda:row['id'] not in self.manager.outstanding)
         self.assertEqual([e['event'] for e in self.events].count('done'),1)

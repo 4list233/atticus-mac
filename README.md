@@ -73,6 +73,12 @@ Apple's final transcript confirms each voice request before AI tools or learned 
 
 </details>
 
+## Model choice
+
+In Settings → Intelligence, **Offer Sonnet for harder tasks** lets Haiku suggest Sonnet before a difficult foreground task or after a failure. Choose Sonnet, keep Haiku, or cancel. **Switch automatically** makes that choice without asking; it is off by default. Sonnet uses more of your Claude plan per ask, and the switch applies only to that task.
+
+Under **Background agents**, choose Haiku, Sonnet, or Opus as the default for new agents. With a custom server connected, choose an agent model from that server’s model list; leave it empty to use the main model. Running agents keep their current model, and the Claude selection is saved separately from the custom-server selection.
+
 ## Agents
 
 Ask for something big ("find me USB-C hubs") and Atticus hands it to a background agent. A chip shows up in the corner while you keep working. Hover it to see the live steps and a mini screen of the work. To change course, just talk: "tell the hub agent to check HDMI too" steers the running agent instead of starting a new one. When it finishes, a card shows the result once you stop typing. During a meeting or screen share, you get a quiet notification instead. If an agent needs a permission or a connector, it asks on its chip, then carries on. Turn on agents and their connectors in Settings → Agents (or the setup step).

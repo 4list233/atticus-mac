@@ -153,6 +153,16 @@ try {
   ui.pick({q: 'Which song?', options: [{label: 'Yellow', sub: '', img: ''}, {label: 'Fix You', sub: '', img: ''}]});
   tap(choice(1)); await new Promise(resolve => setTimeout(resolve, 30));
   assert(messages.some(m => m.pick === '1'), 'Without previews one click picks');
+  const long = 'Claude Code — monitoring atticus-agents live round 3 VM fixtures and reporting back to the main worktree';
+  ui.pick({q: 'Which Orca chat?', options: Array.from({length: 12}, (_, i) => ({label: i + 1 + ' ' + long, sub: '', img: ''}))}); await new Promise(resolve => setTimeout(resolve, 60));
+  const grid = d.querySelector('.pk .g'), card = d.querySelector('.pk').getBoundingClientRect(), th = d.getElementById('thread').getBoundingClientRect();
+  assert(grid.scrollHeight > grid.clientHeight && card.height <= th.height + 1 && grid.scrollWidth <= grid.clientWidth, 'Many long choices scroll inside the card, which fits the box');
+  assert(choice(0).title.endsWith('main worktree') && choice(0).querySelector('.n').offsetHeight < 40, 'A long choice clips to two lines and shows all of it on hover');
+  d.getElementById('ask').focus(); d.getElementById('ask').dispatchEvent(new w.KeyboardEvent('keydown', {key: 'ArrowDown', bubbles: true}));
+  assert(d.activeElement === choice(0), 'Arrow down from the typing box moves into the choices');
+  choice(0).dispatchEvent(new w.KeyboardEvent('keydown', {key: 'ArrowDown', bubbles: true})); assert(d.activeElement === choice(1), 'Arrows move between choices');
+  choice(1).dispatchEvent(new w.KeyboardEvent('keydown', {key: '3', bubbles: true})); await new Promise(resolve => setTimeout(resolve, 30));
+  assert(messages.some(m => m.pick === '2'), 'A number key picks that choice');
   ui.pick({q: 'Which song?', options: [{label: 'Yellow', sub: '', img: ''}]});
   d.getElementById('ask').value = 'the live version'; d.getElementById('ask').dispatchEvent(new w.KeyboardEvent('keydown', {key: 'Enter'})); await new Promise(resolve => setTimeout(resolve, 30));
   assert(messages.some(m => m.pick === '=the live version') && !messages.some(m => m.send === 'the live version'), 'Typing in the main box answers an open choices card');

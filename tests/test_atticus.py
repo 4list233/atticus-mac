@@ -90,11 +90,46 @@ class BrainTests(unittest.TestCase):
                 self.assertEqual(bool(ask.call_args.args[0]['off']), offer and model == 'haiku')
                 if expected:
                     start.assert_called_once_with(expected)
-                    self.assertEqual(brain.call_args.args[0], brain.call_args_list[0].args[0] + '\nA previous try failed: Fixture failed.\nPrior attempted actions (check their effects before repeating):\nfirst attempted action')
+                    self.assertEqual(brain.call_args.args[0], brain.call_args_list[0].args[0].removesuffix(atticus.MODEL_OFFER) + '\nA previous try failed: Fixture failed.\nPrior attempted actions (check their effects before repeating):\nfirst attempted action')
                     self.assertEqual(log.call_args.args[3:5], (.002, ['fixture step', 'fixture step']))
                     self.assertEqual(log.call_args.args[5], ['first attempted action', 'second action'])
                 else:
                     start.assert_not_called()
+
+    def test_task_difficulty_offer_switches_only_this_ask_before_actions(self):
+        cases = [('0', False, 'sonnet', {}), ('1', False, 'haiku', {}), (None, False, None, {}), (None, True, 'sonnet', {})]
+        cases += [(None, True, None, prefs) for prefs in [
+            {'escalate': False}, {'model': 'sonnet'}, {'model': 'opus'}, {'client': 'devin'}, {'apiBase': 'https://fixture.invalid/anthropic'}]]
+        for answer, auto, expected, prefs in cases:
+            with self.subTest(answer=answer, auto=auto, prefs=prefs):
+                def attempt(*args):
+                    brain.ok = True; brain.cmds = brain.ran = []; brain.handoff = None
+                    return ('[sonnet]' if brain.call_count == 1 and not prefs else 'Finished.'), .001, []
+                brain = unittest.mock.Mock(side_effect=attempt)
+                with patch.multiple(atticus, licensed=lambda: True, ping=lambda: None, fast=lambda _: None,
+                                    front=lambda: ('Fixture', 'Scratch'), osa=lambda *a: '', screens=lambda: [],
+                                    describe=lambda *a: '', selection_context=lambda: '', relevant_rules=lambda _: '',
+                                    recent=lambda: [], workflows=lambda *a: '', screen_for=lambda *a: None, wait_commit=lambda: True,
+                                    run=brain, remember_turn=lambda *a: None, restore_focus=lambda *a: None,
+                                    remember_workflow=lambda task, reply, *a: (reply, False), learn=lambda *a: False, tip=lambda *a: None), \
+                     patch.object(atticus, 'pref', side_effect=lambda k, d: {**prefs, 'escalateAuto': auto}.get(k, d)), \
+                     patch.object(atticus, 'ask_user', return_value=answer) as ask, \
+                     patch.object(atticus, 'start_ai', return_value=object()) as start, \
+                     patch.object(atticus, 'log_turn') as log, patch.object(atticus.threading, 'Thread'), \
+                     patch.dict(os.environ, {'ATTICUS_UI': '1'}), patch('sys.argv', ['atticus.py', 'Reason through fixture']), \
+                     patch('sys.stdout', io.StringIO()):
+                    atticus.main()
+                self.assertEqual(brain.call_args_list[0].args[0].endswith(atticus.MODEL_OFFER), not bool(prefs))
+                self.assertEqual(brain.call_count, 2 if expected else 1)
+                if expected:
+                    start.assert_called_once_with(expected)
+                    self.assertNotIn(atticus.MODEL_OFFER, brain.call_args.args[0])
+                    self.assertEqual(log.call_args.args[3], .002)
+                else: start.assert_not_called()
+                if auto: ask.assert_not_called()
+                else:
+                    ask.assert_called_once()
+                    self.assertIn('more of your plan', ask.call_args.args[0]['options'][0])
 
     def test_summary_deadline_does_not_start_a_late_unused_capture(self):
         class NoThread:

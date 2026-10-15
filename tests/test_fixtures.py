@@ -17,7 +17,7 @@ class FixtureTests(unittest.TestCase):
         self.check_fixtures(['ui'])
 
     def test_mock_bridge_fixtures(self):
-        self.check_fixtures(['settings', 'worksheet', 'meeting', 'onboarding', 'web', 'agents'])
+        self.check_fixtures(['settings', 'worksheet', 'meeting', 'onboarding', 'web', 'agents', 'agent_done'])
 
     def check_fixtures(self, names):
         class Quiet(http.server.SimpleHTTPRequestHandler):

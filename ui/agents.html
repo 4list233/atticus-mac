@@ -140,7 +140,7 @@ const P={shield:'<path d="M8 1.6 3 3.4v4.1c0 3 2.1 5.4 5 6.6 2.9-1.2 5-3.6 5-6.6
 const icon=name=>{const s=document.createElementNS('http://www.w3.org/2000/svg','svg');s.setAttribute('viewBox','0 0 16 16');s.setAttribute('class','i');s.innerHTML=P[name]||P.tools;return s;};
 let shown='', hovered='', rows=[], selected='', expanded='', mode='shelf', visible=true, last=performance.now(), t=0, textFrame=0, liveText=new Map(), fading=new Set(), attention=new Map(), folds=new Map(), opened=new Set();
 const ACTIVE=['running','needs-you','waiting-screen','queued'];
-const active=r=>!['offered','idle','stopped'].includes(r.status)&&!(r.status==='done'&&fading.has(r.id));
+const active=r=>ACTIVE.includes(r.status);
 const state=r=>({'needs-you':'Needs you','waiting-screen':'Waiting for the screen',running:r.step||'Starting…',queued:'Queued',offered:'Ready to start',done:r.missingConnector?'Connect in Claude':'Done',failed:r.step||'Couldn’t finish',stopped:'Stopped'})[r.status]||r.status;
 const word=r=>({'needs-you':'Needs you','waiting-screen':'Waiting for the screen',running:'Working',queued:'Queued',offered:'Ready to start',done:'Done',failed:'Couldn’t finish',stopped:'Stopped'})[r.status]||r.status;
 const time=r=>{const s=Math.max(0,Math.floor((r.ended||Date.now()/1000)-(r.started||r.created)));return s<60?s+'s':s<3600?Math.floor(s/60)+'m '+s%60+'s':Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m';};

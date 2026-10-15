@@ -52,6 +52,7 @@
   .ni { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; flex: none; }
   .ni svg { width: 14px; height: 14px; fill: none; stroke: #fff; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
   nav .spacer { flex: 1; }
+  #agentsnav { margin-bottom: 10px; } #agentsnav .count { margin-left: auto; } #agentsnav.on .count { color: rgba(255,255,255,.8); }
   nav .ver { color: var(--fg3); font-size: 11px; padding: 0 8px; }
 
   /* content */
@@ -203,6 +204,7 @@
 
 <nav>
   <div class="me"><img id="icon" alt=""><div><b>Atticus</b><span>Just ask.</span></div></div>
+  <button id="agentsnav" aria-label="Open Agents"><i class="ni" style="background:#30b0c7"><svg viewBox="0 0 24 24"><rect x="4" y="8" width="13" height="12" rx="2.5"/><path d="M8 4.5h9.5A2.5 2.5 0 0 1 20 7v9"/></svg></i>Agents<span class="count" id="agentcount"></span></button>
   <button data-s="general" class="on"><i class="ni" style="background:#8e8e93"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></i>General</button>
   <button data-s="sound"><i class="ni" style="background:#ff375f"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5v14l-4.5-4.5H4zM16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></svg></i>Sound</button>
   <button data-s="brain"><i class="ni" style="background:#d97757"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg></i>Intelligence</button>
@@ -279,12 +281,13 @@
     <div class="group">
       <div class="row"><div class="t"><b>AI client</b><span id="clientwhy"></span></div><div class="seg" data-k="client"><button data-v="claude">Claude</button><button data-v="devin">Devin</button></div></div>
       <div class="row"><div class="t"><b>Claude model</b><span id="modelwhy"></span></div><div class="seg" data-k="model"><button data-v="haiku">Haiku</button><button data-v="sonnet">Sonnet</button><button data-v="opus">Opus</button></div></div>
-      <div class="row"><div class="t"><b>Offer Sonnet when stuck</b><span>If a task fails on Haiku, Atticus asks to try that one task again with Sonnet. Your other asks stay on Haiku.</span></div><label class="sw"><input type="checkbox" data-k="escalate"></label></div>
-      <div class="row"><div class="t"><b>Without asking</b><span>Retry with Sonnet right away. Slower and uses more of your plan, only when a task fails.</span></div><label class="sw"><input type="checkbox" data-k="escalateAuto"></label></div>
+      <div class="row"><div class="t"><b>Offer Sonnet for harder tasks</b><span>Haiku can suggest Sonnet before a difficult task or after a failure. Sonnet is slower and uses more of your plan per ask. Your other asks keep their selected model.</span></div><label class="sw"><input type="checkbox" data-k="escalate"></label></div>
+      <div class="row"><div class="t"><b>Switch automatically</b><span>Use Sonnet for that task without asking, based on difficulty or a failed attempt. Off by default. Uses more of your plan per ask.</span></div><label class="sw"><input type="checkbox" data-k="escalateAuto"></label></div>
     </div>
     <h3>Background agents</h3>
     <div class="group">
-      <div class="row"><div class="t"><b>Agent model</b><span>Longer tasks use your Claude plan while you keep asking Atticus.</span></div><div class="seg" data-k="agentModel"><button data-v="sonnet">Sonnet</button><button data-v="opus">Opus</button></div></div>
+      <div class="row" id="agentClaudeModel"><div class="t"><b>Agent model</b><span>The default for new agents. Running agents keep their model.</span></div><div class="seg" data-k="agentModel"><button data-v="haiku">Haiku</button><button data-v="sonnet">Sonnet</button><button data-v="opus">Opus</button></div></div>
+      <div class="row" id="agentServerModel" hidden><div class="t"><b>Agent model</b><span>Choose from your custom server’s models. Empty uses the main model. Applies to new agents.</span></div><input class="field" id="agentApiModel" list="apimodels" placeholder="Same as main model" spellcheck="false" aria-label="Custom server agent model"></div>
       <div class="row"><div class="t"><b>Start agents without asking</b><span>Start the background task as soon as Atticus offers it.</span></div><label class="sw"><input type="checkbox" data-k="agentsAuto"></label></div>
       <div class="row"><div class="t"><b>Use my Claude Code tools</b><span>Use your MCP servers, skills and plugins. Atticus handles approvals.</span></div><label class="sw"><input type="checkbox" data-k="agentUserTools"></label></div>
     </div>
@@ -463,7 +466,8 @@
   const shortcutHint = () => P.input === 'type' ? 'Press to type. Return sends.' : P.talkMode === 'toggle' ? 'Press to listen. Press again to send.' : 'Hold it, talk, let go. Hover the box to type.';
   const set = (k, v) => { P[k] = v; post({ do: 'set', k, v }); paint(); };
 
-  document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  $('agentsnav').onclick = () => post({ do: 'agents' });   // its own window, beside Settings
+  document.querySelectorAll('nav button[data-s]').forEach(b => b.onclick = () => {
     cancelRecord();
     document.querySelectorAll('nav button, section').forEach(e => e.classList.remove('on'));
     b.classList.add('on'); $(b.dataset.s).classList.add('on');
@@ -531,6 +535,7 @@
     $('delayv').textContent = (+P.aheadDelay).toFixed(1) + ' s';
     $('modelwhy').textContent = WHY[P.model] || '';
     SERVER.forEach(k => { if (document.activeElement !== $(k)) $(k).value = P[k] || ''; });
+    $('agentClaudeModel').hidden = !!P.apiBase; $('agentServerModel').hidden = !P.apiBase;
     document.querySelector('[data-k=model]').closest('.group').style.opacity = P.apiBase ? .45 : 1;
     const devin = P.client === 'devin';
     $('brainlede').textContent = devin ? 'Atticus thinks with Devin, on your Devin plan.' : 'Atticus thinks with Claude, on your Claude plan.';
@@ -646,10 +651,10 @@
     if (imported && !$('profileStatus').textContent) $('profileStatus').textContent = `${sourceCounts.contacts || 0} from Contacts · ${sourceCounts.mail || 0} from Mail`;
   }
   $('profileImport').onclick = () => { $('profileImport').disabled = true; $('profileStatus').textContent = 'Importing from Contacts and Mail…'; post({do:'profileImport'}); };
-  const SERVER = ['apiBase', 'apiKey', 'apiModel'];   // Intelligence → Custom server, saved like About you
-  SERVER.forEach(k => { const e = $(k); e.onchange = () => { set(k, e.value.trim()); if (k !== 'apiModel' && P.apiBase) post({ do: 'models' }); };
+  const SERVER = ['apiBase', 'apiKey', 'apiModel', 'agentApiModel'];   // Intelligence → Custom server, saved like About you
+  SERVER.forEach(k => { const e = $(k); e.onchange = () => { set(k, e.value.trim()); if (['apiBase', 'apiKey'].includes(k) && P.apiBase) post({ do: 'models' }); };
     e.onkeydown = ev => { if (ev.key === 'Enter') e.blur(); }; });
-  $('apiModel').onfocus = () => { if (P.apiBase) post({ do: 'models' }); };
+  ['apiModel', 'agentApiModel'].forEach(k => $(k).onfocus = () => { if (P.apiBase) post({ do: 'models' }); });
 
   // Apps: every installed app; suggested ones start ticked. Atticus.swift asks macOS about the ticked ones in one go.
   let APPS = [], pick = null, asking = 0, total = 0, view = 'key';
@@ -787,6 +792,7 @@
       paintApps();
     },
     allowDone() { asking = 0; post({ do: 'apps' }); },
+    agents({ count }) { $('agentcount').textContent = count ? count + ' running' : ''; $('agentsnav').setAttribute('aria-label', count ? `Open Agents, ${count} running` : 'Open Agents'); },
     load(d) {
       P = {talkMode: 'hold', microphone: 'automatic', quietAudio: false, quietLevel: 0.18, meetingSave: true, meetingSummary: true, client: 'claude', ...d.prefs}; recording = false;
       $('shortcut').classList.remove('rec'); $('change').textContent = 'Change Shortcut';

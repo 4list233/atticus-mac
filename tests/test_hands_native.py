@@ -177,6 +177,7 @@ class NativeHandsTests(unittest.TestCase):
         methods += source[source.index('    static func wheel('):source.index('    static func contentMoved(')]
         methods = methods.replace('NSRunningApplication','TargetApp').replace('CGEventSource(', 'EventSource(').replace('CGEvent(', 'Event(').replace('CGWarpMouseCursorPosition(', 'warp(')
         swift = '''import Cocoa
+enum Prefs { static var path:String { CommandLine.arguments[1] + "/settings.json" } }
 struct TargetApp { var processIdentifier: Int32 = 123 }
 var cursor = CGPoint(x:900,y:600), traces:[Event] = [], warped:[CGPoint] = []
 var cancelDrag=false, restored=0
@@ -228,7 +229,7 @@ print("hands Quartz spies ok")
         binary = self.root / 'event-spies'
         compiled = subprocess.run(['swiftc',str(path),'-o',str(binary)],capture_output=True,text=True)
         self.assertEqual(compiled.returncode,0,compiled.stderr)
-        result = subprocess.run([str(binary)],capture_output=True,text=True,timeout=5)
+        result = subprocess.run([str(binary),str(self.root)],capture_output=True,text=True,timeout=5)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         self.assertIn('hands Quartz spies ok',result.stdout)
 
@@ -238,7 +239,7 @@ print("hands Quartz spies ok")
         header = section[:section.index('    static func attribute(')]
         header = header.replace('AXUIElement','TestElement')
         header = header.replace('ProcessInfo.processInfo.environment', '["ATTICUS_DIR":CommandLine.arguments[1], "ATTICUS_AX_ONLY":"1"]')
-        names = ['documentIdentity','identify','read','children','array','name','capture','save','load','at','point','visibleFrame','resolve','menuItem','menu',
+        names = ['documentIdentity','identify','read','children','array','name','capture','save','load','at','point','visibleFrame','resolve','menuItem','menu','screenLease',
                  'pixelsChanged','contentMoved','pageKeysAllowed','scrollArea','scroll','findText','scrollTo','stringValue','selectedRange','insertionTarget','insertAfter','typeText',
                  'settle','validate','clickOptions','targets','freshIDs','checked','selftest','windowElement','root']
         matches = list(re.finditer(r'^    static func (\w+)\(', section, re.M))
@@ -247,6 +248,7 @@ print("hands Quartz spies ok")
         methods = re.sub(r'\bAXUIElement\b','TestElement',methods)
         methods = methods.replace('NSRunningApplication','TestApp').replace('NSPasteboard.general','Clipboard.general')
         swift = '''import Cocoa
+enum Prefs { static var path:String { CommandLine.arguments[1] + "/settings.json" } }
 final class TestElement:NSObject {
  var attrs:[String:AnyObject] = [:], rect:CGRect, kids:[TestElement] = [], parent:TestElement?, supported:[String] = []
  var pid:Int32=123, action:((String)->Void)?
@@ -280,7 +282,7 @@ final class Clipboard {
  func setString(_ s:String,forType:NSPasteboard.PasteboardType)->Bool { text=s; changeCount += 1; return true }
  func writeObjects(_ items:[NSPasteboardItem]) { text=items.first?.string(forType:.string) ?? ""; changeCount += 1 }
 }
-var refuseValueWrite=false, offset=0.0, pagePushes=0, menuPressed=false, enhancedWrites=0, keysSent:[String]=[]
+var refuseValueWrite=false, offset=0.0, pagePushes=0, menuPressed=false, enhancedWrites=0, lazyAccessibility=false, keysSent:[String]=[]
 func move(_ value:Double) {
  offset=max(0,min(4600,value)); bar.attrs[kAXValueAttribute]=NSNumber(value:offset/4600)
  for (i,e) in document.kids.enumerated() { e.rect.origin.y=100 + Double(i)*24-offset }
@@ -314,7 +316,10 @@ func AXUIElementCopyElementAtPosition(_ e:TestElement,_ x:Float,_ y:Float,_ foun
 func AXUIElementGetPid(_ e:TestElement,_ pid:UnsafeMutablePointer<pid_t>)->AXError { pid.pointee=e.pid; return .success }
 ''' + header + '''
  static func attribute(_ e:TestElement,_ key:String)->CFTypeRef? {
-  if key == kAXChildrenAttribute { return e.kids as NSArray }
+  if key == kAXChildrenAttribute {
+   if lazyAccessibility && e === window && !CFEqual(application.attrs["AXEnhancedUserInterface"]!,kCFBooleanTrue) { return [] as NSArray }
+   return e.kids as NSArray
+  }
   if key == kAXParentAttribute { return e.parent }
   return e.attrs[key]
  }
@@ -336,10 +341,25 @@ precondition(!Hands.windowElement(application,app:application) && Hands.windowEl
 let app=TestApp()
 application.attrs["AXEnhancedUserInterface"]=kCFBooleanFalse
 var writes=enhancedWrites; _=try! Hands.root(app)
+precondition(CFEqual(application.attrs["AXEnhancedUserInterface"]!,kCFBooleanTrue) && enhancedWrites == writes + 1)
+Hands.restoreAccessibility()
 precondition(CFEqual(application.attrs["AXEnhancedUserInterface"]!,kCFBooleanFalse) && enhancedWrites == writes + 2)
-writes=enhancedWrites; _=try! Hands.read(app,head:true)
+lazyAccessibility=true
+writes=enhancedWrites
+do {
+ defer { Hands.restoreAccessibility() }
+ let mapped=try Hands.capture(app)
+ precondition(mapped.nodes.contains { $0.label == "Export" })
+ let document=try Hands.read(app,head:true)
+ precondition((document["text"] as? String)?.contains("Export") == true)
+ _=try Hands.capture(app) // Repeated roots must not restore the flag before verification.
+ precondition(enhancedWrites == writes + 1)
+}
 precondition(CFEqual(application.attrs["AXEnhancedUserInterface"]!,kCFBooleanFalse) && enhancedWrites == writes + 2)
+precondition((Hands.attribute(window,kAXChildrenAttribute) as? [TestElement])?.isEmpty == true)
+lazyAccessibility=false
 application.attrs["AXEnhancedUserInterface"]=kCFBooleanTrue; writes=enhancedWrites; _=try! Hands.root(app)
+Hands.restoreAccessibility()
 precondition(CFEqual(application.attrs["AXEnhancedUserInterface"]!,kCFBooleanTrue) && enhancedWrites == writes)
 application.attrs["AXEnhancedUserInterface"]=kCFBooleanFalse
 let stableIdentity=Hands.documentIdentity(app,window), stableFrame=window.rect

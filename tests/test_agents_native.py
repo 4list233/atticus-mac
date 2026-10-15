@@ -99,6 +99,18 @@ def run_fixture(test,body,marker,real_mini=False):
 
 @unittest.skipUnless(sys.platform=='darwin','macOS native agent panels')
 class AgentNativeTests(unittest.TestCase):
+    def test_badge_counts_only_working_agents_but_restart_guard_keeps_live_work(self):
+        run_fixture(self,'''let agentsUI=AgentPanels()
+let now=Date().timeIntervalSince1970
+let statuses=["running","needs-you","waiting-screen","queued","done","failed","idle"]
+let rows=statuses.enumerated().map{index,status in ["id":String(repeating:String(index+1),count:32),"title":status,"status":status,"created":now] as [String:Any]}
+agentsUI.receive(["event":"list","agents":rows])
+guard agentsUI.count==1 else{print("Badge counted non-working agents");exit(1)}
+guard agentsUI.hasLive else{print("Restart guard lost blocked or queued work");exit(1)}
+agentsUI.receive(["event":"list","agents":Array(rows.suffix(3))])
+guard agentsUI.count==0,!agentsUI.hasLive else{print("Terminal and idle agents stayed live");exit(1)}
+agentsUI.process?.terminate();print("working agent count checks ok")''','working agent count checks ok')
+
     def test_card_flight_placement_and_reduced_motion(self):
         run_fixture(self,'''let nsapp=NSApplication.shared;nsapp.setActivationPolicy(.accessory)
 let agentsUI=AgentPanels()

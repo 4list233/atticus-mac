@@ -122,6 +122,33 @@ if CommandLine.arguments.contains("--benchmark") {
 
 @unittest.skipUnless(sys.platform == 'darwin', 'macOS Swift worker regression')
 class NativeTests(unittest.TestCase):
+    def test_focus_guard_covers_background_agents_and_fast_work(self):
+        source = (ROOT / 'Atticus.swift').read_text()
+        policy = source[source.index('    static func focusGuardActive'):source.index('    let recent', source.index('    static func focusGuardActive'))]
+        swift = '''import Foundation
+final class Harness {
+''' + policy + '''
+}
+let now = Date()
+precondition(!Harness.focusGuardActive(busy:false, recording:false, agents:false, now:now, until:.distantPast, focusFree:false))
+precondition(Harness.focusGuardActive(busy:true, recording:false, agents:false, now:now, until:.distantPast, focusFree:false))
+precondition(Harness.focusGuardActive(busy:false, recording:true, agents:false, now:now, until:.distantPast, focusFree:false))
+precondition(Harness.focusGuardActive(busy:false, recording:false, agents:false, now:now, until:.distantFuture, focusFree:false))
+precondition(!Harness.focusGuardActive(busy:true, recording:false, agents:false, now:now, until:.distantPast, focusFree:true))
+precondition(Harness.focusGuardActive(busy:false, recording:false, agents:true, now:now, until:.distantPast, focusFree:true))
+precondition(!Harness.isUserApp(now:now, allowUntil:now.addingTimeInterval(3), userSwitch:.distantPast))   // hands raised Chrome
+precondition(Harness.isUserApp(now:now, allowUntil:now.addingTimeInterval(3), userSwitch:now))   // the user clicked during the raise
+precondition(Harness.isUserApp(now:now, allowUntil:.distantPast, userSwitch:.distantPast))
+print("focus guard policy ok")
+'''
+        with tempfile.TemporaryDirectory() as path:
+            file = Path(path) / 'focus.swift'; file.write_text(swift)
+            binary = Path(path) / 'focus'
+            compiled = subprocess.run(['swiftc', str(file), '-o', str(binary)], capture_output=True, text=True)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_typing_requires_a_zero_length_caret(self):
         source = (ROOT / 'Atticus.swift').read_text()
         caret = source[source.index('    var caret: Bool'):source.index('    static func selectedRange',source.index('    var caret: Bool'))]
@@ -300,13 +327,17 @@ final class Voice { var isRunning = false }
 final class App { var busy = false, engine = Engine(), voice: Voice? }
 final class Window { var isKeyWindow = false }
 final class Settings { var win: Window? }
+struct Agents { var hasLive = false }
 let app = App(), settings = Settings(), onboarding = Settings()
+var agentsUI = Agents()
 var restarts = 0
 func relaunchSoon() { restarts += 1 }
 enum Updater {
 """ + idle + """}
 meeting.panel = 1; Updater.restartWhenIdle(); precondition(restarts == 0, "update interrupted unsaved meeting")
 meeting.panel = nil; DispatchQueue.main.pending.removeFirst()(); precondition(restarts == 1, "update never resumed")
+agentsUI.hasLive = true; Updater.restartWhenIdle(); precondition(restarts == 1, "update interrupted a live agent")
+agentsUI.hasLive = false; DispatchQueue.main.pending.removeFirst()(); precondition(restarts == 2, "update never resumed after agent")
 print("calendar/update safety ok")
 """
         with tempfile.TemporaryDirectory() as root:

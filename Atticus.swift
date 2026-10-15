@@ -691,6 +691,13 @@ final class App: NSObject, WKScriptMessageHandler {
     var userApp = NSWorkspace.shared.frontmostApplication, guardUntil = Date.distantPast, allowUntil = Date.distantPast, userSwitch = Date.distantPast
     let focusFile = (Prefs.path as NSString).deletingLastPathComponent + "/focus"   // atticus.py touches it when the user asked to see an app
     var focusFree: Bool { (try? FileManager.default.attributesOfItem(atPath: focusFile)[.modificationDate] as? Date).map { Date().timeIntervalSince($0) < 60 } ?? false }
+    static func focusGuardActive(busy: Bool, recording: Bool, agents: Bool, now: Date, until: Date, focusFree: Bool) -> Bool {
+        (busy || recording || agents || now < until) && (!focusFree || agents)
+    }
+    // An app raised for a hands click is not the user's app; recording it made the guard pull that app (an agent's Amazon tab) back forward.
+    static func isUserApp(now: Date, allowUntil: Date, userSwitch: Date) -> Bool {
+        now > allowUntil || now.timeIntervalSince(userSwitch) <= 0.6
+    }
     let recent = (Prefs.path as NSString).deletingLastPathComponent + "/recent.jsonl"
     func frame(_ requested: NSRect) {   // keep the close button and composer reachable on every display
         let screen = NSScreen.screens.max { a, b in
@@ -834,14 +841,15 @@ final class App: NSObject, WKScriptMessageHandler {
             composing = false   // the page may not get a blur; the box must still be able to fade
             if !hovering && !busy { hide(after: 3) }
         }
-        // Focus guard: while a task runs (and 2 s after), an app that comes forward by itself (Spotify on play, open -a, a launch)
+        // Focus guard: while a task or agent runs (and 2 s after a task), an app that comes forward by itself (Spotify on play, open -a, a launch)
         // goes straight back behind the user's app. Not when the user asked to see it, switched apps themselves, or hands raise for a click.
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] n in
             guard let self, let a = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication, a != .current else { return }
             let now = Date()
-            if busy || engine.isRunning || now < guardUntil, !focusFree, now > allowUntil, now.timeIntervalSince(userSwitch) > 0.6,
+            if Self.focusGuardActive(busy:busy, recording:engine.isRunning, agents:agentsUI.hasLive, now:now, until:guardUntil, focusFree:focusFree),
+               now > allowUntil, now.timeIntervalSince(userSwitch) > 0.6,
                let u = userApp, !u.isTerminated, u != a { MiniScreen.activate(u.processIdentifier); return }
-            mine = a.localizedName ?? ""; userApp = a
+            if Self.isUserApp(now:now, allowUntil:allowUntil, userSwitch:userSwitch) { mine = a.localizedName ?? ""; userApp = a }
         }
         NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] e in
             if e.type != .keyDown || e.modifierFlags.contains(.command) { self?.userSwitch = Date() }   // a click or ⌘-Tab: the user is choosing
@@ -863,7 +871,7 @@ final class App: NSObject, WKScriptMessageHandler {
             if let enabled = b["agentDefault"] as? Bool { defaultKey(enabled) }
             if let value = b["miniRect"] as? [String:Any] { mini.layout(value) }
             // a click on the mini screen = the user wants to see it: the focus guard stands aside
-            if b["miniOpen"] != nil { allowUntil = Date().addingTimeInterval(3); mini.open(); if !busy { mini.reset(); hide(after:3) } }
+            if b["miniOpen"] != nil { allowUntil = Date().addingTimeInterval(3); userSwitch = Date(); mini.open(); if !busy { mini.reset(); hide(after:3) } }
             if b["miniClear"] != nil { mini.reset() }
             if let h = b["comp"] as? NSNumber { compH = CGFloat(h.doubleValue) }
             if let h = b["boxH"] as? NSNumber { Prefs.d["boxH"] = h.doubleValue }   // saved when the drag ends
@@ -884,7 +892,11 @@ final class App: NSObject, WKScriptMessageHandler {
             }
             if b["agentMoveNo"] != nil { agentMoveFile = "" }
             if let id = b["agentCancel"] as? String { agentsUI.send(["action":"cancel","id":id]); pinned = false; js("agentCancelled"); hide(after:1) }
-            if let id = b["agentOpen"] as? String { agentsUI.open(id,target:b["target"] as? String); agentsUI.dismissPing(id) }
+            if let id = b["agentOpen"] as? String {
+                if let target = b["target"] as? String { agentsUI.open(id,target:target) }
+                else { agentsUI.openView(id) }   // the done card's Return action opens the report; its artifact buttons open artifacts
+                agentsUI.dismissPing(id)
+            }
             if let id = b["agentLater"] as? String { agentsUI.dismissPing(id) }
             if let id = b["agentConnect"] as? String { NSWorkspace.shared.open(URL(string:"https://claude.ai/settings/connectors")!); agentsUI.dismissPing(id) }
             if b["agents"] != nil { agentsUI.openView() }
@@ -1561,7 +1573,8 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
     }
     var sorted: [[String:Any]] { rows.values.sorted { ($0["created"] as? Double ?? 0) > ($1["created"] as? Double ?? 0) } }
     var badge: [String:Any] { ["count":count,"attention":rows.values.contains { $0["status"] as? String == "needs-you" }] }   // the box pill turns amber when one needs you
-    var count: Int { rows.values.filter { ["running","needs-you","waiting-screen","queued"].contains($0["status"] as? String ?? "") }.count }
+    var count: Int { rows.values.filter { $0["status"] as? String == "running" }.count }
+    var hasLive: Bool { rows.values.contains { ["running","needs-you","waiting-screen","queued"].contains($0["status"] as? String ?? "") } }
     // Allow on an agent's setup card: Atticus does what it can, opens the exact place for the rest, and tells the agent once it is on.
     func allow(_ id:String, _ q:[String:Any]) {
         let need = q["need"] as? String ?? "", app = q["app"] as? String ?? "", ask = q["_a"] as? String ?? ""
@@ -1703,7 +1716,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         shelfWeb?.evaluateJavaScript("agents.pointer(\(next))") { [weak self] _, _ in self?.pointerBusy = false; self?.flushPointer() }
     }
     func ensureShelf(preload:Bool = false) {
-        guard shelf == nil, preload || rows.values.contains(where:{ !["offered","idle","stopped"].contains($0["status"] as? String ?? "") }) else { return }
+        guard shelf == nil, preload || hasLive else { return }
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main!
         let bounds = screen.visibleFrame, saved = (Prefs.d["agentFrames"] as? [String:[Double]])?[MeetingFrame.key(screen)]
         let f = Self.shelfFrame(NSRect(x:0,y:0,width:260,height:52),bounds,saved)
@@ -1791,7 +1804,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         if lastBox?.isEqual(to:box) != true { lastBox = NSDictionary(dictionary:box); send(box) }
         if let shelf {
             let hidden = quiet   // never hide in full screen: he works in full-screen apps on both displays
-            let hasChips = rows.values.contains { !["idle","offered","stopped"].contains($0["status"] as? String ?? "") && !dismissed.contains($0["id"] as? String ?? "") && !($0["status"] as? String == "done" && $0["seen"] as? Bool == true && Date().timeIntervalSince1970 - ($0["seenAt"] as? Double ?? 0) > 6.6) }
+            let hasChips = rows.values.contains { ["running","needs-you","waiting-screen","queued"].contains($0["status"] as? String ?? "") && !dismissed.contains($0["id"] as? String ?? "") }
             if hidden || !hasChips { shelf.orderOut(nil); js("shelf","visible",false); if miniSurface == "shelf", mini.target != nil { endPreview() } }
             else {
                 if !shelf.isVisible { shelf.orderFrontRegardless(); js("shelf","visible",true) }
@@ -2246,7 +2259,7 @@ enum Updater {
         }
     }
     static func restartWhenIdle() {
-        if app.busy || agentsUI.count > 0 || app.engine.isRunning || app.voice?.isRunning == true || meeting.panel != nil || settings.win?.isKeyWindow == true || onboarding.win != nil {
+        if app.busy || agentsUI.hasLive || app.engine.isRunning || app.voice?.isRunning == true || meeting.panel != nil || settings.win?.isKeyWindow == true || onboarding.win != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 30) { restartWhenIdle() }
         } else { relaunchSoon() }
     }
@@ -2256,7 +2269,7 @@ enum Updater {
     }
 }
 
-// Opening Atticus again (Spotlight, Finder, Dock) while it runs: setup the first time, Settings after.
+// Opening Atticus again (Spotlight, Finder, Dock) while it runs: setup the first time, Settings after (Agents is the first item there).
 final class Delegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ n: Notification) { meeting.discard(); app.hush(); app.quietAudio.end(immediate: true); app.shush() }
     func applicationShouldHandleReopen(_ s: NSApplication, hasVisibleWindows: Bool) -> Bool {
@@ -2450,6 +2463,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         w.center(); w.makeKeyAndOrderFront(nil)
         Onboarding.connectors { [weak self] c in self?.send("connectors", c) }
         timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in   // System Settings changes them behind our back
+            self?.send("agents", ["count": agentsUI.count])   // the live count beside Settings
             DispatchQueue.global().async { self?.send("perms", Onboarding.perms()); self?.send("mics", microphoneChoices()) }
         }
     }
@@ -2462,6 +2476,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
     }
 
     func push() {   // the settings, and the app icon for the sidebar
+        send("agents", ["count": agentsUI.count])
         js("st.motion(\(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion))")
         var d: [String: Any] = ["prefs": Prefs.d, "mics": microphoneChoices(), "version": Updater.version, "update": Updater.status]
         if let t = NSApp.applicationIconImage?.tiffRepresentation, let png = NSBitmapImageRep(data: t)?.representation(using: .png, properties: [:]) {
@@ -2632,6 +2647,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
             guard let say = b["say"] as? String else { return }
             DispatchQueue.global().async { [weak self] in self?.helper(["--unlearn", say]); DispatchQueue.main.async { self?.refresh() } }
         case "checkUpdate": Updater.check { [weak self] in self?.push() }
+        case "agents": agentsUI.openView()
         case "github": NSWorkspace.shared.open(URL(string: "https://github.com/SaarthurR/atticus-mac")!)
         case "kofi": NSWorkspace.shared.open(kofi)
         case "resetHotkey":
@@ -3518,6 +3534,11 @@ enum Hands {
         let field: AXUIElement, anchor: AXUIElement, old: String, location: Int, label: String
     }
     static var stopped: Int32 = 0
+    static var accessibilityRestores: [() -> Void] = []
+    static func restoreAccessibility() {
+        for restore in accessibilityRestores.reversed() { restore() }
+        accessibilityRestores.removeAll()
+    }
     static func checkStopped() throws { if stopped != 0 { throw Failure("Hands cancelled.") } }
     static let env = ProcessInfo.processInfo.environment
     static var state: URL { URL(fileURLWithPath: env["ATTICUS_HANDS_STATE"] ?? env["ATTICUS_DIR"].map { $0 + "/hands.json" } ?? "/tmp/atticus-hands-\(getuid()).json") }
@@ -3643,8 +3664,11 @@ enum Hands {
         _ = AXUIElementSetAttributeValue(e, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         let enhancedKey = "AXEnhancedUserInterface", oldEnhanced = attribute(e,enhancedKey)
         let changedEnhanced = oldEnhanced.map { !CFEqual($0,kCFBooleanTrue) } ?? false
-        if changedEnhanced { _ = AXUIElementSetAttributeValue(e,enhancedKey as CFString,kCFBooleanTrue) }
-        defer { if changedEnhanced, let oldEnhanced { _ = AXUIElementSetAttributeValue(e,enhancedKey as CFString,oldEnhanced) } }
+        if changedEnhanced, let oldEnhanced,
+           AXUIElementSetAttributeValue(e,enhancedKey as CFString,kCFBooleanTrue) == .success {
+            // Keep lazy AX content available through traversal and action verification.
+            accessibilityRestores.append { _ = AXUIElementSetAttributeValue(e,enhancedKey as CFString,oldEnhanced) }
+        }
         let candidates = [element(e,kAXFocusedWindowAttribute), element(e,kAXMainWindowAttribute)].compactMap { $0 } + ((attribute(e,kAXWindowsAttribute) as? [AXUIElement]) ?? [])
         for w in candidates {
             try checkStopped(); if Date().timeIntervalSince(start) >= 0.3 { break }
@@ -4329,6 +4353,7 @@ enum Hands {
         return ["labels":labels,"secure":secure,"risky":risk,"signature":map.signature,"pid":map.pid,"args":args,"windowID":map.windowID,"windowFrame":map.windowFrame,"window":mask(map.window),"app":map.app]
     }
     static func cli(_ input: [String]) -> Int32 {
+        defer { restoreAccessibility() }
         let started = DispatchTime.now().uptimeNanoseconds
         defer {
             if env["ATTICUS_HANDS_TIMING"] == "1" {

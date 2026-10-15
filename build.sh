@@ -21,7 +21,7 @@ cat > "$APP/Contents/Info.plist" <<P
 <key>CFBundleName</key><string>Atticus</string>
 <key>CFBundleExecutable</key><string>Atticus</string>
 <key>CFBundleVersion</key><string>1</string>
-<key>CFBundleShortVersionString</key><string>1.1</string>
+<key>CFBundleShortVersionString</key><string>1.2</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>AtticusSource</key><string>$(pwd)</string>
