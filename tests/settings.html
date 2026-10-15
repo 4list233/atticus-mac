@@ -111,6 +111,8 @@ try {
   w.st.load({prefs, state: {today: use(2, .002, 3), week: use(4, .004, 3.5), all: use(10, .009, 4.2), rules: [], skills: [], plan: {ok: true, text: 'Pro'}}});
   const stats = d.getElementById('stats').textContent;
   assert(stats.includes('Avg response4.2 s') && stats.includes('Avg cost0.09¢'), 'Usage shows average response time and cost per ask');
+  w.st.state({today:{...use(1,0,2),unknown:1},week:{...use(1,0,2),unknown:1},all:{...use(1,0,2),unknown:1},rules:[],skills:[],plan:{ok:true,text:'Pro'}});
+  assert(d.getElementById('stats').textContent.includes('≥0.00¢')&&d.getElementById('stats').textContent.includes('Avg cost≥'),'Interrupted usage is shown as a lower bound, including averages');
   const profileState={today:use(0,0,0),week:use(0,0,0),all:use(0,0,0),rules:[],skills:[],plan:{ok:true,text:'Pro'},me:{version:2,facts:[
     {id:'name1',category:'basics',kind:'name',value:'Sam Example',source:'you',date:'2026-10-13'},
     {id:'email1',category:'contact',kind:'home email',value:'sam@example.test',source:'contacts',date:'2026-10-13'}]}};
@@ -161,6 +163,13 @@ try {
   $('meetingq').value='no-match';w.st.meetings({meetings:[],query:'no-match'});assert($('meetinglist').textContent.includes('No meetings match'),'Empty search gives a calm recovery hint');
   w.st.meetings({error:'Could not load'});assert($('meetingmessage').textContent==='Could not load','Archive failures have a visible status');w.st.motion(true);assert(d.body.classList.contains('reduce'),'Dashboard respects native Reduce Motion');
   assert(d.documentElement.scrollWidth<=780,'Meeting dashboard fits Settings');
+  // Agents setup: live status, connectors from the Claude account, Enable All and the step it is on
+  w.st.tab('account');w.st.perms({mic:true,speech:true,ax:true,screen:true,auto:true,chrome:false,calendar:false});
+  assert(d.querySelector('#agentsetup [data-g="calendar"]').hidden===false&&d.querySelector('#agentsetup [data-g="auto"]').hidden===true,'Agents rows show Allowed or Allow, live');
+  w.st.connectors({connected:['Gmail','Google Drive'],signin:['Notion']});assert(d.getElementById('conntext').textContent==='Gmail, Google Drive connected · 1 need sign-in','Connectors row reads the Claude account');
+  d.getElementById('enableAll').click();await new Promise(r=>setTimeout(r,20));assert(messages.some(m=>m.do==='enableAll'&&m.connected==='true'),'Enable All posts with connector state');
+  w.st.walk('calendar');assert(d.querySelector('#agentsetup [data-g="calendar"]').closest('.row').classList.contains('now'),'Enable All marks the current step');
+  assert(!!d.querySelector('#agentsetup [data-k="fixSetup"]'),'Fix setup for me is a switch');
   results.textContent = checks.join('\n') + `\n\n${checks.length} checks passed.`; results.className = 'pass';
 } catch (error) { results.textContent = checks.join('\n') + '\n✗ ' + error.message; results.className = 'fail'; }
 </script></html>

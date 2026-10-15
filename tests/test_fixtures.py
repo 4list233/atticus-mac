@@ -13,7 +13,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(sys.platform == 'darwin', 'macOS WebKit fixtures')
 class FixtureTests(unittest.TestCase):
+    def test_main_overlay_fixture(self):
+        self.check_fixtures(['ui'])
+
     def test_mock_bridge_fixtures(self):
+        self.check_fixtures(['settings', 'worksheet', 'meeting', 'onboarding', 'web', 'agents'])
+
+    def check_fixtures(self, names):
         class Quiet(http.server.SimpleHTTPRequestHandler):
             def log_message(self, *args):
                 pass
@@ -33,9 +39,13 @@ panel.ignoresMouseEvents = true   // nonactivating fixture windows exercise real
 panel.orderFrontRegardless()
 web.load(URLRequest(url: URL(string: CommandLine.arguments[1])!))
 var tries = 0
+var lastCheck = ""
 Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
  tries += 1
- web.evaluateJavaScript("({status:document.getElementById('results')?.className,text:document.getElementById('results')?.textContent})") { result, error in
+ web.evaluateJavaScript("(()=>{const r=document.getElementById('results');return {status:r?.className,text:r?.className?r.textContent:r?.dataset.lastCheck||r?.textContent};})()") { result, error in
+  if let result = result as? [String:String], let text = result["text"], text != lastCheck {
+   lastCheck = text; print(text.split(separator:"\\n").last ?? ""); fflush(stdout)
+  }
   if let result = result as? [String: String], ["pass", "fail"].contains(result["status"] ?? "") {
    print(result["text"] ?? ""); exit(result["status"] == "pass" ? 0 : 1)
   }
@@ -49,8 +59,11 @@ app.run()
             binary = Path(root) / 'fixture'
             compiled = subprocess.run(['swiftc', str(source), '-o', str(binary)], text=True, capture_output=True)
             self.assertEqual(compiled.returncode, 0, compiled.stderr)
-            for name in ['settings', 'worksheet', 'ui', 'meeting', 'onboarding', 'web']:
+            for name in names:
                 with self.subTest(fixture=name):
-                    result = subprocess.run([str(binary), f'http://127.0.0.1:{server.server_port}/tests/{name}.html'], capture_output=True, text=True, timeout=25)
+                    try:
+                        result = subprocess.run([str(binary), f'http://127.0.0.1:{server.server_port}/tests/{name}.html'], capture_output=True, text=True, timeout=25)
+                    except subprocess.TimeoutExpired as error:
+                        self.fail(f'{name} timed out; last checks: {(error.stdout or b"").decode()[-3000:]}')
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     if 'MEASURED:' in result.stdout: print(result.stdout.rsplit('MEASURED:', 1)[1].strip(), flush=True)

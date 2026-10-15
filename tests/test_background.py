@@ -7,6 +7,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import threading
+import urllib.error
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import atticus
@@ -79,10 +82,72 @@ class BackgroundTests(unittest.TestCase):
             preview.assert_called_once_with('Safari', 'read', title='Fixture', frame=[0,0,300,200])
             self.assertNotIn('activate', run.call_args.args[0][2])
 
+    def test_blocked_fetch_can_read_the_named_url_in_a_background_browser_with_preview(self):
+        class Blocked(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(503);self.end_headers();self.wfile.write(b'Fetch blocked')
+            def log_message(self,*args):pass
+        server=HTTPServer(('127.0.0.1',0),Blocked);threading.Thread(target=server.serve_forever,daemon=True).start()
+        self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
+        url=f'http://127.0.0.1:{server.server_port}/requested-page'
+        with self.assertRaises(urllib.error.HTTPError) as failure:atticus.get(url)
+        self.assertEqual(failure.exception.code,503)
+        def result(args,**kw):
+            return subprocess.CompletedProcess([],0,'10\t2' if 'make new tab' in args[2] else 'Requested page, 0, 0, 300, 200' if 'get {name, bounds}' in args[2] else
+                                               json.dumps({'signature':url+'|ready'}) if '"ready", ' in args[-1][-35:] else 'Actual requested page content', '')
+        with patch.object(atticus,'browser_adapter',return_value='webkit'), patch.object(atticus,'page_ready',return_value=True), \
+             patch.object(atticus,'preview_app',return_value=self.target),patch.object(atticus,'hands_map'),patch.object(atticus,'emit') as emit,patch.object(atticus.subprocess,'run',side_effect=result):
+            self.assertIn('Actual requested page content',atticus.web('read',url,app='Fixture browser'))
+            self.assertTrue(any(line.startswith('▣ ') for call in emit.call_args_list for line in call.args[0]))
+        with patch.object(atticus,'show') as show:
+            self.assertIn('without credentials',atticus.web('read','https://user:secret@fixture.example'))
+            show.assert_not_called()
+        with patch.object(atticus,'browser_adapter',return_value='webkit'),patch.object(atticus,'page_ready',return_value=False),patch.object(atticus.subprocess,'run',side_effect=result),patch.object(atticus,'preview_app'):
+            self.assertIn('Requested page not ready',atticus.web('read',url,app='Fixture browser'))
+
     def test_restore_does_not_interrupt_a_new_unrelated_app(self):
         with patch.object(atticus, 'osa', return_value='Editor') as osa:
             atticus.restore_focus('Finder', 'make a note', ['tell application "Notes" to make new note'])
             self.assertEqual(osa.call_count, 1)
+
+    def test_parallel_agent_reads_own_tabs_and_never_launch_select_or_raise(self):
+        barrier=threading.Barrier(3); pins={}; results={}; calls=[]
+        def result(args,**kw):
+            calls.append(args)
+            self.assertEqual(args[0],'osascript')
+            script=args[2]
+            self.assertNotRegex(script,r'(?i)activate|AXRaise|frontmost|make new window|set (?:index|active tab|current tab|bounds|miniaturized)')
+            url='https://fixture.example/'+threading.current_thread().name
+            if 'make new tab' in script:
+                pins[threading.current_thread().name]=len(pins)+1
+                barrier.wait(timeout=3)
+                return subprocess.CompletedProcess(args,0,'10\t'+str(pins[threading.current_thread().name]),'')
+            if 'get {name, bounds}' in script: out='Fixture, 0, 0, 300, 200'
+            else:
+                self.assertIn('whose id is '+str(pins[threading.current_thread().name]),script)
+                out=json.dumps({'signature':url+'|ready'}) if '"ready", ' in args[-1][-35:] else url
+            return subprocess.CompletedProcess(args,0,out,'')
+        with patch.dict(os.environ,{'ATTICUS_AGENT':'fixture'}),patch.object(atticus,'pref',return_value='front'),patch.object(atticus,'browser_adapter',return_value='chromium'),patch.object(atticus,'page_ready',return_value=True),patch.object(atticus,'preview_app',return_value=None),patch.object(atticus,'hands_map'),patch.object(atticus.subprocess,'run',side_effect=result):
+            def read():
+                name=threading.current_thread().name
+                results[name]=atticus.web('read','https://fixture.example/'+name,app='Fixture Browser')
+            threads=[threading.Thread(target=read,name=str(i)) for i in range(3)]
+            for t in threads:t.start()
+            for t in threads:t.join(5)
+            self.assertEqual(results,{str(i):'https://fixture.example/'+str(i) for i in range(3)})
+            self.assertFalse(atticus.wants_focus('Show this browser',sites=True))
+            self.assertEqual(len(set(pins.values())),3)
+            path=Path(os.environ['ATTICUS_ASK'],'web.json');saved=json.loads(path.read_text())
+            self.assertIn(saved['tab'],pins.values())
+            self.assertEqual(path.stat().st_mode&0o777,0o600)
+
+    def test_agent_background_show_and_window_reads_preserve_their_pin(self):
+        Path(os.environ['ATTICUS_ASK'],'window-summary.json').write_text(json.dumps({'app':'Fixture Browser','web':True}))
+        with patch.dict(os.environ,{'ATTICUS_AGENT':'fixture'}),patch.object(atticus,'web',return_value='Page\nControls:') as web:
+            atticus.show('https://fixture.example')
+            web.assert_called_with('read','https://fixture.example')
+            atticus.window_text('Fixture Browser')
+            web.assert_called_with('read',app='Fixture Browser',fresh=False)
 
     def test_front_defaults_to_background_and_show_respects_user_intent(self):
         with patch.object(atticus, 'preview_app',return_value=None) as preview, patch.object(atticus, 'hands_map', return_value={'description': 'Notes map'}), patch.object(atticus, 'osa') as osa, patch('sys.argv', ['atticus.py', '--front', 'Notes']), patch('sys.stdout', new_callable=io.StringIO) as out:

@@ -319,6 +319,10 @@ print("calendar/update safety ok")
 
     def test_shortcut_states_and_recording_limit(self):
         source = (ROOT / 'Atticus.swift').read_text()
+        self.assertIn('"input": "voice", "talkMode": "hold"',source)
+        start=source[source.index('    func start()',source.index('final class App')):source.index('        quietAudio.begin',source.index('    func start()',source.index('final class App')))]
+        self.assertIn('if !replying && Prefs.str("input") == "type" && !clickTalk',start)
+        self.assertIn('AVCaptureDevice.authorizationStatus(for: .audio) == .authorized',start)
         methods = source[source.index('    func shortcut('):source.index('    func review(')]
         methods += source[source.index('    func recordingLimit('):source.index('    func captureSelection()')]
         methods += source[source.index('    func stopOfferInput()'):source.index('    func dismiss()')]
@@ -337,7 +341,7 @@ final class QuietAudio { func end() {} }
 final class Panel { var isVisible = true; func makeKey() {}; func makeFirstResponder(_ value: Int) {} }
 final class Harness {
     let engine = Engine(), panel = Panel(), quietAudio = QuietAudio()
-    var retryOffer=false,offerText:String?,askFile="fixture-answer",listenID=0,stops=0
+    var retryOffer=false,offerText:String?,askFile="fixture-answer",agentCard="",listenID=0,stops=0
     var feed:Input?,reading:Input?,quiet:Input?,analyzer:Analyzer?
     var shortcutDown = false, toggleTalk = false, clickTalk = false, busy = false, speaking = false
     var events: [String] = [], text = "hello", began = Date(), wasUp = false, fresh = false, web = 0
@@ -349,7 +353,7 @@ final class Harness {
     func close(clear: Bool) { events.append("close"); hush() }
     func review(_ text: String) { events.append("review"); hush() }
     func cue(_ text: String) {}
-    func js(_ f: String, _ text: Any) {}
+    func js(_ f: String, _ text: Any? = nil) { if f == "agentEscape" { events.append(f) } }
     func hide(after: Double) {}
 """ + methods + stop + '        events.append("send"); engine.isRunning = false; busy = true; toggleTalk = false\n    }\n' + """}
 meeting.running = true

@@ -10,7 +10,7 @@
 <script type="module">
 const results = document.getElementById('results'), frame = document.getElementById('preview');
 const messages = [], checks = [];
-const assert = (condition, name) => { if (!condition) throw Error(name); checks.push('✓ ' + name); };
+const assert = (condition, name) => { if (!condition) throw Error(name); checks.push('✓ ' + name); results.dataset.lastCheck=name; };
 try {
   const html = await (await fetch('../ui/ui.html')).text(), orbs = await (await fetch('../ui/orbs.js')).text();
   const ready = new Promise(resolve => window.addEventListener('message', e => {
@@ -185,7 +185,7 @@ try {
   const target = {pid: 123, windowID: '42', windowFrame: [50,40,1000,600], window: 'Fixture', app: 'Notes', action: 'click'};
   ui.line('▸ Clicking “Export”'); ui.line('▣ ' + JSON.stringify(target));
   assert(!d.querySelector('.mini.on'), 'The mini screen waits half a second, so quick tasks never flash it');
-  await new Promise(resolve => setTimeout(resolve, 960));
+  {const deadline=performance.now()+4000;while(!d.querySelector('.mini.on')||d.querySelector('.mini').getAnimations({subtree:true}).some(a=>a.playState==='running'&&Number.isFinite(a.effect.getComputedTiming().iterations))){if(performance.now()>deadline)throw Error('Mini did not settle');await new Promise(r=>setTimeout(r,30));}}
   assert(d.querySelector('.mini.on') && d.querySelector('.mini').compareDocumentPosition(d.querySelector('.steps')) & 4, 'Mini screen appears above this turn’s steps');
   assert(d.querySelector('.mini-tag span').textContent === target.app, 'Mini tag names the app; the steps show the action');
   const fixedTop=d.querySelector('.mini-view').getBoundingClientRect().top;
@@ -250,6 +250,64 @@ try {
   d.getElementById('model').click(); d.querySelector('#models [data-v=opus]').click(); await new Promise(r => setTimeout(r, 20));
   assert(!d.getElementById('comp').classList.contains('pick') && d.getElementById('model').textContent === 'Opus', 'Reduce Motion: the pick closes the row at once');
   w.fixtureReduced(false);
+  ui.reset(); ui.listen(true); ui.words('Make the report'); ui.think();
+  const moveStatus=d.getElementById('status').textContent;
+  ui.moveOffer();await new Promise(r=>setTimeout(r,30));
+  assert(d.querySelector('.move-option b').textContent==='Move this to an agent?','Long foreground work offers a nonblocking move');
+  assert(d.getElementById('status').textContent===moveStatus&&!!d.querySelector('.elapsed'),'Move offer keeps foreground work and its clock running');
+  const beforeApprovalMove=messages.filter(m=>m.agentMove).length;
+  ui.ask(['Allow this action?','Fixture change']);d.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,20));
+  assert(messages.filter(m=>m.agentMove).length===beforeApprovalMove,'A live approval takes precedence over Move Return');
+  d.querySelector('.ok:not(.move-option) .go').click();await new Promise(r=>setTimeout(r,400));
+  d.getElementById('ask').value='Keep this draft';const moves=messages.filter(m=>m.agentMove).length;
+  d.getElementById('ask').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,20));
+  assert(d.getElementById('ask').value==='Keep this draft'&&messages.filter(m=>m.agentMove).length===moves,'Return with a typed draft neither moves nor discards it');
+  d.getElementById('ask').value='';d.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,20));
+  assert(messages.filter(m=>m.agentMove).length===moves+1,'Blank Return accepts the move');
+  ui.moveFailed();assert(!d.querySelector('.move-option .go').disabled&&d.querySelector('.move-option .go span').textContent==='Move','A failed move signal restores its button while main continues');
+  ui.movePending();assert(!d.querySelector('.move-option'),'Accepted move clears its option');ui.agentStarted();
+  d.getElementById('ask').value='A new question';const sends=messages.filter(m=>m.send==='A new question').length;
+  d.getElementById('ask').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,20));
+  assert(messages.filter(m=>m.send==='A new question').length===sends+1,'Accepted background start frees the composer');
+  ui.reset();ui.listen(true);ui.think();ui.moveOffer();d.querySelector('.move-option button').click();await new Promise(r=>setTimeout(r,20));
+  assert(messages.some(m=>m.agentMoveNo)&&!d.querySelector('.move-option'),'Keep here dismisses without stopping the task');
+  ui.moveOffer();ui.finished();assert(!d.querySelector('.move-option'),'Foreground finish removes a stale move option');
+  ui.reset();ui.listen(true);ui.think();ui.moveOffer();ui.stopped('Cancelled');assert(!d.querySelector('.move-option'),'Cancellation removes a stale move option');
+  ui.reset();ui.listen(true);ui.think();
+  const agent={id:'11111111111111111111111111111111',title:'Prepare report',brief:'Create and verify the requested report.'};
+  ui.agentOffer(agent);
+  assert(d.querySelector('.agent-card b').textContent==='Prepare report'&&d.querySelector('.agent-card .go span').textContent==='Start'&&d.querySelector('.agent-card .go kbd').textContent==='↩'&&d.querySelector('.agent-card [data-esc] kbd').textContent==='esc','Handoff offers Start ↩ and Not now esc keycaps');
+  assert(!d.querySelector('.agent-card').closest('.turn')?.querySelector('.elapsed'),'Handoff drops the box timer');
+  assert(!d.querySelector('.agent-card').textContent.includes('stream-json'),'Handoff keeps implementation details out');
+  d.getElementById('ask').value='';d.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,20));
+  assert(messages.some(m=>m.agentStart===agent.id),'Return starts the offered agent');
+  assert(messages.some(m=>m.agentDefault===true)&&messages.some(m=>m.agentDefault===false),'Only actionable cards register the native Return default');
+  assert(messages.find(m=>m.agentStart===agent.id).cardRect.length===4,'Start passes the card geometry for its flight');
+  ui.agentStarted();ui.agentOffer(agent);const nativeBefore=messages.filter(m=>m.agentStart).length;
+  d.getElementById('ask').value='Draft';d.getElementById('ask').dispatchEvent(new w.Event('input'));ui.agentDefaultAction();await new Promise(r=>setTimeout(r,20));
+  assert(messages.filter(m=>m.agentStart).length===nativeBefore,'Native defaults preserve a typed draft');
+  d.getElementById('ask').value='';d.getElementById('ask').dispatchEvent(new w.Event('input'));ui.agentDefaultAction();await new Promise(r=>setTimeout(r,20));
+  assert(messages.filter(m=>m.agentStart).length===nativeBefore+1,'Native Return reaches the same guarded Start action');ui.agentStarted();
+  ui.agentCount(2);assert(!d.getElementById('agents-pill').hidden&&d.getElementById('agents-pill').textContent==='2 agents'&&d.getElementById('agents-pill').closest('#head'),'Running agents have a quiet header badge');
+  ui.agentCount({count:1,attention:true});assert(d.getElementById('agents-pill').classList.contains('attention')&&d.getElementById('agents-pill').textContent==='1 agent','The badge turns amber when an agent needs you');ui.agentCount(2);
+  ui.mode(false);d.querySelector('#status span').textContent='Thinking through a detailed background result';
+  {const items=['status','agents-pill','mode','x'].map(id=>d.getElementById(id).getBoundingClientRect()),centers=items.map(r=>r.y+r.height/2);
+   assert(Math.max(...centers)-Math.min(...centers)<1&&items.slice(1).every(r=>r.height===22),'Status, agent badge, Full access and close share one centered header row');
+   const statusText=d.querySelector('#status span');assert(statusText.scrollWidth>statusText.clientWidth&&w.getComputedStyle(statusText).textOverflow==='ellipsis','Long thinking status truncates cleanly instead of sitting under a badge');}
+  ui.mode(true);
+  d.getElementById('agents-pill').click();await new Promise(r=>setTimeout(r,20));assert(messages.some(m=>m.agents),'The box pill opens the Agent view');
+  d.getElementById('ask').value='Keep this draft';ui.agentDone({...agent,summary:'The report is ready.',cost:.012,links:['/tmp/result.csv']});
+  assert(d.getElementById('ask').value==='Keep this draft','A completion card preserves typed text');
+  assert(d.querySelector('.agent-card .go span').textContent==='Open'&&d.querySelector('.agent-card [data-esc] span').textContent==='Later'&&d.querySelector('.agent-card .usage').textContent.includes('$0.0120'),'Done offers Open ↩ / Later esc with plan usage');
+  d.querySelector('.agent-card .go').click();await new Promise(r=>setTimeout(r,20));assert(messages.some(m=>m.agentOpen===agent.id),'Open targets the completed agent');
+  ui.agentDone({...agent,missingConnector:'Requested connector',summary:'Connect the requested account to continue.'});
+  assert(d.querySelector('.agent-card .go span').textContent==='Connect in Claude','Missing tools offer the user’s own Claude connectors');
+  d.querySelector('.agent-card .go').click();await new Promise(r=>setTimeout(r,20));assert(messages.some(m=>m.agentConnect),'Connect uses the native link action');
+  ui.agentDone({...agent,summary:'Done.'});ui.agentEscape();await new Promise(r=>setTimeout(r,20));assert(messages.some(m=>m.agentLater===agent.id)&&!d.querySelector('.agent-card'),'Esc picks Later on the done card');
+  ui.agentEscape();await new Promise(r=>setTimeout(r,20));assert(messages.some(m=>m.agentGone),'Esc without a card hands back to the box');
+  ui.reset();ui.listen(true);ui.words('Only include products under $200');ui.think();ui.agentSteered({...agent,steer:{text:'Only include products under $200.'}});
+  assert(d.querySelector('.agent-ack span').textContent==='Told the Prepare report agent: Only include products under $200.'&&d.querySelector('.agent-ack canvas')?.dataset.agent===agent.id,'Steering answers in the main box with the agent orb and exact correction');
+  ui.agentCount(0);assert(d.getElementById('agents-pill').hidden,'No agents leaves no pill');
   ui.reset(); ui.listen(true); ui.words('Put Notes on the left.'); ui.think();
   ui.line('▸ Moving Notes → left'); ui.line('✓ Notes is on the left.'); ui.compose(true);
   results.textContent = checks.join('\n') + `\n\n${checks.length} checks passed.`; results.className = 'pass';

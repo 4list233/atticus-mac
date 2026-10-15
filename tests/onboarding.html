@@ -19,7 +19,16 @@ function page(id){
 async function go(id){d.querySelector(`.page.on [data-go="${id}"]`).click();await wait(750);page(id);
  for(const e of $(''+id).children){const r=e.getBoundingClientRect();if(!e.hidden)assert(r.left>=0&&r.right<=640&&r.top>=0&&r.bottom<=612,'Fits window '+id+' / '+(e.id||e.tagName))}
 }
-page('welcome');await go('perms');await go('try');assert($('try-next').hidden,'Try Next waits for shortcut');
+page('welcome');await go('perms');await go('agents');
+assert(messages.some(m=>m.do==='connectors'),'Agents step asks for connector status');
+w.ob.set({mic:true,speech:true,ax:true,screen:false,auto:true,chrome:false,calendar:true,tools:true});w.ob.connectors({connected:['Gmail'],signin:['Notion']});
+assert($('a-ax').classList.contains('ok')&&!$('a-screen').classList.contains('ok')&&$('a-connectors').classList.contains('ok')&&$('a-connectors').textContent.includes('1 need sign-in'),'Agents rows show live status, nothing asked twice');
+assert(!$('enable').hidden&&$('agents-next').textContent==='Skip for Now','Enable All shows while something is missing');
+$('enable').click();await wait(30);assert(messages.some(m=>m.do==='enableAll'&&m.connected==='true'),'Enable All starts the walk');
+w.ob.walk('screen');assert($('a-screen').classList.contains('now')&&!$('a-ax').classList.contains('now')&&$('a-screen').textContent.includes('Turn on Atticus in System Settings')&&$('enable').disabled,'Enable All marks the step it is on and says what to do');
+w.ob.set({mic:true,speech:true,ax:true,screen:true,auto:true,chrome:true,calendar:true,tools:true});w.ob.walk('');
+assert($('enable').hidden&&$('agents-next').textContent==='Continue','All on: Continue is the main action');
+await go('try');assert($('try-next').hidden,'Try Next waits for shortcut');
 w.ob.tried();await wait(200);assert(!$('try-next').hidden&&$('try-skip').hidden,'Shortcut enables Next');
 await go('mac');assert(!!$('mac-mini')&&$('mac').textContent.includes('background'),'Mac preview explains background work and live mini screen');await go('learn');assert($('learn').textContent.includes('remember'),'Setup teaches that Atticus remembers');await go('text');await go('point');w.ob.prefs({pointer:true,meeting:false});
 assert(d.querySelector('[data-k="pointer"]').checked&&!d.querySelector('[data-k="meeting"]').checked,'Switches reflect prefs');

@@ -65,6 +65,7 @@
 
   .group { background: var(--card); border-radius: 11px; box-shadow: inset 0 0 0 .5px var(--line), 0 1px 2px rgba(0,0,0,.03); }
   .row { display: flex; align-items: center; gap: 14px; min-height: 44px; padding: 8px 14px; box-sizing: border-box; }
+  .row.now { background: rgba(10,132,255,.1); } .row.now .btn { pointer-events: none; opacity: .5; }
   .row + .row { box-shadow: inset 0 .5px 0 var(--line); }
   .row .t { flex: 1; min-width: 0; } .row .t b { display: block; font-weight: 500; }
   .row .t span { display: block; color: var(--fg3); font-size: 11.5px; margin-top: 2px; line-height: 1.35; }
@@ -281,6 +282,12 @@
       <div class="row"><div class="t"><b>Offer Sonnet when stuck</b><span>If a task fails on Haiku, Atticus asks to try that one task again with Sonnet. Your other asks stay on Haiku.</span></div><label class="sw"><input type="checkbox" data-k="escalate"></label></div>
       <div class="row"><div class="t"><b>Without asking</b><span>Retry with Sonnet right away. Slower and uses more of your plan, only when a task fails.</span></div><label class="sw"><input type="checkbox" data-k="escalateAuto"></label></div>
     </div>
+    <h3>Background agents</h3>
+    <div class="group">
+      <div class="row"><div class="t"><b>Agent model</b><span>Longer tasks use your Claude plan while you keep asking Atticus.</span></div><div class="seg" data-k="agentModel"><button data-v="sonnet">Sonnet</button><button data-v="opus">Opus</button></div></div>
+      <div class="row"><div class="t"><b>Start agents without asking</b><span>Start the background task as soon as Atticus offers it.</span></div><label class="sw"><input type="checkbox" data-k="agentsAuto"></label></div>
+      <div class="row"><div class="t"><b>Use my Claude Code tools</b><span>Use your MCP servers, skills and plugins. Atticus handles approvals.</span></div><label class="sw"><input type="checkbox" data-k="agentUserTools"></label></div>
+    </div>
     <h3>Custom server</h3>
     <div class="group">
       <div class="row"><div class="t"><b>Address</b><span>Think with DeepSeek, Ollama, LM Studio or any server with Claude’s API instead of your Claude plan. Empty uses Claude.</span></div><input class="field" id="apiBase" placeholder="https://api.deepseek.com/anthropic" spellcheck="false" aria-label="Custom server address"></div>
@@ -371,6 +378,15 @@
       <div class="row"><div class="t"><b>Screen Recording</b><span>Looks at your screen when you say “this”.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="screen">Allow</button></div>
       <div class="row"><div class="t"><b>Apps</b><span>Which apps Atticus can control.</span></div><button class="btn" onclick="st.tab('apps')">Choose</button></div>
     </div>
+    <h3>Agents</h3>
+    <div class="group" id="agentsetup">
+      <div class="row"><div class="t"><b>Set up agents</b><span>Agents ask for these only when a task needs them. Atticus turns on its own; macOS and Claude need your click.</span></div><button class="btn blue" id="enableAll">Enable All</button></div>
+      <div class="row"><div class="t"><b>Page reading in Chrome</b><span>Atticus turns this on itself.</span></div><span class="pill ok">On</span><button class="btn" data-g="chrome">Turn On</button></div>
+      <div class="row"><div class="t"><b>Automation</b><span>Lets an agent script your apps. macOS asks once per app.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="auto">Allow</button></div>
+      <div class="row"><div class="t"><b>Calendar</b><span>Preps you for your next call.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="calendar">Allow</button></div>
+      <div class="row"><div class="t"><b>Claude connectors</b><span id="conntext">Checking your Claude account…</span></div><button class="btn" data-do="connectors">Connect in Claude</button></div>
+      <div class="row"><div class="t"><b>Fix setup for me</b><span>When an agent needs a setting Atticus can change, it changes it without asking and says so.</span></div><label class="sw"><input type="checkbox" data-k="fixSetup"></label></div>
+    </div>
     <h3>Atticus</h3>
     <div class="group">
       <div class="row"><div class="t"><b>Quit Atticus</b><span>Open it again from Spotlight or Applications.</span></div><button class="btn red" data-do="quit">Quit</button></div>
@@ -427,6 +443,7 @@
     <h3>Atticus</h3>
     <div class="group">
       <div class="row"><div class="t"><b>Source code</b><span>Open source on GitHub.</span></div><button class="btn" data-do="github">Open</button></div>
+      <div class="row"><div class="t"><b>Support Atticus</b><span>Free and open source. If it saves you time, a tip keeps it going.</span></div><button class="btn" data-do="kofi">Leave a Tip</button></div>
     </div>
   </section>
   <section id="feedback">
@@ -455,6 +472,8 @@
     if (b.dataset.s === 'apps') post({ do: 'apps' });   // fresh list and statuses each visit
   });
   document.querySelectorAll('[data-do]').forEach(b => b.onclick = () => post({ do: b.dataset.do }));
+  let connected = false;   // Enable All opens claude.ai's connectors page only when none is connected
+  document.getElementById('enableAll').onclick = () => post({ do: 'enableAll', connected: String(connected) });
 
   // Shortcut: Atticus.swift records the keys; the label is like "⌃⌥Space" (modifier symbols, then the key)
   const capsOf = label => { const m = label.match(/^([⌃⌥⇧⌘]*)(.*)$/); return [...m[1]].concat(m[2] ? [m[2]] : []); };
@@ -554,9 +573,9 @@
   const money = u => u < 1 ? (u * 100).toFixed(u < .1 ? 2 : 1) + '¢' : '$' + u.toFixed(2);
   function state(s) {
     $('stats').innerHTML = [['Today', s.today], ['7 days', s.week], ['All time', s.all]].map(([n, u]) =>
-      `<div class="stat"><small>${n}</small><b>${u.asks}</b><span>asks · ${money(u.usd)}${u.asks ? ' · ' + u.secs + ' s avg' : ''}</span></div>`).join('') +
+      `<div class="stat"><small>${n}</small><b>${u.asks}</b><span>asks · ${u.unknown ? '≥' : ''}${money(u.usd)}${u.asks ? ' · ' + u.secs + ' s avg' : ''}</span></div>`).join('') +
       (s.all.asks ? `<div class="stat"><small>Avg response</small><b>${s.all.secs} s</b><span>per ask, all time</span></div>` +
-        `<div class="stat"><small>Avg cost</small><b>${money(s.all.usd / s.all.asks)}</b><span>per ask, all time</span></div>` : '');
+        `<div class="stat"><small>Avg cost</small><b>${s.all.unknown ? '≥' : ''}${money(s.all.usd / s.all.asks)}</b><span>per ask, all time</span></div>` : '');
     const esc = t => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const typed = $('newrule')?.value || '';
     $('rules').innerHTML = (s.rules.length ? s.rules.map((r, i) =>
@@ -750,7 +769,9 @@
       if(result.meeting){if(expectedMeeting===result.meeting.id)openMeeting(result.meeting,result.markdown);return;}
       if(Array.isArray(result.meetings)){if(result.query!==undefined&&result.query!==$('meetingq').value.trim())return;savedMeetings=result.meetings;selectedMeeting=0;paintMeetings();}
     },
-    perms(p) {   // each row shows Allowed or its Allow button
+    walk(id) { document.querySelectorAll('#perms .row, #agentsetup .row').forEach(r => r.classList.toggle('now', !!id && !!r.querySelector(`[data-g="${id}"]`))); },   // Enable All: the step it is on
+  connectors(c) { const n = c.connected.length, s = c.signin.length; document.getElementById('conntext').textContent = n ? c.connected.slice(0, 3).join(', ') + (n > 3 ? ` and ${n - 3} more` : '') + ' connected' + (s ? ` · ${s} need sign-in` : '') : s ? `${s} need sign-in` : 'Gmail, Drive and more, from your Claude account.'; connected = n > 0; },
+  perms(p) {   // each row shows Allowed or its Allow button
       document.querySelectorAll('[data-g]').forEach(b => { b.hidden = !!p[b.dataset.g]; b.previousElementSibling.hidden = !p[b.dataset.g]; });
     },
     tab(name) { document.querySelector(`nav button[data-s="${name}"]`).click(); },

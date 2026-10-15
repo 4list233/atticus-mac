@@ -35,5 +35,6 @@ docs/film-poster.png
 # Nix build result symlinks
 /result
 /result-*
+/test-artifacts/
 # Devbox generated artifacts
 .devbox/

@@ -56,7 +56,12 @@
   .row { display: flex; align-items: center; gap: 12px; padding: 11px 14px; opacity: 0; transform: translateY(8px);
     transition: opacity .45s var(--ease), transform .55s var(--out), background .4s; }
   .row + .row { box-shadow: inset 0 .5px 0 var(--line); }
-  #perms.on .row, #improve.on .row { opacity: 1; transform: none; }
+  #perms.on .row, #improve.on .row, #agents.on .row { opacity: 1; transform: none; }
+  .cap { width: 100%; max-width: 480px; margin: 18px 0 -14px; text-align: left; font: 600 11px system-ui; color: var(--fg3); }
+  #agents .list + .cap { margin-top: 14px; } #agents .row { padding: 8px 14px; } #agents .list { margin-top: 20px; } #agents h2 + .sub { max-width: 430px; }
+  .row.now { background: rgba(10,132,255,.08); } .row.now .allow { color: var(--fg3); background: transparent; pointer-events: none; }
+  .row.now .allow::after { content: ""; display: inline-block; width: 10px; height: 10px; margin-left: 6px; vertical-align: -1px; border-radius: 50%;
+    border: 1.5px solid currentColor; border-right-color: transparent; animation: spin .8s linear infinite; }
   .ic { flex: none; width: 30px; height: 30px; border-radius: 7px; display: grid; place-items: center;
     box-shadow: inset 0 .5px 0 rgba(255,255,255,.3), 0 .5px 1px rgba(0,0,0,.2); }
   .ic svg { width: 17px; height: 17px; fill: none; stroke: #fff; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -100,6 +105,7 @@
   .bar2 { display: flex; gap: 10px; margin-top: 26px; }
   .bar2 .btn { margin-top: 0; }
   .done-note { height: 18px; margin-top: 12px; font-size: 12.5px; color: var(--fg3); }
+  .done-note a { color: var(--accent); cursor: pointer; } .done-note a:hover { text-decoration: underline; }
   .fake { position: absolute; border-radius: 10px; background: rgba(28,28,30,.92); color: #f5f5f7; box-shadow: 0 8px 24px rgba(0,0,0,.3), inset 0 0 0 .5px rgba(255,255,255,.12);
     font: 12px/1.4 system-ui; transition: opacity .45s var(--ease), transform .55s var(--out); }
   .gone2 { opacity: 0 !important; transform: translateY(8px) scale(.97) !important; }
@@ -217,7 +223,17 @@
   <p class="sub r">macOS asks once for each one. You can change them any time in System Settings.</p>
   <div id="list" class="r"></div>
   <div id="count" class="r"></div>
-  <button class="btn quiet r" id="next" data-go="try">Skip for Now</button>
+  <button class="btn quiet r" id="next" data-go="agents">Skip for Now</button>
+</section>
+
+<section class="page" id="agents">
+  <h2 class="r">Agents keep working while you do</h2>
+  <p class="sub r">Hand off a bigger task and keep asking. An agent uses these only when a task needs them.</p>
+  <div class="cap r">Atticus turns these on</div>
+  <div class="list r" id="own"></div>
+  <div class="cap r">These need your click. macOS and Claude only let you.</div>
+  <div class="list r" id="yours"></div>
+  <div class="bar2 r"><button class="btn quiet" data-go="try" id="agents-next">Skip for Now</button><button class="btn" id="enable">Enable All</button></div>
 </section>
 
 <section class="page" id="try">
@@ -321,16 +337,17 @@
   <p class="sub r">Hold the keys anytime and just ask. Everything else lives in Settings, in the menu bar.</p>
   <div class="tips r"><div><kbd>esc</kbd> stops an answer</div><div>Click away to close</div><div>Hover the box to type</div></div>
   <p class="done-note r" id="feedback-note">Something off? Report feedback from the menu bar.</p>
+  <p class="done-note r">Atticus is free. Enjoying it? <a id="kofi">Leave a tip</a></p>
   <button class="btn r" id="finish">Start Using Atticus</button>
 </section>
 
-<div id="dots"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+<div id="dots"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
 
 <script type="text/plain" id="orbsrc">/*ORBS*/</script>
 <script type="module">
   const $ = id => document.getElementById(id);
   const post = m => window.webkit?.messageHandlers.ob.postMessage(m);
-  const pages = ['welcome', 'perms', 'try', 'mac', 'learn', 'text', 'point', 'meeting', 'improve', 'done'];
+  const pages = ['welcome', 'perms', 'agents', 'try', 'mac', 'learn', 'text', 'point', 'meeting', 'improve', 'done'];
   let cur = '';
   const go = id => {
     if (cur) { $(cur).classList.remove('on'); $(cur).classList.add('gone'); const c = cur; setTimeout(() => $(c).classList.remove('gone'), 600); }
@@ -340,6 +357,7 @@
   };
   document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => go(b.dataset.go));
   $('finish').onclick = () => post({ do: 'done' });
+  $('kofi').onclick = () => post({ do: 'kofi' });
   document.querySelectorAll('[data-improve]').forEach(b => b.onclick = () => { post({ do: 'set', k: 'improve', v: b.dataset.improve }); go('done'); });
   document.querySelectorAll('.sw input').forEach(i => i.onchange = () => post({ do: 'set', k: i.dataset.k, v: String(i.checked) }));
 
@@ -353,14 +371,29 @@
     ['chrome', 'Chrome Pages', 'Reads and clicks web pages in Chrome, in the background.', '#34c759', '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/><path d="M12 8.5h8.2M9 13.7L4.9 6.6M15 13.7l-4.1 7.1"/>'],
     ['auto', 'Automation', 'Pick the apps Atticus can control, all at once.', '#636366', '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>'],
   ];
-  $('list').innerHTML = P.map(([id, name, why, color, svg], i) => `
-    <div class="row" id="p-${id}" style="transition-delay:${.25 + i * .06}s">
+  const rows = (list, prefix, label = 'Allow') => list.map(([id, name, why, color, svg], i) => `
+    <div class="row" id="${prefix}${id}" style="transition-delay:${.25 + i * .06}s">
       <div class="ic" style="background:${color}"><svg viewBox="0 0 24 24">${svg}</svg></div>
       <div class="txt"><b>${name}</b><span>${why}</span></div>
-      <button class="allow" data-id="${id}">Allow</button>
+      <button class="allow" data-id="${id}">${label}</button>
       <svg class="check" viewBox="0 0 22 22"><circle cx="11" cy="11" r="11"/><path d="M6.5 11.3l3 3 6-6.3"/></svg>
     </div>`).join('');
-  document.querySelectorAll('.allow').forEach(b => b.onclick = () => {
+  $('list').innerHTML = rows(P, 'p-');
+  // Agents: what Atticus turns on itself, then what only the user can (macOS privacy switches, a claude.ai sign-in). Status is live; done rows show a check.
+  const glyph = id => P.find(p => p[0] === id);
+  const OWN = [['tools', 'Your Claude Code tools', 'MCP servers, skills and plugins you already use.', '#d97757', '<path d="M14.5 5.5l4 4-9 9H5.5v-4z"/><path d="M12.5 7.5l4 4"/>'],
+    ['chrome', 'Page reading in Chrome', 'Reads and clicks pages in the background.', ...glyph('chrome').slice(3)]];
+  const YOURS = [['ax', 'Accessibility', 'Clicks and types in apps for an agent.', ...glyph('ax').slice(3)],
+    ['screen', 'Screen Recording', 'Shows an agent’s window live on its chip.', ...glyph('screen').slice(3)],
+    ['auto', 'Automation', 'Lets an agent script your apps.', ...glyph('auto').slice(3)],
+    ['calendar', 'Calendar', 'Preps you for your next call.', '#ff453a', '<rect x="4" y="5" width="16" height="15" rx="2.5"/><path d="M4 10h16M8.5 3v4M15.5 3v4"/>'],
+    ['connectors', 'Claude connectors', 'Checking your Claude account…', '#5e5ce6', '<path d="M9 15l6-6M10.5 6.5l1-1a4 4 0 0 1 5.7 5.7l-1 1M13.5 17.5l-1 1a4 4 0 0 1-5.7-5.7l1-1"/>']];
+  $('own').innerHTML = rows(OWN, 'a-', 'Turn On'); $('yours').innerHTML = rows(YOURS, 'a-');
+  $('a-connectors').querySelector('.allow').textContent = 'Connect';
+  let connected = false;
+  $('enable').onclick = () => post({ do: 'enableAll', connected: String(connected) });
+  document.querySelector('[data-go="agents"]').addEventListener('click', () => post({ do: 'connectors' }));
+  document.querySelectorAll('.allow').forEach(b => b.onclick = () => {   // setup's two lists share ids: the click is the same grant
     const was = b.textContent; b.classList.add('wait'); b.textContent = 'Waiting';
     setTimeout(() => { b.classList.remove('wait'); b.textContent = was; }, 12000);   // gave up in System Settings
     post({ do: 'grant', id: b.dataset.id });
@@ -391,6 +424,21 @@
       $('p-claude').querySelector('.allow').textContent = { install: 'Install', login: 'Sign In', upgrade: 'Upgrade' }[c.need] || 'Allow';
       if (last) ob.set(last);
     },
+    walk(id) {   // Enable All: the step it is on says what to do there; the button waits until the walk ends
+      document.querySelectorAll('#agents .row').forEach(r => {
+        const line = r.querySelector('.txt span'), now = r.id === 'a-' + id;
+        if (now && !r.classList.contains('now')) { line.dataset.why = line.textContent; line.textContent = OWN.some(o => 'a-' + o[0] === r.id) ? 'Turning it on…' : 'Turn on Atticus in System Settings.'; }
+        if (!now && line.dataset.why) { line.textContent = line.dataset.why; delete line.dataset.why; }
+        r.classList.toggle('now', now);
+      });
+      $('enable').disabled = !!id; $('enable').textContent = id ? 'Enabling…' : 'Enable All';
+    },
+    connectors(c) {   // from the user's Claude account: names connected, names that need a sign-in
+      const n = c.connected.length, s = c.signin.length;
+      connected = n > 0; $('a-connectors').classList.toggle('ok', connected);
+      $('a-connectors').querySelector('.txt span').textContent = n ? c.connected.slice(0, 2).join(', ') + (n > 2 ? ` and ${n - 2} more` : '') + ' connected' + (s ? ` · ${s} need sign-in` : '')
+        : s ? `${s} need sign-in in Claude` : 'Gmail, Drive and more, from your Claude account.';
+    },
     prefs(p) { document.querySelectorAll('.sw input').forEach(i => { if (document.activeElement !== i) i.checked = !!p[i.dataset.k]; }); },
     set(s) {
       last = s; s = { ...s, claude: planOK };
@@ -400,6 +448,9 @@
         row.classList.toggle('ok', !!s[id]);
         if (s[id]) n++;
       }
+      for (const [id] of [...OWN, ...YOURS]) if (id !== 'connectors') $('a-' + id).classList.toggle('ok', !!s[id]);
+      const left = [...OWN, ...YOURS].filter(([id]) => !$('a-' + id).classList.contains('ok')).length;
+      $('enable').hidden = !left; $('agents-next').textContent = left ? 'Skip for Now' : 'Continue'; $('agents-next').classList.toggle('quiet', !!left);
       $('count').textContent = n === P.length ? 'All set' : `${n} of ${P.length} allowed`;
       $('count').classList.toggle('all', n === P.length);
       $('next').textContent = n === P.length ? 'Continue' : 'Skip for Now';

@@ -12,9 +12,9 @@
   #card.held { box-sizing: border-box; display: flex; flex-direction: column; }   /* dragged to a height: keep it */
   #card.held #comp { margin-top: auto; } #card.held #thread { margin-bottom: 12px; }
 
-  #head { display: flex; align-items: center; gap: 10px; height: 44px; flex: none; padding-right: 30px; }
+  #head { display: flex; align-items: center; gap: 7px; height: 44px; flex: none; }
   canvas { width: 44px; height: 44px; flex: none; margin-left: -4px; transition: transform .35s var(--ease); }
-  #status { flex: 1; min-width: 0; font-size: 12.5px; color: #a1a1a6; white-space: nowrap; overflow: hidden;
+  #status { flex: 1 0 64px; min-width: 64px; font-size: 12.5px; line-height: 22px; color: #a1a1a6; white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; }
   .elapsed { display: flex; align-items: baseline; gap: 6px; margin-top: 10px; color: #8e8e93; font-size: 10.5px; line-height: 16px; animation: in .25s var(--ease) both; }
   .elapsed .redo { margin-left: auto; padding: 0; border: 0; background: none; font: 500 11px -apple-system, system-ui, sans-serif; color: #8e8e93; cursor: pointer; transition: color .2s; }
@@ -96,6 +96,9 @@
 
   .a { margin-top: 9px; font-size: 14px; line-height: 1.48; overflow-wrap: anywhere; cursor: copy; }
   .a:empty { display: none; }
+  .a.agent-ack { display:flex; align-items:flex-start; gap:7px; }
+  .agent-ack canvas { width:24px; height:24px; margin:0; }
+  .agent-ack span { min-width:0; flex:1; }
   .a .w { display: inline-block; animation: word .5s var(--ease) both; }
   .a.cancel { color: #8e8e93; font-size: 12.5px; }
   .a.stopped { display: flex; align-items: center; gap: 8px; color: #a1a1a6; font-size: 12.5px; letter-spacing: .1px; }
@@ -103,8 +106,8 @@
     animation: in .35s var(--spring) both; }
   .step.cut { color: #636366; text-decoration: line-through; text-decoration-color: rgba(255,255,255,.2); }
 
-  #x { position: absolute; top: 12px; right: 12px; width: 22px; height: 22px; border-radius: 50%; display: grid;
-    place-items: center; opacity: .7; z-index: 2;
+  #x { position: relative; flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid;
+    place-items: center; opacity: .7;
     background: radial-gradient(120% 120% at 30% 15%, rgba(255,255,255,.30), rgba(255,255,255,.07) 55%, rgba(255,255,255,.03));
     box-shadow: inset 0 0 0 .5px rgba(255,255,255,.35), inset 0 -1.5px 2px rgba(0,0,0,.28), 0 2px 6px rgba(0,0,0,.22);
     transition: transform .45s var(--spring), opacity .25s, box-shadow .3s, background .3s; }
@@ -172,11 +175,10 @@
   .sel { font-size: 11.5px; color: #8e8e93; margin-bottom: 6px; padding-left: 8px; border-left: 2px solid rgba(10,132,255,.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* safe mode off: a small tag says so; clicking it turns safe mode back on */
-  #mode { position: absolute; top: 12px; right: 42px; z-index: 2; display: none; align-items: center; gap: 5px; height: 22px; padding: 0 9px;
+  #mode { flex: none; display: none; align-items: center; gap: 5px; height: 22px; padding: 0 9px;
     box-sizing: border-box; border-radius: 11px; font-size: 11px; font-weight: 500; line-height: 1; color: #ff9f0a; cursor: pointer;
     background: rgba(255,159,10,.13); box-shadow: inset 0 0 0 .5px rgba(255,159,10,.32); transition: transform .3s var(--spring), background .2s; }
   #mode::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: #ff9f0a; }
-  body:has(#mode.on) #head { padding-right: 130px; }
   #mode.on { display: flex; animation: in .35s var(--ease) both; } #mode:hover { transform: scale(1.05); background: rgba(255,159,10,.2); }
 
   /* tip: once in a while, one quiet line under the answer (Settings → Tips) */
@@ -190,6 +192,7 @@
   .ok.offer { cursor: default; } .ok.offer:hover { background: rgba(255,255,255,.07); }   /* a question, not a command: nothing to unfold */
   .ok.offer p { margin: 4px 0 0; font-size: 12px; line-height: 1.4; color: #8e8e93; }
   .ok.offer .off { display: block; margin: 9px auto 0; height: auto; flex: none; border-radius: 0; background: none; box-shadow: none; }
+  .tip.kofi { cursor: pointer; background: rgba(255,255,255,.07); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.16); } .tip.kofi::before { color: #f5f5f7; }   /* quiet: no accent, it's an ask not a hint */
   .tip.gone { opacity: 0; transform: translateY(-4px); transition: opacity .4s, transform .4s; }
 
   /* memory receipt: one quiet row under an answer that remembered or forgot something. Click: it opens in place; click an item: Settings → Memory there */
@@ -221,6 +224,7 @@
   .mem-i em { flex: none; font: 500 11px -apple-system, system-ui, sans-serif; color: #8e8e93; opacity: 0; transition: opacity .2s; }
   .mem-i:hover em, .mem-i:focus-visible em { opacity: 1; }
 
+  .turn:has(.ok:not(.move-option):not(.gone),.pk:not(.gone)) .move-option { display:none; }
   /* typing box: grows in on hover (or the shortcut, in typing mode); the mic goes back to voice */
   #comp { position: relative; display: flex; align-items: center; gap: 8px; margin-top: 0; height: 0; opacity: 0; overflow: hidden; flex: none; transition: height .24s var(--ease), margin-top .24s var(--ease), opacity .18s; }
   #comp.open { height: 36px; margin-top: 12px; opacity: 1; }
@@ -267,6 +271,36 @@
   @keyframes blink { 50% { opacity: 0; } }
   @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
   button:focus-visible { outline: 2px solid #64d2ff; outline-offset: 3px; }
+  /* agents: a quiet badge in the header, count + live dot; it opens the Agent view */
+  #agents-pill { flex:0 1 auto; min-width:22px; max-width:72px; display:inline-flex; align-items:center; gap:6px; height:22px; padding:0 9px 0 8px; border:0; border-radius:11px;
+    background:rgba(255,255,255,.07); box-shadow:inset 0 0 0 .5px rgba(255,255,255,.12); color:#d1d1d6; font:500 11px -apple-system, system-ui, sans-serif;
+    font-variant-numeric:tabular-nums; cursor:pointer; overflow:hidden; animation:in .35s var(--spring) both; transition:background .2s, transform .3s var(--spring); }
+  #agents-pill span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  #agents-pill[hidden] { display:none; } #agents-pill:hover { background:rgba(255,255,255,.12); color:#fff; } #agents-pill:active { transform:scale(.95); }
+  #agents-pill i { width:6px; height:6px; border-radius:50%; background:#0a84ff; box-shadow:0 0 6px rgba(10,132,255,.8); animation:pulse 1.8s ease-in-out infinite; }
+  #agents-pill.attention i { background:#ff9f0a; box-shadow:0 0 6px rgba(255,159,10,.8); }
+  /* keycap actions (Raycast-style): label + the key that does it; one blue main action */
+  .keys, .ok .keys { display:flex; justify-content:flex-end; align-items:center; gap:4px; margin-top:12px; }
+  .ok .keys button, .keys button { flex:none; height:28px; padding:0 6px 0 11px; border-radius:9px; display:inline-flex; align-items:center; gap:7px;
+    background:transparent; box-shadow:none; color:#d1d1d6; font:500 12.5px -apple-system, system-ui, sans-serif; }
+  .ok .keys button:hover, .keys button:hover { background:rgba(255,255,255,.08); color:#fff; transform:none; }
+  .ok .keys button.go, .keys button.go { background:#0a84ff; color:#fff; padding-right:5px; } .ok .keys button.go:hover { background:#2b95ff; }
+  .ok .keys button:active { transform:scale(.97); } .keys button:disabled { opacity:.6; cursor:default; }
+  kbd { min-width:20px; height:18px; padding:0 5px; box-sizing:border-box; border-radius:5px; display:inline-grid; place-items:center; font:500 10.5px system-ui;
+    color:#c7c7cc; background:rgba(255,255,255,.1); box-shadow:inset 0 0 0 .5px rgba(255,255,255,.16), 0 1px 0 rgba(0,0,0,.3); }
+  .go kbd { color:#fff; background:rgba(255,255,255,.22); box-shadow:inset 0 0 0 .5px rgba(255,255,255,.3); }
+  .agent-card .usage { color:#717179; font-size:10px; margin-top:9px; font-variant-numeric:tabular-nums; }
+  .agent-card .eyebrow { display:flex; align-items:center; gap:6px; margin:0 0 5px; font-size:10.5px; font-weight:600; letter-spacing:.2px; color:#8e8e93; }
+  .agent-card .eyebrow i { width:6px; height:6px; border-radius:50%; background:#0a84ff; box-shadow:0 0 8px rgba(10,132,255,.7); animation:pulse 1.8s ease-in-out infinite; }
+  .agent-card.done .eyebrow i { background:#30d158; box-shadow:0 0 8px rgba(48,209,88,.5); animation:none; }
+  .agent-card .made { display:grid; grid-template-columns:minmax(0,1fr); gap:6px; margin-top:10px; }
+  .agent-card .made button { flex:none; display:flex; align-items:center; gap:10px; box-sizing:border-box; min-width:0; width:100%; height:auto; padding:7px 9px 7px 7px; border-radius:10px; text-align:left;
+    background:rgba(255,255,255,.06); font-weight:400; } .agent-card .made button:hover { transform:none; background:rgba(255,255,255,.1); }
+  .agent-card .made i { width:28px; height:28px; border-radius:8px; flex:none; display:grid; place-items:center; background:rgba(255,255,255,.1); }
+  .agent-card .made button:first-child i { background:#0a84ff; box-shadow:0 3px 10px rgba(10,132,255,.35); }
+  .agent-card .made svg { width:14px; height:14px; fill:none; stroke:#fff; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+  .agent-card .made span { min-width:0; flex:1; } .agent-card .made b, .agent-card .made small { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .agent-card .made b { font-size:12.5px; font-weight:600; } .agent-card .made small { margin-top:1px; font-size:10.5px; color:#8e8e93; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
     #status.live span { background: none; color: #f5f5f7; }
@@ -275,10 +309,8 @@
   }
 </style></head>
 <body>
-<div id="mode" title="Safe mode is off. Click to turn it on.">Full access</div>
-<div id="x"><svg viewBox="0 0 10 10"><path d="M1 1L9 9M9 1L1 9"/></svg></div>
 <div id="card">
-  <div id="head"><canvas id="orb"></canvas><div id="status"></div></div>
+  <div id="head"><canvas id="orb"></canvas><div id="status"></div><button id="agents-pill" hidden><i></i><span></span></button><div id="mode" title="Safe mode is off. Click to turn it on.">Full access</div><div id="x"><svg viewBox="0 0 10 10"><path d="M1 1L9 9M9 1L1 9"/></svg></div></div>
   <div id="thread"></div>
   <div id="comp" inert><input id="ask" placeholder="Ask Atticus…" autocomplete="off" spellcheck="false" aria-label="Ask Atticus">
     <div id="models" role="menu" aria-label="Model"></div><button id="model" title="Model" aria-label="Model" hidden></button>
@@ -315,10 +347,13 @@
   let atBottom = true;   // the user scrolled up to read: new steps must not yank them back down
   // only the user's own wheel/trackpad decides (our scrolls and growing steps must not): up = stay put, back to the bottom = follow again
   $('thread').addEventListener('wheel', e => { if (e.deltaY < 0) atBottom = false; else setTimeout(() => { const t = $('thread'); atBottom = t.scrollHeight - t.scrollTop - t.clientHeight < 90; }, 0); }, { passive: true });
+  let defaultEnabled=false,defaultComposing=false;
+  function defaultButton(){if(!visible||defaultComposing||$('ask').value.trim()||document.hasFocus()&&document.querySelector('button:focus,select:focus,input:focus:not(#ask),textarea:focus,[contenteditable=true]:focus')||$('thread').querySelector('.pk:not(.gone),.ok:not(.agent-card):not(.move-option):not(.gone)'))return null;return $('thread').querySelector('.agent-card .go:not(:disabled),.move-option .go:not(:disabled)');}
   const fit = (follow = true) => {
     webkit.messageHandlers.h.postMessage($('card').offsetHeight);
     if (follow && atBottom) $('thread').scrollTop = $('thread').scrollHeight;
     miniRect();
+    const enabled=!!defaultButton();if(enabled!==defaultEnabled){defaultEnabled=enabled;post({agentDefault:enabled});}
     post({ comp: $('comp').classList.contains('open') ? $('card').offsetHeight - $('comp').offsetTop + 4 : 0 });   // where clicks type, not drag
   };
   // Typing box. listening: the mic is on (clicking in drops it). Enter always sends; the app ignores it while an answer runs,
@@ -341,14 +376,18 @@
     if (listening) { listening = false; turn()?.remove(); setState('breathing'); status(''); boost = 1; $('orb').style.transform = ''; fit(); }
     post({ type: 1 });
   };
-  $('ask').onmousedown = drop; $('ask').oninput = () => { drop(); if (miniEnd) { post({miniClear:true});miniClear(); follow(440); } };   // typing the next ask: the finished view goes
+  $('ask').onmousedown = drop; $('ask').oninput = () => { drop(); if (miniEnd) { post({miniClear:true});miniClear(); follow(440); } fit(false); };   // typing the next ask: the finished view goes
   $('ask').onfocus = () => post({ focus: true });
   $('ask').onblur = () => { post({ focus: false }); if (!hover && !$('ask').value) comp(false); };
+  document.addEventListener('focusin',()=>fit(false));document.addEventListener('focusout',()=>fit(false));
+  window.addEventListener('focus',()=>fit(false));window.addEventListener('blur',()=>fit(false));
+  document.addEventListener('compositionstart',()=>{defaultComposing=true;fit(false);});document.addEventListener('compositionend',()=>{defaultComposing=false;fit(false);});
   $('ask').onkeydown = e => {
     if (!e.isComposing && !listening && !working && !e.target.value && e.key === 'ArrowUp') {
       const q = part('q'); if (q && !q.classList.contains('empty')) { e.preventDefault(); e.target.value = q.textContent; }
     }
     if (e.key !== 'Enter' || e.isComposing) return;
+    if(working&&!$('thread').querySelector('.pk:not(.gone),.ok.retry:not(.gone)')){e.preventDefault();return;}
     const t = $('ask').value.trim();
     if (t && !window.ui.respond(t)) post({ send: t });
   };
@@ -503,7 +542,58 @@
     turn().append(clock); clockStart = performance.now(); clockTick();
   };
 
+  const moveClear=()=>{$('thread').querySelectorAll('.move-option').forEach(e=>e.remove());};
+  // What an agent made, as it says: Google types by mimeType, files by extension, the rest by host.
+  const AGENT_KINDS=[[/spreadsheet|\.(csv|xlsx?|numbers)$/i,'Spreadsheet','<rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M2 6h12M2 10h12M6 2v12"/>'],[/presentation|\.(pptx?|key)$/i,'Presentation','<rect x="1.5" y="3" width="13" height="8.5" rx="1.5"/><path d="M8 11.5v2.5M5.5 14h5"/>'],
+    [/document|\.(docx?|md|txt|pages|rtf)$/i,'Document','<path d="M4 1.5h5l3 3v10H4z"/><path d="M6 8h4M6 10.5h4"/>'],[/calendar|event/i,'Event','<rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3"/>'],
+    [/mail|draft/i,'Message','<rect x="1.5" y="3" width="13" height="10" rx="2"/><path d="m2 4 6 5 6-5"/>'],[/^\//,'File','<path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/>']];
+  const agentMade=row=>(row.made?.length?row.made:(row.links||[]).map(url=>({url,title:''}))).slice(0,3).map(m=>{
+    const k=AGENT_KINDS.find(k=>k[0].test((m.type||'')+' '+m.url.split(/[?#]/)[0]))||[0,'Link','<path d="M7 9a3 3 0 0 0 4.2 0l2-2a3 3 0 0 0-4.2-4.2l-.8.8M9 7a3 3 0 0 0-4.2 0l-2 2a3 3 0 0 0 4.2 4.2l.8-.8"/>'];
+    let host='';try{host=new URL(m.url).hostname.replace(/^www\./,'');}catch{}const file=m.url.startsWith('/');
+    return {url:m.url,title:m.title||(file?m.url.split('/').pop():host)||m.url,sub:k[1]+' · '+(file?'In its folder':host),svg:k[2]};});
+  const keyButton=(text,key,go)=>{const b=document.createElement('button');if(go)b.className='go';const label=document.createElement('span');label.textContent=text;const cap=document.createElement('kbd');cap.textContent=key;cap.setAttribute('aria-hidden','true');b.append(label,cap);b.setAttribute('aria-keyshortcuts',key==='↩'?'Enter':'Escape');return b;};
+  const agentCard=(row,done=false)=>{
+    moveClear();
+    $('thread').querySelectorAll('.agent-card').forEach(e=>e.remove());
+    const d=document.createElement('div');d.className='ok offer agent-card'+(done?' done':'');d.dataset.agent=row.id;
+    d.innerHTML='<div class="eyebrow"><i></i><span></span></div><b></b><p></p><div class="made"></div><div class="agent-actions keys"></div>';
+    d.querySelector('.eyebrow span').textContent=done?(row.missingConnector?'Agent needs a connector':'Agent done'):'Background agent';
+    d.querySelector('b').textContent=row.title;
+    d.querySelector('p').textContent=done?(row.summary||row.result||'Done'):row.brief;
+    const actions=d.querySelector('.agent-actions'),add=(text,data,go=false)=>{const b=keyButton(text,go?'↩':'esc',go);if(!go)b.dataset.esc='';b.onclick=()=>{if(data.agentStart){const r=d.getBoundingClientRect(),o=d.querySelector('.eyebrow i').getBoundingClientRect();d.querySelectorAll('button').forEach(b=>b.disabled=true);post({...data,cardRect:[r.x,r.y,r.width,r.height],orbRect:[o.x-10,o.y-10,o.width+20,o.height+20]});}else{post(data);d.remove();}fit();};actions.append(b);return b;};
+    const made=d.querySelector('.made');
+    if(done)for(const m of agentMade(row)){const b=document.createElement('button');b.title=m.url;b.innerHTML='<i><svg viewBox="0 0 16 16">'+m.svg+'</svg></i><span><b></b><small></small></span>';b.querySelector('b').textContent=m.title;b.querySelector('small').textContent=m.sub;
+      b.onclick=()=>{post({agentOpen:row.id,target:m.url});d.remove();fit();};made.append(b);}
+    if(!made.children.length)made.remove();
+    if(done){add('Later',{agentLater:row.id});if(row.missingConnector)add('Connect in Claude',{agentConnect:row.id},true);else add('Open',{agentOpen:row.id},true);
+      const cost=document.createElement('div');cost.className='usage';cost.textContent='Plan usage · $'+Number(row.cost||0).toFixed(4);d.append(cost);
+    }else{add('Not now',{agentCancel:row.id});add('Start',{agentStart:row.id},true);}
+    turn()?.querySelector('.elapsed')?.remove();   // the work moves to the agent; this box's timer has nothing to say
+    (turn()||$('thread')).append(d);working=false;clockStop();setState('breathing');status(done?'Done':'Ready to start');fit();
+  };
+  $('agents-pill').onclick=()=>post({agents:true});
+  document.addEventListener('keydown',e=>{const b=defaultButton();if(b&&e.key==='Enter'&&!e.isComposing&&!(e.target instanceof HTMLButtonElement)){e.preventDefault();e.stopPropagation();b.click();}},true);
   window.ui = {
+    agentDefaultAction(){defaultButton()?.click();},
+    moveOffer(){
+      if(!working||$('thread').querySelector('.move-option'))return;
+      const d=document.createElement('div');d.className='ok offer move-option';
+      d.innerHTML='<b>Move this to an agent?</b><div class="keys"></div>';const keep=document.createElement('button'),move=keyButton('Move','↩',true);keep.textContent='Keep here';d.querySelector('.keys').append(keep,move);
+      [keep,move].forEach((b,i)=>b.onclick=()=>{post(i?{agentMove:true}:{agentMoveNo:true});if(i){b.disabled=true;b.firstChild.textContent='Moving…';}else d.remove();fit();});
+      turn()?.append(d);fit();
+    },
+    movePending(){moveClear();status('Moving to an agent…',true);fit();},
+    moveFailed(){const b=$('thread').querySelector('.move-option .go');if(b){b.disabled=false;b.firstChild.textContent='Move';}status('Could not move',true);fit();},
+    agentOffer(row){agentCard(row);},
+    agentDone(row){agentCard(row,true);},
+    agentCancelled(){$('thread').querySelectorAll('.agent-card').forEach(e=>e.remove());status('Ready');clockStop();fit();},
+    agentStarted(){moveClear();$('thread').querySelectorAll('.agent-card').forEach(e=>{e.classList.add('gone');setTimeout(()=>{e.remove();fit();},360);});working=listening=false;setState('breathing');status('Agent started');clockStop();fit();},   // the box stays; the card folds while its orb swims to the shelf
+    agentSteered(row){moveClear();working=listening=false;settle();part('q')?.classList.remove('live','hear');setState('breathing');status('');clockStop();
+      const a=part('a');if(a){a.className='a agent-ack';a.replaceChildren();const text=document.createElement('span');text.textContent=typeof row==='string'?row:'Told the '+row.title+' agent: '+(row.steer?.text||row.steer?.ack||'Got it');a.dataset.answer=text.textContent;
+        if(row.id){const c=document.createElement('canvas'),p=E.r('breathing',32);c.width=c.height=64;c.dataset.agent=row.id;c.style.filter='hue-rotate('+(parseInt(row.id.slice(0,4),16)%90-45)+'deg)';const ctx=c.getContext('2d');ctx.scale(2,2);E.p(ctx,E.M[p.mode](32,0,p.opts),true,null);a.append(c);}a.append(text);}fit();},
+    agentCount(value){const count=typeof value==='number'?value:value.count,pill=$('agents-pill'),label=count+' agent'+(count===1?'':'s');pill.hidden=!count;pill.classList.toggle('attention',!!value.attention);
+      pill.lastChild.textContent=label;pill.title=value.attention?'An agent needs you':'Open Agents';pill.setAttribute('aria-label',label+(value.attention?', one needs you':' running')+'. Open Agents');fit();},
+    agentEscape(){const b=$('thread').querySelector('.agent-card [data-esc]');if(b)b.click();else post({agentGone:true});},   // Esc is a native hotkey: it picks the card's quiet choice
     selected(t) {   // the text Atticus is working from, so the user knows it saw the right thing
       const d = turn(); if (!d || !t.trim()) return;
       const s = document.createElement('div'); s.className = 'sel'; s.textContent = 'Selected: “' + t.trim().replace(/\s+/g, ' ') + '”';
@@ -533,8 +623,8 @@
       bar.querySelector('.go').disabled = true; fit();
     },
     mini(m) { miniUpdate(m); },
-    finished() { clockStop(); miniFinish(false); },
-    visible(on) { visible = on; if (!on) { clockStop(); miniClear(); } },
+    finished() { moveClear(); clockStop(); miniFinish(false); },
+    visible(on) { visible = on; if (!on) { clockStop(); miniClear(); } fit(false); },
     limit(h) {
       const value = h + 'px';
       if ($('card').style.getPropertyValue('--screen-height') === value) return;
@@ -544,7 +634,7 @@
     },
     reset() { miniClear(); clockStop(); $('thread').innerHTML = ''; $('thread').style.maxHeight = ''; $('card').classList.remove('held'); $('card').style.minHeight = ''; $('card').classList.remove('again'); void $('card').offsetWidth; },
     listen(keep) {   // keep: a typed ask; the box stays for the next one
-      miniClear(); clockStop();
+      moveClear(); miniClear(); clockStop();
       $('thread').querySelectorAll('.rewrite').forEach(e => e.remove());
       hover = false;
       listening = !keep;
@@ -602,8 +692,8 @@
         }
       } else if (tag === '✎' && turn()) { try { receipt(JSON.parse(s)); } catch {}
       } else if (tag === 'i' && turn()) {
-        const learned = s.startsWith('Learned: '), d = document.createElement('div');   // "Learned" when it saved a rule, else "Tip"
-        d.className = 'tip' + (learned ? ' learned' : ''); d.dataset.k = learned ? 'Learned' : 'Tip'; d.textContent = learned ? s.slice(9) : s;
+        const learned = s.startsWith('Learned: '), kofi = s.startsWith('Support: '), d = document.createElement('div');   // "Learned" when it saved a rule, the Ko-fi line, else "Tip"
+        d.className = 'tip' + (learned ? ' learned' : kofi ? ' kofi' : ''); d.dataset.k = learned ? 'Learned' : kofi ? 'Enjoying Atticus?' : 'Tip'; d.textContent = learned || kofi ? s.slice(9) : s;
         if (!learned) { const o = document.createElement('button'); o.className = 'off'; o.textContent = 'Turn off tips'; d.append(o); }
         turn().append(d);
         setTimeout(() => { d.classList.add('gone'); setTimeout(() => { d.remove(); fit(); }, 400); }, 9000);   // never sticks around
@@ -645,6 +735,7 @@
       if (el?.closest('#mode')) return post({ safe: true });
       if ($('comp').classList.contains('pick')) pickRow(false);   // a click anywhere else closes the model row
       if (el?.closest('.tip .off')) { post({ off: 'tips' }); el.closest('.tip').remove(); return fit(); }   // its own "Turn off": no more tips
+      if (el?.closest('.tip.kofi')) post({ kofi: true });   // the support line opens Ko-fi, then goes like any tip
       if (el?.closest('.tip')) { el.closest('.tip').remove(); return fit(); }   // click a tip: it goes
       const on = el?.closest('.a:not(.stopped):not(.cancel)'), q = el?.closest('.q:not(.empty)');
       drop();
@@ -672,7 +763,7 @@
       return true;
     },
     ask([q, cmd, off, retry]) {   // off: a setting this card can turn off
-      $('thread').querySelectorAll('.ok').forEach(e => e.remove()); unpin();
+      $('thread').querySelectorAll('.ok:not(.move-option)').forEach(e => e.remove()); unpin();
       const d = document.createElement('div'); d.className = 'ok';
       if (off || retry) {
         d.className = 'ok offer' + (retry ? ' retry' : '');
