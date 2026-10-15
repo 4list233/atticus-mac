@@ -2082,6 +2082,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
         if b["do"] == "done" { return finish() }
         if b["do"] == "kofi" { NSWorkspace.shared.open(kofi); return }
         if b["do"] == "enableAll" { return enableAll(connected: b["connected"] == "true") }
+        if b["do"] == "client", let v = b["v"], ["claude", "devin"].contains(v) { Atticus.settings.apply("client", v); Atticus.settings.push(); return checkPlan() }   // the plan row's "Use … instead" link
         if b["do"] == "connectors" { return Onboarding.connectors { [weak self] c in self?.call("ob.connectors", c) } }
         if b["do"] == "set", let k = b["k"], ["meeting", "pointer", "improve"].contains(k) { Atticus.settings.apply(k, b["v"] == "true"); Atticus.settings.push(); return }   // the extras switches
         grant(b["id"] ?? "")

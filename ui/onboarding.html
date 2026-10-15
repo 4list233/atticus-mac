@@ -78,6 +78,8 @@
   .check circle { fill: var(--green); transform-origin: center; animation: pop .45s var(--spring) both; }
   .check path { fill: none; stroke: #fff; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round;
     stroke-dasharray: 14; stroke-dashoffset: 14; animation: draw .35s .15s var(--ease) forwards; }
+  .alt { display: inline-block; margin: 3px 0 0; padding: 0; border: 0; background: none; cursor: pointer; font: 500 11.5px system-ui; color: var(--accent); }
+  .alt:hover { text-decoration: underline; } .alt:focus-visible { outline: 2px solid rgba(10,132,255,.45); outline-offset: 2px; border-radius: 3px; }
   .row.ok .allow { display: none; } .row.ok .check { display: block; margin: 0 21px; }
   #count { margin-top: 14px; font-size: 12px; color: var(--fg3); font-variant-numeric: tabular-nums; transition: color .3s; }
   #count.all { color: var(--green); }
@@ -379,6 +381,16 @@
       <svg class="check" viewBox="0 0 22 22"><circle cx="11" cy="11" r="11"/><path d="M6.5 11.3l3 3 6-6.3"/></svg>
     </div>`).join('');
   $('list').innerHTML = rows(P, 'p-');
+  // Not everyone has a Claude plan: one small link flips the AI client (the same switch as Settings → AI client); the row re-checks it.
+  $('p-claude').querySelector('.txt').insertAdjacentHTML('beforeend', '<button class="alt" id="client-alt" data-v="devin">Use Devin instead</button>');
+  let want = null;   // the client just picked: a check already running for the old one must not flip the row back
+  $('client-alt').onclick = e => {
+    const v = want = e.target.dataset.v;
+    post({ do: 'client', v });
+    $('p-claude').classList.remove('ok'); planOK = false;
+    $('p-claude').querySelector('.txt b').textContent = v === 'devin' ? 'Devin' : 'Claude Plan';
+    $('p-claude').querySelector('.txt span').textContent = v === 'devin' ? 'Checking your Devin sign-in…' : 'Checking your Claude sign-in…';
+  };
   // Agents: what Atticus turns on itself, then what only the user can (macOS privacy switches, a claude.ai sign-in). Status is live; done rows show a check.
   const glyph = id => P.find(p => p[0] === id);
   const OWN = [['tools', 'Your Claude Code tools', 'MCP servers, skills and plugins you already use.', '#d97757', '<path d="M14.5 5.5l4 4-9 9H5.5v-4z"/><path d="M12.5 7.5l4 4"/>'],
@@ -418,10 +430,13 @@
       $('try-skip').hidden = true; $('try-next').hidden = false;
     },
     plan(c) {   // the AI client (Claude Code or Devin): installed, signed in, paid plan? The row says which, the button fixes it
+      if (want && (c.client || 'claude') !== want) return; want = null;
       planOK = !!c.ok;
       $('p-claude').querySelector('.txt b').textContent = c.client === 'devin' ? 'Devin' : 'Claude Plan';
       $('p-claude').querySelector('.txt span').textContent = c.text;
       $('p-claude').querySelector('.allow').textContent = { install: 'Install', login: 'Sign In', upgrade: 'Upgrade' }[c.need] || 'Allow';
+      const alt = c.client === 'devin' ? 'claude' : 'devin';
+      $('client-alt').dataset.v = alt; $('client-alt').textContent = alt === 'devin' ? 'Use Devin instead' : 'Use Claude instead';
       if (last) ob.set(last);
     },
     walk(id) {   // Enable All: the step it is on says what to do there; the button waits until the walk ends

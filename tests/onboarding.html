@@ -19,7 +19,11 @@ function page(id){
 async function go(id){d.querySelector(`.page.on [data-go="${id}"]`).click();await wait(750);page(id);
  for(const e of $(''+id).children){const r=e.getBoundingClientRect();if(!e.hidden)assert(r.left>=0&&r.right<=640&&r.top>=0&&r.bottom<=612,'Fits window '+id+' / '+(e.id||e.tagName))}
 }
-page('welcome');await go('perms');await go('agents');
+page('welcome');await go('perms');
+w.ob.plan({ok:false,need:'upgrade',text:'Atticus needs a paid Claude plan (Pro or Max).'});assert($('client-alt').textContent==='Use Devin instead','Plan row offers another AI client');
+$('client-alt').click();await wait(30);assert(messages.some(m=>m.do==='client'&&m.v==='devin')&&$('p-claude').textContent.includes('Checking your Devin sign-in'),'Use Devin instead switches the client');
+w.ob.plan({ok:false,need:'upgrade',text:'old Claude check'});assert(!$('p-claude').textContent.includes('old Claude check'),'A stale check for the old client is ignored');
+w.ob.plan({ok:false,need:'install',client:'devin',text:'Devin is not installed.'});assert($('p-claude').querySelector('.allow').textContent==='Install'&&$('client-alt').textContent==='Use Claude instead','Devin row installs Devin and offers Claude back');await go('agents');
 assert(messages.some(m=>m.do==='connectors'),'Agents step asks for connector status');
 w.ob.set({mic:true,speech:true,ax:true,screen:false,auto:true,chrome:false,calendar:true,tools:true});w.ob.connectors({connected:['Gmail'],signin:['Notion']});
 assert($('a-ax').classList.contains('ok')&&!$('a-screen').classList.contains('ok')&&$('a-connectors').classList.contains('ok')&&$('a-connectors').textContent.includes('1 need sign-in'),'Agents rows show live status, nothing asked twice');
