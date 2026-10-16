@@ -3699,7 +3699,9 @@ enum Hands {
             // Keep lazy AX content available through traversal and action verification.
             accessibilityRestores.append { _ = AXUIElementSetAttributeValue(e,enhancedKey as CFString,oldEnhanced) }
         }
-        let candidates = [element(e,kAXFocusedWindowAttribute), element(e,kAXMainWindowAttribute)].compactMap { $0 } + ((attribute(e,kAXWindowsAttribute) as? [AXUIElement]) ?? [])
+        let axWindows = (attribute(e,kAXWindowsAttribute) as? [AXUIElement]) ?? []
+        let pinned = env["ATTICUS_HANDS_WINDOW"].flatMap(UInt32.init).flatMap { id in axWindows.first { axWindowNumber($0)?.uint32Value == id } }
+        let candidates = [pinned, element(e,kAXFocusedWindowAttribute), element(e,kAXMainWindowAttribute)].compactMap { $0 } + axWindows
         for w in candidates {
             try checkStopped(); if Date().timeIntervalSince(start) >= 0.3 { break }
             if windowElement(w,app:e) { return (e,w) }

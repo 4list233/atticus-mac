@@ -761,6 +761,10 @@ def wants_focus(task=None, sites=False):
 def preview_app(app, action='work', title='', directory=None, frame=None):
     if not app or os.environ.get('ATTICUS_LIVE') == '1' and pref('workIn', 'back') != 'front' and not wants_focus(): return
     try:
+        mapped = cached_hands() if frame is None and not title and os.environ.get('ATTICUS_HANDS_STATE') else None
+        if isinstance(mapped, dict) and str(mapped.get('app', '')).casefold() == str(app).casefold():
+            pinned = mapped.get('windowFrame')
+            if isinstance(pinned, list) and len(pinned) == 4: frame = pinned
         r = subprocess.run([APP, '--window-target', app, title] + ([json.dumps(frame)] if frame else []), capture_output=True, text=True, timeout=2,
                            env={**os.environ, 'ATTICUS_FOCUS_REQUESTED': '1' if wants_focus() else '0'})
         if r.returncode or not r.stdout.strip(): return
@@ -1961,7 +1965,7 @@ def web(cmd, n='', text='', app=None, fresh=False, want='', page=None):
             if r.returncode or len(parts) != 5: raise ValueError('Could not locate the pinned page window')
             l,t,right,bottom = map(float,parts[1:])
             saved['target'] = preview_app(app, cmd, title=parts[0], frame=[l,t,right-l,bottom-t])
-            if cmd == 'read' and not n: hands_map(app)
+            if cmd == 'read' and not n: hands_map(app, saved['target'])
             if page is None: private_json(path, saved)
         _, tell = browser_terms(app, adapter, saved['window'], saved['tab'])
         if isinstance(saved.get('target'), dict): emit(['▣ ' + json.dumps({**saved['target'], 'action':cmd})])
@@ -2111,13 +2115,18 @@ def hands_state():
     return os.environ.get('ATTICUS_HANDS_STATE', os.path.join(DIR, 'hands.json'))
 
 
-def hands_call(args, receipt=None, timeout=30, state=None, head=False):
+def hands_call(args, receipt=None, timeout=30, state=None, head=False, target=None):
     if STOPPING: raise InterruptedError('Request cancelled')
+    pinned = target if isinstance(target, dict) else cached_hands() if state is None else None
+    env = {**os.environ, 'ATTICUS_DIR': DIR, **({'ATTICUS_HANDS_STATE': state} if state else {}),
+           'ATTICUS_FOCUS_REQUESTED': '1' if wants_focus() else '0',
+           **({'ATTICUS_HANDS_HEAD': '1'} if head else {}),
+           'ATTICUS_HANDS_RECEIPT': '1' if receipt is not None else '0'}
+    window = str(pinned.get('windowID', '')) if isinstance(pinned, dict) else ''
+    if window.isdigit() and int(window) > 0: env['ATTICUS_HANDS_WINDOW'] = window
+    else: env.pop('ATTICUS_HANDS_WINDOW', None)
     process = subprocess.Popen([APP, '--hands', *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                               text=True, env={**os.environ, 'ATTICUS_DIR': DIR, **({'ATTICUS_HANDS_STATE': state} if state else {}),
-                               'ATTICUS_FOCUS_REQUESTED': '1' if wants_focus() else '0',
-                               **({'ATTICUS_HANDS_HEAD': '1'} if head else {}),
-                               'ATTICUS_HANDS_RECEIPT': '1' if receipt is not None else '0'})
+                               text=True, env=env)
     try:
         out, err = process.communicate(json.dumps(receipt) if receipt is not None else None, timeout=timeout)
         return subprocess.CompletedProcess(process.args, process.returncode, out, err)
@@ -2129,10 +2138,10 @@ def hands_call(args, receipt=None, timeout=30, state=None, head=False):
                 process.kill(); process.communicate()
 
 
-def hands_map(app=''):
+def hands_map(app='', target=None):
     """A bounded native map; failed accessibility never falls back to guessing a target."""
     try:
-        r = hands_call(['see', app] if app else ['see'], timeout=2)
+        r = hands_call(['see', app] if app else ['see'], timeout=2, target=target)
         if r.returncode:
             return None
         with open(hands_state()) as f:

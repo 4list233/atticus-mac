@@ -149,6 +149,24 @@ class PageReadyTests(unittest.TestCase):
             self.assertNotIn('front document',run.call_args.args[0][2])
             self.assertEqual(sum('return (id of window' in c.args[0][2] for c in run.call_args_list),1)
 
+    def test_agent_hands_and_later_previews_stay_on_the_pinned_page_window(self):
+        target={'pid':123,'windowID':'77','windowFrame':[10,20,600,400],'window':'Work','app':'Browser Fixture'}
+        with tempfile.TemporaryDirectory() as scratch:
+            Path(scratch,'web.json').write_text(json.dumps({'app':'Browser Fixture','adapter':'webkit','window':10,'tab':2,'target':None}))
+            process=Mock(returncode=0,args=[]);process.communicate.return_value=('mapped','');process.poll.return_value=0
+            def browser(args,**kwargs):
+                return subprocess.CompletedProcess(args,0,'Work, 10, 20, 610, 420' if 'get {name, bounds}' in args[2] else 'Fixture page','')
+            with patch.dict(os.environ,{'ATTICUS_ASK':scratch,'ATTICUS_AGENT':'agent','ATTICUS_HANDS_STATE':str(Path(scratch,'hands.json'))}), \
+                 patch.object(atticus,'browser_adapter',return_value='webkit'),patch.object(atticus,'preview_app',return_value=target), \
+                 patch.object(atticus.subprocess,'run',side_effect=browser),patch.object(atticus.subprocess,'Popen',return_value=process) as popen:
+                self.assertEqual(atticus.web('read'),'Fixture page')
+            self.assertEqual(popen.call_args.kwargs['env']['ATTICUS_HANDS_WINDOW'],'77')
+            Path(scratch,'hands.json').write_text(json.dumps(target))
+            with patch.dict(os.environ,{'ATTICUS_AGENT':'agent','ATTICUS_HANDS_STATE':str(Path(scratch,'hands.json'))}), \
+                 patch.object(atticus.subprocess,'run',return_value=subprocess.CompletedProcess([],0,json.dumps(target),'')) as run:
+                atticus.preview_app('Browser Fixture')
+            self.assertEqual(json.loads(run.call_args.args[0][-1]),target['windowFrame'])
+
     def test_readiness_failure_after_a_click_keeps_success_without_repeating(self):
         with tempfile.TemporaryDirectory() as scratch:
             def run(args,**kwargs):
