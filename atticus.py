@@ -2117,7 +2117,7 @@ def hands_state():
 
 def hands_call(args, receipt=None, timeout=30, state=None, head=False, target=None):
     if STOPPING: raise InterruptedError('Request cancelled')
-    pinned = target if isinstance(target, dict) else cached_hands() if state is None else None
+    pinned = target if isinstance(target, dict) else cached_hands() if state is None and os.environ.get('ATTICUS_AGENT') else None   # agents keep their window; a main ask follows the front one
     env = {**os.environ, 'ATTICUS_DIR': DIR, **({'ATTICUS_HANDS_STATE': state} if state else {}),
            'ATTICUS_FOCUS_REQUESTED': '1' if wants_focus() else '0',
            **({'ATTICUS_HANDS_HEAD': '1'} if head else {}),
