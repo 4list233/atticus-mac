@@ -1845,6 +1845,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
     }
     func open(_ id:String, target:String? = nil, reveal:Bool = false) {
         guard let row = rows[id] else { return }
+        app.allowUntil = Date().addingTimeInterval(3); app.allowUserApp = true   // a click in our own panel never reaches the global monitor, so the focus guard took this for an app raising itself
         if row["destination"] as? String == "meeting" { meeting.open(); meeting.showAgentPrep(row); return }
         let raw = target ?? ((row["made"] as? [[String:Any]])?.first?["url"] as? String) ?? (row["links"] as? [String])?.first   // the main thing it made
         if let raw {
