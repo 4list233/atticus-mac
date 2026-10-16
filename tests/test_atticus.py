@@ -268,6 +268,16 @@ print(json.dumps(atticus.look(cleanup=sys.argv[3] != 'standalone')))
             atticus.restore_focus('Notes', 'open Spotify', [atticus.SHOW + ' Spotify'])
             osa.assert_not_called()
 
+    def test_explicit_focus_marks_the_user_choice_but_temporary_raises_do_not(self):
+        with patch.object(atticus.subprocess, 'run') as run:
+            atticus.allow_focus('switch to Fixture')
+            self.assertEqual(run.call_args.args[0], [atticus.APP, '--raise', 'user'])
+            atticus.free_focus()
+            self.assertEqual(run.call_args.args[0], [atticus.APP, '--raise'])
+            run.reset_mock()
+            atticus.allow_focus('work in the background')
+            run.assert_not_called()
+
     def test_screen_requests_include_every_display(self):
         snap = unittest.mock.Mock()
         snap.shots = [('laptop.jpg', 'Screen 1: built-in laptop screen'), ('monitor.jpg', 'Screen 2: external monitor')]

@@ -11,13 +11,44 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(sys.platform == "darwin", "macOS Swift regression")
 class PrefsNativeTests(unittest.TestCase):
+    def test_all_windows_follow_sharing_preference(self):
+        source = (ROOT / "Atticus.swift").read_text()
+        self.assertEqual(source.count(".sharingType ="), 1)
+        prefs = source[source.index("enum Prefs"):source.index("func profileName(")]
+        live = next(line for line in source.splitlines() if 'if k == "hideWhenSharing"' in line)
+        swift = """import Cocoa
+let controlKey = 1, optionKey = 2
+""" + prefs + """
+let nsapp = NSApplication.shared
+let windows: [NSWindow] = [NSWindow(), NSPanel(), NSPanel()]
+precondition(Prefs.bool("hideWhenSharing"), "sharing must be hidden by default")
+windows.forEach(applySharing)
+precondition(windows.allSatisfy { $0.sharingType == .none })
+let k = "hideWhenSharing"
+for enabled in [false, true, false] {
+    Prefs.set(k, enabled)
+""" + live + """
+    precondition(windows.allSatisfy { $0.sharingType == (enabled ? .none : .readOnly) }, "live change missed a window")
+    let later = NSPanel(); applySharing(later)
+    precondition(later.sharingType == (enabled ? .none : .readOnly), "new window missed preference")
+}
+"""
+        with tempfile.TemporaryDirectory() as root:
+            path, binary = Path(root) / "sharing.swift", Path(root) / "sharing"
+            path.write_text(swift)
+            compiled = subprocess.run(["swiftc", str(path), "-o", str(binary)], capture_output=True, text=True)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            result = subprocess.run([str(binary)], capture_output=True, text=True,
+                                    env={**os.environ, "ATTICUS_DIR": root})
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_settings_are_private_and_usage_counts_final_rows(self):
         source = (ROOT / "Atticus.swift").read_text()
         prefs = source[source.index("enum Prefs"):source.index("func audioProp")]
         today = source[source.index("    func today()"):source.index("    @objc func toggleMeeting")]
         today = today.replace('NSString(string: "~/.config/atticus/log.jsonl").expandingTildeInPath',
                               '(Prefs.path as NSString).deletingLastPathComponent + "/log.jsonl"')
-        swift = """import Foundation
+        swift = """import Cocoa
 let controlKey = 1, optionKey = 2
 """ + prefs + "\nfinal class FixtureMenu {\n" + today + """
 }

@@ -93,6 +93,9 @@ class BackgroundTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as failure:atticus.get(url)
         self.assertEqual(failure.exception.code,503)
         def result(args,**kw):
+            if 'make new tab' in args[2]:
+                self.assertIn('set priorSelection to current tab of w',args[2])
+                self.assertIn('set current tab of w to priorSelection',args[2])
             return subprocess.CompletedProcess([],0,'10\t2' if 'make new tab' in args[2] else 'Requested page, 0, 0, 300, 200' if 'get {name, bounds}' in args[2] else
                                                json.dumps({'signature':url+'|ready'}) if '"ready", ' in args[-1][-35:] else 'Actual requested page content', '')
         with patch.object(atticus,'browser_adapter',return_value='webkit'), patch.object(atticus,'page_ready',return_value=True), \
@@ -110,15 +113,42 @@ class BackgroundTests(unittest.TestCase):
             atticus.restore_focus('Finder', 'make a note', ['tell application "Notes" to make new note'])
             self.assertEqual(osa.call_count, 1)
 
+    def test_work_mode_covers_non_browser_apps(self):
+        for mode in ('back', 'front'):
+            with self.subTest(mode=mode), patch.object(atticus, 'pref', side_effect=lambda k, d: mode if k == 'workIn' else d), \
+                 patch.object(atticus, 'osa', return_value='Editor') as osa, patch.object(atticus, 'preview_app', return_value={'app': 'Fixture'}), \
+                 patch.object(atticus, 'keep_behind') as behind, patch.object(atticus.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
+                self.assertEqual(atticus.show('Fixture', bg=True), 'opened Fixture ' + ('in front' if mode == 'front' else 'in the background'))
+                self.assertEqual(run.call_args.args[0], ['open'] + ([] if mode == 'front' else ['-g']) + ['-a', 'Fixture'])
+                self.assertEqual(behind.call_count, int(mode == 'back'))
+                osa.reset_mock()
+                osa.return_value = 'Fixture'
+                atticus.restore_focus('Editor', 'work in Fixture', ['tell application "Fixture" to work'])
+                self.assertEqual(osa.call_count, 0 if mode == 'front' else 2)
+
+    def test_preview_passes_explicit_focus_intent_to_native_apps(self):
+        for requested in (False, True):
+            with self.subTest(requested=requested), patch.object(atticus, 'wants_focus', return_value=requested), \
+                 patch.object(atticus, 'emit'), patch.object(atticus.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, json.dumps(self.target))) as run:
+                atticus.preview_app('Fixture')
+                self.assertEqual(run.call_args.kwargs['env']['ATTICUS_FOCUS_REQUESTED'], '1' if requested else '0')
+
+    def test_explicit_focus_is_not_undone_by_the_shared_fallback(self):
+        with patch.dict(os.environ, {'ATTICUS_REQUEST': 'focus Fixture'}), patch.object(atticus, 'osa') as osa:
+            atticus.keep_behind('Editor', 'Fixture')
+            osa.assert_not_called()
+
     def test_parallel_agent_reads_own_tabs_and_never_launch_select_or_raise(self):
         barrier=threading.Barrier(3); pins={}; results={}; calls=[]
         def result(args,**kw):
             calls.append(args)
             self.assertEqual(args[0],'osascript')
             script=args[2]
-            self.assertNotRegex(script,r'(?i)activate|AXRaise|frontmost|make new window|set (?:index|active tab|current tab|bounds|miniaturized)')
+            self.assertNotRegex(script,r'(?i)activate|AXRaise|frontmost|make new window|set (?:index|bounds|miniaturized)')
             url='https://fixture.example/'+threading.current_thread().name
             if 'make new tab' in script:
+                self.assertIn('set priorSelection to active tab index of w',script)
+                self.assertIn('set active tab index of w to priorSelection',script)
                 pins[threading.current_thread().name]=len(pins)+1
                 barrier.wait(timeout=3)
                 return subprocess.CompletedProcess(args,0,'10\t'+str(pins[threading.current_thread().name]),'')
@@ -127,7 +157,7 @@ class BackgroundTests(unittest.TestCase):
                 self.assertIn('whose id is '+str(pins[threading.current_thread().name]),script)
                 out=json.dumps({'signature':url+'|ready'}) if '"ready", ' in args[-1][-35:] else url
             return subprocess.CompletedProcess(args,0,out,'')
-        with patch.dict(os.environ,{'ATTICUS_AGENT':'fixture'}),patch.object(atticus,'pref',return_value='front'),patch.object(atticus,'browser_adapter',return_value='chromium'),patch.object(atticus,'page_ready',return_value=True),patch.object(atticus,'preview_app',return_value=None),patch.object(atticus,'hands_map'),patch.object(atticus.subprocess,'run',side_effect=result):
+        with patch.dict(os.environ,{'ATTICUS_AGENT':'fixture'}),patch.object(atticus,'browser_adapter',return_value='chromium'),patch.object(atticus,'page_ready',return_value=True),patch.object(atticus,'preview_app',return_value=None),patch.object(atticus,'hands_map'),patch.object(atticus.subprocess,'run',side_effect=result):
             def read():
                 name=threading.current_thread().name
                 results[name]=atticus.web('read','https://fixture.example/'+name,app='Fixture Browser')
@@ -135,11 +165,38 @@ class BackgroundTests(unittest.TestCase):
             for t in threads:t.start()
             for t in threads:t.join(5)
             self.assertEqual(results,{str(i):'https://fixture.example/'+str(i) for i in range(3)})
-            self.assertFalse(atticus.wants_focus('Show this browser',sites=True))
+            self.assertFalse(atticus.wants_focus('Show this browser'))
             self.assertEqual(len(set(pins.values())),3)
             path=Path(os.environ['ATTICUS_ASK'],'web.json');saved=json.loads(path.read_text())
             self.assertIn(saved['tab'],pins.values())
             self.assertEqual(path.stat().st_mode&0o777,0o600)
+
+    def test_agent_site_placement_uses_main_open_path_only_when_requested(self):
+        url = 'https://unseen.example/catalog'
+        with patch.dict(os.environ, {'ATTICUS_AGENT': 'fixture'}), \
+             patch.object(atticus, 'pref', side_effect=lambda k, d: 'front' if k == 'workIn' else d), \
+             patch.object(atticus, 'show', return_value='opened ' + url + ' in front') as show, \
+             patch.object(atticus, 'browser_adapter', return_value=''):
+            atticus.web('read', url, app='Unseen Browser')
+            show.assert_called_once_with(url, bg=True)
+            self.assertTrue(atticus.wants_focus(sites=True))
+            self.assertFalse(atticus.wants_focus('Show this browser'))
+            Path(os.environ['ATTICUS_ASK'], 'request').write_text('Research in the background')
+            show.reset_mock()
+            atticus.web('read', url, app='Unseen Browser')
+            show.assert_not_called()
+
+    def test_agent_show_in_front_does_not_reenter_url_reader(self):
+        with patch.dict(os.environ, {'ATTICUS_AGENT': 'fixture'}), \
+             patch.object(atticus, 'DIR', os.environ['ATTICUS_ASK']), \
+             patch.object(atticus, 'pref', side_effect=lambda k, d: 'front' if k == 'workIn' else d), \
+             patch.object(atticus, 'osa', return_value='Fixture Editor'), \
+             patch.object(atticus, 'preview_app', return_value={'app': 'Unseen Browser'}), \
+             patch.object(atticus.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '', '')) as run, \
+             patch.object(atticus, 'web', return_value='Page ready.') as web:
+            self.assertIn('in front', atticus.show('https://unseen.example', bg=True))
+            self.assertIn(unittest.mock.call(['open', 'https://unseen.example']), run.call_args_list)
+            web.assert_called_once_with('wait', text='https://unseen.example', app='Unseen Browser', fresh=True)
 
     def test_agent_background_show_and_window_reads_preserve_their_pin(self):
         Path(os.environ['ATTICUS_ASK'],'window-summary.json').write_text(json.dumps({'app':'Fixture Browser','web':True}))

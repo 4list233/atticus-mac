@@ -122,6 +122,81 @@ if CommandLine.arguments.contains("--benchmark") {
 
 @unittest.skipUnless(sys.platform == 'darwin', 'macOS Swift worker regression')
 class NativeTests(unittest.TestCase):
+    def test_voice_focus_becomes_the_background_guard_target(self):
+        source = (ROOT / 'Atticus.swift').read_text()
+        start = source.index('    static func focusGuardActive')
+        policy = source[start:source.index('    let recent', start)]
+        start = source.index('    static var workInFront:')
+        work = source[start:source.index('    static func bounds(', start)]
+        start = source.index('        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification')
+        observer = source[source.index('            let now = Date()', start):source.index('        NSEvent.addGlobalMonitor', start)].rsplit('        }', 1)[0]
+        swift = '''import Foundation
+enum Prefs {
+    static var mode = "back"
+    static func str(_ key: String) -> String { mode }
+}
+final class Target: Equatable {
+    let processIdentifier: Int32
+    var localizedName: String? { String(processIdentifier) }
+    var isTerminated = false
+    init(_ pid: Int32) { processIdentifier = pid }
+    static func == (a: Target, b: Target) -> Bool { a.processIdentifier == b.processIdentifier }
+}
+enum MiniScreen {
+    static var restored: Int32?
+    static func activate(_ pid: Int32) { restored = pid }
+''' + work + '''
+}
+typealias NSRunningApplication = Target
+enum NSWorkspace { static var shared = Workspace() }
+struct Workspace { var frontmostApplication: Target? = Target(1) }
+struct DistributedNotificationCenter {
+    static func `default`() -> Self { Self() }
+    func postNotificationName(_ name: Notification.Name, object: Any?, deliverImmediately: Bool) {}
+}
+final class Harness {
+    var busy = true, focusFree = false, allowUserApp = false
+    var engine = (isRunning: false, unused: false), agentsUI = (hasLive: false, unused: false)
+    var guardUntil = Date.distantPast, allowUntil = Date().addingTimeInterval(3), userSwitch = Date.distantPast
+    var userApp: Target? = Target(1), mine = "1"
+''' + policy + '''
+    func activated(_ a: Target) {
+''' + observer + '''
+    }
+}
+let h = Harness(), chosen = Target(2), temporary = Target(3)
+h.allowUserApp = true   // an explicit voice focus request, not a physical click
+h.activated(chosen)
+precondition(h.userApp == chosen && h.mine == "2", "voice-selected app was not remembered")
+h.allowUserApp = false
+h.activated(temporary)
+precondition(h.userApp == chosen, "temporary automation raise replaced the user's app")
+h.allowUntil = .distantPast
+h.activated(Target(1))   // a later background action in the previously used app
+precondition(MiniScreen.restored == chosen.processIdentifier, "background action restored the stale app")
+MiniScreen.restored = nil
+MiniScreen.work(temporary)
+precondition(MiniScreen.restored == nil, "background mode raised a non-browser app")
+setenv("ATTICUS_FOCUS_REQUESTED", "1", 1)
+MiniScreen.work(temporary)
+precondition(MiniScreen.restored == temporary.processIdentifier, "explicit focus in background mode was ignored")
+unsetenv("ATTICUS_FOCUS_REQUESTED")
+Prefs.mode = "front"
+MiniScreen.work(temporary)
+precondition(MiniScreen.restored == temporary.processIdentifier, "front mode did not raise a non-browser app")
+MiniScreen.restored = nil
+h.allowUntil = Date().addingTimeInterval(3)
+h.activated(temporary)
+precondition(MiniScreen.restored == nil && h.userApp == temporary, "front mode pushed the working app back")
+'''
+        with tempfile.TemporaryDirectory() as path:
+            file = Path(path) / 'focus.swift'; file.write_text(swift)
+            binary = Path(path) / 'focus'
+            compiled = subprocess.run(['swiftc', str(file), '-o', str(binary)], capture_output=True, text=True)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_focus_guard_covers_background_agents_and_fast_work(self):
         source = (ROOT / 'Atticus.swift').read_text()
         policy = source[source.index('    static func focusGuardActive'):source.index('    let recent', source.index('    static func focusGuardActive'))]
@@ -136,6 +211,8 @@ precondition(Harness.focusGuardActive(busy:false, recording:true, agents:false, 
 precondition(Harness.focusGuardActive(busy:false, recording:false, agents:false, now:now, until:.distantFuture, focusFree:false))
 precondition(!Harness.focusGuardActive(busy:true, recording:false, agents:false, now:now, until:.distantPast, focusFree:true))
 precondition(Harness.focusGuardActive(busy:false, recording:false, agents:true, now:now, until:.distantPast, focusFree:true))
+precondition(!Harness.focusGuardActive(busy:false, recording:false, agents:true, now:now, until:.distantPast, focusFree:true, workInFront:true))
+precondition(!Harness.focusGuardActive(busy:true, recording:false, agents:true, now:now, until:.distantPast, focusFree:false, workInFront:true))   // In front: every app may come forward
 precondition(!Harness.isUserApp(now:now, allowUntil:now.addingTimeInterval(3), userSwitch:.distantPast))   // hands raised Chrome
 precondition(Harness.isUserApp(now:now, allowUntil:now.addingTimeInterval(3), userSwitch:now))   // the user clicked during the raise
 precondition(Harness.isUserApp(now:now, allowUntil:.distantPast, userSwitch:.distantPast))

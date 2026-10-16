@@ -45,6 +45,10 @@ enum Prefs {
     static func num(_ k: String) -> Double { (d[k] as? NSNumber)?.doubleValue ?? 0 }
 }
 
+func applySharing(_ window: NSWindow) {
+    window.sharingType = Prefs.bool("hideWhenSharing") ? .none : .readOnly
+}
+
 func profileName(_ path: String) -> String {
     guard let profile = (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path)))) as? [String: Any],
           let facts = profile["facts"] as? [[String: Any]] else { return profileLegacyName(path) }
@@ -450,6 +454,12 @@ final class MiniScreen: NSObject, SCStreamOutput, SCStreamDelegate {
         while p.isRunning && Date() < deadline { usleep(10_000) }
         if p.isRunning { p.terminate() }
     }
+    static var workInFront: Bool { Prefs.str("workIn") == "front" || ProcessInfo.processInfo.environment["ATTICUS_FOCUS_REQUESTED"] == "1" }
+    static func work(_ app: NSRunningApplication) {
+        guard workInFront, NSWorkspace.shared.frontmostApplication != app else { return }
+        DistributedNotificationCenter.default().postNotificationName(.init("atticus.raise"), object: "user", deliverImmediately: true)
+        usleep(50_000); activate(app.processIdentifier)
+    }
     static func bounds(_ info: [String:Any]) -> CGRect? {
         (info[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation:$0) }
     }
@@ -689,14 +699,15 @@ final class App: NSObject, WKScriptMessageHandler {
     var selectionID = 0, selectionPending = false, replacing = false
     var mine = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""   // the app the user's in, never Atticus itself
     var userApp = NSWorkspace.shared.frontmostApplication, guardUntil = Date.distantPast, allowUntil = Date.distantPast, userSwitch = Date.distantPast
+    var allowUserApp = false
     let focusFile = (Prefs.path as NSString).deletingLastPathComponent + "/focus"   // atticus.py touches it when the user asked to see an app
     var focusFree: Bool { (try? FileManager.default.attributesOfItem(atPath: focusFile)[.modificationDate] as? Date).map { Date().timeIntervalSince($0) < 60 } ?? false }
-    static func focusGuardActive(busy: Bool, recording: Bool, agents: Bool, now: Date, until: Date, focusFree: Bool) -> Bool {
-        (busy || recording || agents || now < until) && (!focusFree || agents)
+    static func focusGuardActive(busy: Bool, recording: Bool, agents: Bool, now: Date, until: Date, focusFree: Bool, workInFront: Bool = false) -> Bool {
+        !workInFront && (busy || recording || agents || now < until) && (!focusFree || agents)
     }
     // An app raised for a hands click is not the user's app; recording it made the guard pull that app (an agent's Amazon tab) back forward.
-    static func isUserApp(now: Date, allowUntil: Date, userSwitch: Date) -> Bool {
-        now > allowUntil || now.timeIntervalSince(userSwitch) <= 0.6
+    static func isUserApp(now: Date, allowUntil: Date, userSwitch: Date, allowUserApp: Bool = false) -> Bool {
+        now > allowUntil || allowUserApp || now.timeIntervalSince(userSwitch) <= 0.6
     }
     let recent = (Prefs.path as NSString).deletingLastPathComponent + "/recent.jsonl"
     func frame(_ requested: NSRect) {   // keep the close button and composer reachable on every display
@@ -765,7 +776,7 @@ final class App: NSObject, WKScriptMessageHandler {
         bg.maskImage = NSImage(size: NSSize(width: 37, height: 37), flipped: false) { NSColor.black.setFill(); NSBezierPath(roundedRect: $0, xRadius: 18, yRadius: 18).fill(); return true }
         bg.maskImage?.capInsets = NSEdgeInsets(top: 18, left: 18, bottom: 18, right: 18); bg.maskImage?.resizingMode = .stretch
         let tint = NSView(frame:web.frame); tint.wantsLayer = true; tint.autoresizingMask = [.width,.height]
-        tint.layer?.backgroundColor = NSColor(calibratedRed:18/255,green:18/255,blue:20/255,alpha:0.5).cgColor
+        tint.layer?.backgroundColor = NSColor(calibratedRed:18/255,green:18/255,blue:20/255,alpha:0.9).cgColor   // the tint alone must keep small text readable over white
         bg.addSubview(tint); bg.addSubview(mini.clip)
         mini.publish = { [weak self] value in self?.js("mini",value) }
         mini.captureAllowed = { agentsUI.mini.target == nil }
@@ -790,7 +801,7 @@ final class App: NSObject, WKScriptMessageHandler {
         panel.contentView = bg
         panel.level = .statusBar; panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.sharingType = Prefs.bool("hideWhenSharing") ? .none : .readOnly   // Settings: others on a screen share don't see it
+        applySharing(panel)
         let html = (try? String(contentsOfFile: dir + "/ui/ui.html", encoding: .utf8)) ?? "missing ui.html"
         let orbs = (try? String(contentsOfFile: dir + "/ui/orbs.js", encoding: .utf8)) ?? ""
         web.loadHTMLString(html.replacingOccurrences(of: "/*ORBS*/", with: orbs), baseURL: nil)
@@ -846,16 +857,18 @@ final class App: NSObject, WKScriptMessageHandler {
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] n in
             guard let self, let a = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication, a != .current else { return }
             let now = Date()
-            if Self.focusGuardActive(busy:busy, recording:engine.isRunning, agents:agentsUI.hasLive, now:now, until:guardUntil, focusFree:focusFree),
+            let workInFront = Prefs.str("workIn") == "front"
+            if Self.focusGuardActive(busy:busy, recording:engine.isRunning, agents:agentsUI.hasLive, now:now, until:guardUntil, focusFree:focusFree, workInFront:workInFront),
                now > allowUntil, now.timeIntervalSince(userSwitch) > 0.6,
                let u = userApp, !u.isTerminated, u != a { MiniScreen.activate(u.processIdentifier); return }
-            if Self.isUserApp(now:now, allowUntil:allowUntil, userSwitch:userSwitch) { mine = a.localizedName ?? ""; userApp = a }
+            if Self.isUserApp(now:now, allowUntil:allowUntil, userSwitch:userSwitch, allowUserApp:allowUserApp || workInFront) { mine = a.localizedName ?? ""; userApp = a }
         }
         NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] e in
             if e.type != .keyDown || e.modifierFlags.contains(.command) { self?.userSwitch = Date() }   // a click or ⌘-Tab: the user is choosing
         }
-        DistributedNotificationCenter.default().addObserver(forName: .init("atticus.raise"), object: nil, queue: .main) { [weak self] _ in
+        DistributedNotificationCenter.default().addObserver(forName: .init("atticus.raise"), object: nil, queue: .main) { [weak self] n in
             self?.allowUntil = Date().addingTimeInterval(3)   // hands raise an app for a mouse click, then put the user's app back
+            self?.allowUserApp = n.object as? String == "user"   // a voice focus request changes the user's app; a temporary hands raise does not
         }
         SFSpeechRecognizer.requestAuthorization { _ in }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
@@ -871,7 +884,7 @@ final class App: NSObject, WKScriptMessageHandler {
             if let enabled = b["agentDefault"] as? Bool { defaultKey(enabled) }
             if let value = b["miniRect"] as? [String:Any] { mini.layout(value) }
             // a click on the mini screen = the user wants to see it: the focus guard stands aside
-            if b["miniOpen"] != nil { allowUntil = Date().addingTimeInterval(3); userSwitch = Date(); mini.open(); if !busy { mini.reset(); hide(after:3) } }
+            if b["miniOpen"] != nil { allowUntil = Date().addingTimeInterval(3); allowUserApp = true; userSwitch = Date(); mini.open(); if !busy { mini.reset(); hide(after:3) } }
             if b["miniClear"] != nil { mini.reset() }
             if let h = b["comp"] as? NSNumber { compH = CGFloat(h.doubleValue) }
             if let h = b["boxH"] as? NSNumber { Prefs.d["boxH"] = h.doubleValue }   // saved when the drag ends
@@ -1660,7 +1673,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         let frame = NSRect(x:min(from.x,to.x) - 60,y:min(from.y,to.y) - lift - 60,width:abs(to.x - from.x) + 120,height:abs(to.y - from.y) + lift + 120)
         let panel = ShelfPanel(contentRect:frame,styleMask:[.nonactivatingPanel,.borderless],backing:.buffered,defer:false)
         panel.isReleasedWhenClosed = false; panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false; panel.ignoresMouseEvents = true
-        panel.level = .statusBar; panel.sharingType = .none; panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.ignoresCycle]
+        panel.level = .statusBar; applySharing(panel); panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.ignoresCycle]
         let host = NSView(frame:NSRect(origin:.zero,size:frame.size)); host.wantsLayer = true; panel.contentView = host; host.layer?.speed = Float(1 / flightPace)
         let a = CGPoint(x:from.x - frame.minX,y:from.y - frame.minY), b = CGPoint(x:to.x - frame.minX,y:to.y - frame.minY), low = min(a.y,b.y) - lift
         let path = CGMutablePath(); path.move(to:a)   // a low swoop under both ends, then up into the slot
@@ -1703,7 +1716,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         bg.autoresizingMask = [.width,.height]; bg.addSubview(web)
         panel.contentView = bg; panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = surface == "view";   // chips cast their own shadows; a window shadow would box them
         panel.hidesOnDeactivate = false
-        panel.sharingType = .none; panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.ignoresCycle]; panel.acceptsMouseMovedEvents = true
+        applySharing(panel); panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.ignoresCycle]; panel.acceptsMouseMovedEvents = true
         let html = (try? String(contentsOfFile:dir + "/ui/agents.html",encoding:.utf8)) ?? ""
         let orbs = (try? String(contentsOfFile:dir + "/ui/orbs.js",encoding:.utf8)) ?? ""
         web.loadHTMLString(html.replacingOccurrences(of:"/*ORBS*/",with:orbs),baseURL:nil)
@@ -1895,6 +1908,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
         guard win == nil else { win?.makeKeyAndOrderFront(nil); return }
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 640),
                          styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+        applySharing(w)
         w.titlebarAppearsTransparent = true; w.titleVisibility = .hidden; w.isMovableByWindowBackground = true
         w.isReleasedWhenClosed = false; w.delegate = self
         let bg = NSVisualEffectView(frame: w.contentRect(forFrameRect: w.frame))
@@ -2208,6 +2222,7 @@ func pointAt(_ line: String) {
     ring?.orderOut(nil)
     let w = NSPanel(contentRect: NSRect(x: c.x - size / 2, y: c.y - size / 2, width: size, height: size),
                     styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+    applySharing(w)
     w.level = .screenSaver; w.isOpaque = false; w.backgroundColor = .clear; w.ignoresMouseEvents = true; w.hasShadow = false
     w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     let v = NSView(frame: NSRect(x: 0, y: 0, width: size, height: size)); v.wantsLayer = true
@@ -2462,6 +2477,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         tab = t
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 560),
                          styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
+        applySharing(w)
         w.titlebarAppearsTransparent = true; w.titleVisibility = .hidden; w.title = "Atticus Settings"
         w.appearance = NSAppearance(named:.darkAqua)
         w.isReleasedWhenClosed = false; w.delegate = self
@@ -2627,7 +2643,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         if k == "speechModel" { app.prepareSpeech() }
         if k == "improve" { Prefs.set("improveAsked", true) }   // any answer, here or in setup or the card, is the answer
         if k == "speak" { if v as? Bool == true { siriVoice() } else { app.shush() } }
-        if k == "hideWhenSharing" { app.panel.sharingType = v as? Bool == true ? .none : .readOnly }
+        if k == "hideWhenSharing" { NSApp.windows.forEach(applySharing) }
         if k == "menuIcon" { bar.item.isVisible = v as? Bool == true }
         if k == "paused" { if v as? Bool == true { meeting.stop(paused: true); app.close(clear: false) }; bar.paint() }
         if k == "safe" { app.js("mode", v as? Bool == true) }
@@ -2931,7 +2947,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
         if let saved = (Prefs.d["meetingSizes"] as? [String: [Double]])?[MeetingFrame.key(screen)], saved.count == 2, saved.allSatisfy({ $0.isFinite && $0 > 0 }) { expanded = NSSize(width: max(280, saved[0]), height: max(380, saved[1])) }
         p.acceptsMouseMovedEvents = true
         p.level = .statusBar; p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = true; p.hidesOnDeactivate = false
-        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]; p.sharingType = .none
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]; applySharing(p)
         let cfg = WKWebViewConfiguration(); cfg.userContentController.add(self, name: "meeting")
         let v = MeetingWebView(frame: NSRect(origin: .zero, size: p.frame.size), configuration: cfg)
         v.onFiles = { [weak self] paths in self?.material(paths) }; v.registerForDraggedTypes([.fileURL])
@@ -3661,9 +3677,9 @@ enum Hands {
     static func trusted() throws { guard AXIsProcessTrusted() else { throw Failure("Allow Atticus in System Settings → Privacy & Security → Accessibility") }; AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(),0.15) }
     static func app(_ request: String? = nil) throws -> NSRunningApplication {
         if let request, !request.isEmpty {
-            if let pid = Int32(request), let a = NSRunningApplication(processIdentifier: pid) { return a }
+            if let pid = Int32(request), let a = NSRunningApplication(processIdentifier: pid) { MiniScreen.work(a); return a }
             let apps = NSWorkspace.shared.runningApplications.filter { normalized($0.localizedName ?? "") == normalized(request) || $0.bundleIdentifier == request }
-            guard apps.count == 1 else { throw Failure("No unique running app named \(request).") }; return apps[0]
+            guard apps.count == 1 else { throw Failure("No unique running app named \(request).") }; MiniScreen.work(apps[0]); return apps[0]
         }
         guard let a = NSWorkspace.shared.frontmostApplication else { throw Failure("No front app.") }; return a
     }
@@ -4010,6 +4026,7 @@ enum Hands {
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == a.processIdentifier else { throw Failure("Could not focus the mapped app.") }
     }
     static func restoreFocus(_ a: NSRunningApplication) -> () -> Void {
+        if MiniScreen.workInFront { return {} }
         let previous = NSWorkspace.shared.frontmostApplication
         let window = previous.flatMap { element(AXUIElementCreateApplication($0.processIdentifier),kAXFocusedWindowAttribute) }
         return {
@@ -4476,8 +4493,8 @@ enum Hands {
 }
 // MARK: - End Hands
 
-if CommandLine.arguments == [CommandLine.arguments[0], "--raise"] {   // atticus.py is about to bring an app forward on purpose (a move, full screen): the focus guard lets it for 3 s
-    DistributedNotificationCenter.default().postNotificationName(.init("atticus.raise"), object: nil, deliverImmediately: true); usleep(50_000); exit(0)
+if CommandLine.arguments == [CommandLine.arguments[0], "--raise"] || CommandLine.arguments == [CommandLine.arguments[0], "--raise", "user"] {
+    DistributedNotificationCenter.default().postNotificationName(.init("atticus.raise"), object: CommandLine.arguments.count == 3 ? "user" : nil, deliverImmediately: true); usleep(50_000); exit(0)
 }
 if CommandLine.arguments.count >= 2, CommandLine.arguments[1] == "--hands" { exit(Hands.cli(Array(CommandLine.arguments.dropFirst(2)))) }
 if CommandLine.arguments.count >= 3, ["--window-target","--target-app"].contains(CommandLine.arguments[1]) {
@@ -4489,6 +4506,7 @@ if CommandLine.arguments.count >= 3, ["--window-target","--target-app"].contains
     if !frame.isEmpty && (frame.count != 4 || !frame.allSatisfy(\.isFinite)) { exit(1) }
     let apps = NSWorkspace.shared.runningApplications.filter { $0.localizedName?.localizedCaseInsensitiveCompare(name) == .orderedSame || $0.bundleIdentifier == name || (bundle != nil && $0.bundleIdentifier == bundle) || $0.executableURL?.lastPathComponent.localizedCaseInsensitiveCompare(name) == .orderedSame }
     if CommandLine.arguments[1] == "--target-app" { if apps.count == 1 { print(apps[0].localizedName ?? name) } else if let handler { print(handler.deletingPathExtension().lastPathComponent) }; exit(0) }
+    if apps.count == 1 { MiniScreen.work(apps[0]) }
     if apps.count == 1, let target = MiniScreen.windowTarget(apps[0],title:title,frame:frame,windows:CGWindowListCopyWindowInfo(.optionAll,kCGNullWindowID) as? [[String:Any]] ?? []),
        let data = try? JSONSerialization.data(withJSONObject:target) { print(String(decoding:data,as:UTF8.self)) }
     exit(0)

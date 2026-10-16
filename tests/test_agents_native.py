@@ -75,7 +75,7 @@ enum Hands {
  static func checkStopped()throws{}
 ''' + lease + '''
 }
-''' + panels + body
+''' + source[source.index('func applySharing('):source.index('func profileName(')] + panels + body
     if real_mini:   # the real live-window stream, for screenshots that show it
         stub=harness[harness.index('final class MiniScreen {'):harness.index('\n}\n',harness.index('final class MiniScreen {'))+3]
         harness=harness.replace(stub,mini+'func axWindowNumber(_ e:AXUIElement)->NSNumber?{nil}\n').replace('import Cocoa\n','import Cocoa\nimport ScreenCaptureKit\nimport CoreMedia\n',1)

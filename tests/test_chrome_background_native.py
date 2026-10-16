@@ -123,7 +123,7 @@ end tell'''
                 origin = f'http://127.0.0.1:{server.server_port}'
                 browser_before = osa('tell application "Google Chrome" to return {id of window 1, id of active tab of window 1, count windows}')
                 scratch = root / 'agent'; scratch.mkdir()
-                (scratch / 'settings.json').write_text(json.dumps({'workIn':'front'}))
+                (scratch / 'settings.json').write_text(json.dumps({'workIn':'back'}))
                 # Keep production window-target/AX workers confined to a fake executable.
                 worker = root / 'fake-app'
                 worker.write_text('#!/bin/sh\nif [ "$1" = "--target-app" ]; then echo "Google Chrome"; fi\n')
@@ -146,6 +146,13 @@ end tell'''
                 self.assertEqual(front(),before)
                 foreground.terminate(); focus_events, _ = foreground.communicate(timeout=5); foreground = None
                 self.assertNotIn('FOCUS LOST',focus_events,'Even transient focus theft is a failure')
+                # Background work must also leave the selected page alone when the browser itself is frontmost.
+                osa('tell application "Google Chrome" to activate')
+                browser_before = osa('tell application "Google Chrome" to return {id of window 1, id of active tab of window 1, count windows}')
+                read = subprocess.run([sys.executable, '-c', code, origin+'/page.html?browser-front'], env=agent_env,
+                                      capture_output=True, text=True, timeout=30)
+                self.assertEqual(read.returncode,0,read.stderr); self.assertIn(marker,read.stdout,read.stdout)
+                self.assertEqual(osa('tell application "Google Chrome" to return {id of window 1, id of active tab of window 1, count windows}'),browser_before)
                 print('CHROME BACKGROUND: three actual URL reads retained foreground, selected tab and window order',flush=True)
             finally:
                 if foreground:

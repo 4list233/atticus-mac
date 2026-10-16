@@ -16,6 +16,9 @@ class FixtureTests(unittest.TestCase):
     def test_main_overlay_fixture(self):
         self.check_fixtures(['ui'])
 
+    def test_box_contrast_fixture(self):
+        self.check_fixtures(['contrast'])
+
     def test_mock_bridge_fixtures(self):
         self.check_fixtures(['settings', 'worksheet', 'meeting', 'onboarding', 'web', 'agents', 'agent_done'])
 

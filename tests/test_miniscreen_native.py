@@ -20,6 +20,7 @@ import WebKit
 import AVFoundation
 import ScreenCaptureKit
 
+enum Prefs { static func str(_ key: String) -> String { "back" } }
 __NATIVE__
 let app = NSApplication.shared; app.setActivationPolicy(.accessory)
 let activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleDisplaySleepDisabled], reason: "Atticus isolated window fixtures")

@@ -49,7 +49,7 @@ try {
   await new Promise(r=>setTimeout(r,330));assert(messages.some(m=>m.do==='feedbackInvalidate')&&messages.at(-1).text==='Edited feedback','Native draft is invalidated and current text is requested');
   w.st.feedback({revision:revision(),include:true,body:'Edited feedback'});assert(!d.getElementById('feedbackopen').disabled,'Only the current text preview enables opening');
   w.st.tab('feedback');assert(!d.getElementById('feedbackinclude').checked,'Every feedback visit resets ask inclusion');
-  assert(d.getElementById('screen').textContent.includes('Work stays in the background')&&d.getElementById('screen').textContent.includes('exact window'),'Settings explain background work and mini click');
+  assert(d.getElementById('screen').textContent.includes('Work in apps and sites')&&d.getElementById('screen').textContent.includes('each app or page')&&d.getElementById('screen').textContent.includes('exact window'),'Settings explain app and site work modes and mini click');
   assert(d.getElementById('meetings').textContent.includes('two seconds after the app releases the mic'),'Settings disclose supported call auto-end');
 
   const prefs = {hotkeyLabel: '⌃⌥Space', input: 'voice', talkMode: 'hold', volume: .16, aheadDelay: .7, ahead: true, model: 'haiku', meeting: false, meetingAuto: 'sure', corner: 'top-left', linger: 'normal', login: true, menuIcon: true, instant: true, live: true, learn: true, safe: true, tips: true, askMe: true, soundStart: 'Pop', soundDone: 'Glass', soundStop: 'Tink'};

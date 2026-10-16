@@ -99,6 +99,40 @@ class AgentTests(unittest.TestCase):
             row=self.manager.new();row.update(status='done',title='Old task',brief='Done',created=i+2);self.manager.save(row)
         self.assertIn(live['id'],atticus.agent_context())   # recent history cannot crowd out the steering target
 
+    def test_matching_old_task_is_context_for_a_new_brief_not_its_result(self):
+        brief='WAIT compare the best rated items under the requested budget and create a new report'
+        old=self.manager.new();old.update(status='done',title='Earlier comparison',brief=brief,
+                                        summary='Earlier findings',links=['https://fixture.example/old-report'])
+        self.manager.save(old)
+        row=self.prepare(brief,context=atticus.agent_context())
+        self.assertNotEqual(row['id'],old['id']);self.assertNotIn('result',row)
+        self.assertIn('A matching old result does not complete a new brief',atticus.AGENT_SYSTEM)
+        self.manager.start(row['id'])
+        self.until(lambda:any(e.get('event')=='claude' and e['data'].get('type')=='user'
+                              for e in atticus.read_rows(str(Path(row['directory'])/'log.jsonl'))))
+        sent=next(e['text'] for e in atticus.read_rows(str(Path(row['directory'])/'log.jsonl')) if e.get('event')=='followup')
+        self.assertTrue(sent.startswith(brief));self.assertIn(old['id'],sent);self.assertIn('https://fixture.example/old-report',sent)
+        self.assertEqual(row['status'],'running')
+
+    def test_agent_correction_is_memory_evidence_and_survives_a_generated_resume(self):
+        with patch.object(atticus,'ME_FILE',str(Path(self.root.name)/'me.json')),patch.object(atticus,'RECENT',str(Path(self.root.name)/'recent.jsonl')):
+            row=self.prepare(request='Original user words');self.manager.start(row['id'])
+            with patch.dict(os.environ,{'ATTICUS_ASK':row['directory']}):
+                self.assertEqual(atticus.profile_add('people','old@example.test','contact email',source='you'),'saved')
+                fact=atticus.me()['facts'][0];words='WAIT correction: contact email: corrected@example.test'
+                send=self.manager.send
+                def dispatch(agent,text):
+                    self.assertEqual(atticus.profile_set(fact['id'],'contact email: corrected@example.test'),'saved')
+                    send(agent,text)
+                with patch.object(self.manager,'send',side_effect=dispatch):
+                    self.manager.steer({'steer':row['id'],'brief':words,'context':'Earlier:\nA: invented@example.test\nRequest: '+words})
+            self.assertIn('corrected@example.test',atticus.profile_context('Email contact'))
+            self.manager.command({'action':'stop','id':row['id']})
+            self.manager.start(row['id'],'WAIT generated resume: invented@example.test')
+            with patch.dict(os.environ,{'ATTICUS_ASK':row['directory']}):
+                self.assertTrue(atticus._request_contains('corrected@example.test'))
+                self.assertFalse(atticus._request_contains('invented@example.test'))
+
     def test_move_offer_uses_elapsed_work_or_three_calls_without_pausing(self):
         p=unittest.mock.Mock();p.ask=self.root.name;p.waiting=threading.Event()
         move=atticus.MainMove('Request: Continue the task',p);self.addCleanup(move.close)
@@ -149,9 +183,16 @@ class AgentTests(unittest.TestCase):
                   json.dumps({'type':'result','result':'[agent {"title":"Make a file","brief":"Create the deliverable"}]','total_cost_usd':.001})]
         with patch.dict(os.environ,{'ATTICUS_UI':'1'}),patch.object(atticus,'stop_claude') as stop,patch.object(atticus.threading,'Thread'), \
              patch.object(atticus.threading,'Timer'),contextlib.redirect_stdout(io.StringIO()) as output:
-            result=atticus.run('Request: Make a file',p)
+            context='Earlier:\nQ: Find a post\nA: Opened https://fixture.example/posts/42; invented@example.test\nRequest: Make a file about that post; contact email: actual@example.test'
+            result=atticus.run(context,p)
         self.assertEqual(result,('',.001,[]));self.assertTrue(atticus.run.ok);stop.assert_not_called()
-        self.assertIn('⤴ ',output.getvalue());self.assertEqual(atticus.run.handoff['context'],'Request: Make a file')
+        self.assertIn('⤴ ',output.getvalue());self.assertEqual(atticus.run.handoff['context'],context)
+        row=self.manager.prepare(atticus.run.handoff);self.manager.start(row['id'])
+        sent=next(e['text'] for e in atticus.read_rows(str(Path(row['directory'])/'log.jsonl')) if e.get('event')=='followup')
+        self.assertIn(context,sent)   # reference evidence survives the main-to-agent route unchanged
+        with patch.dict(os.environ,{'ATTICUS_ASK':row['directory']}),patch.object(atticus,'RECENT',str(Path(self.root.name)/'recent.jsonl')):
+            self.assertTrue(atticus._request_contains('actual@example.test'))
+            self.assertFalse(atticus._request_contains('invented@example.test'))
         decision,_=self.gate('Bash',{'command':'echo no'})
         self.assertEqual(decision['permissionDecision'],'deny')
 
@@ -162,6 +203,9 @@ class AgentTests(unittest.TestCase):
             row=self.manager.new();row.update(session='saved-session',connectors=['mcp__fixture__inspect'])
             atticus.start_claude('opus',row)
             args=popen.call_args.args[0];options=popen.call_args.kwargs
+        system=args[args.index('--system-prompt')+1]
+        self.assertIn(atticus.AGENT_SYSTEM,system);self.assertNotIn(atticus.AGENT_HANDOFF,system)
+        self.assertIn('Never invent URLs/parameters',system)
         self.assertNotIn('--strict-mcp-config',args);self.assertNotIn('--no-session-persistence',args)
         self.assertEqual(args[args.index('--resume')+1],'saved-session');self.assertEqual(options['cwd'],row['directory'])
         self.assertNotIn('ANTHROPIC_API_KEY',options['env']);self.assertEqual(options['env']['CLAUDE_CODE_DISABLE_CLAUDE_MDS'],'1')
@@ -283,8 +327,9 @@ class AgentTests(unittest.TestCase):
 
     def test_followup_running_uses_existing_stdin(self):
         row=self.prepare();self.manager.start(row['id']);p=self.manager.processes[row['id']]
-        self.manager.start(row['id'],'WAIT another instruction')
+        self.manager.command({'action':'followup','id':row['id'],'text':'WAIT another instruction'})
         self.assertIs(self.manager.processes[row['id']],p);self.assertEqual(self.manager.outstanding[row['id']],2)
+        self.assertEqual(Path(row['directory'],'request').read_text(),'WAIT another instruction')
 
     def test_superseded_offer_stops_warm_process_and_cancelled_followup_keeps_task(self):
         first=self.prepare();p=self.manager.processes[first['id']]
@@ -377,7 +422,58 @@ class AgentTests(unittest.TestCase):
         self.assertEqual([s['domain'] for s in sources],['fixture.example','other.example','plain.example'])
         self.assertEqual(sources[0]['title'],'Page title');self.assertEqual(sources[1]['title'],'Second page')
         self.assertEqual(len(atticus.agent_sources([{'url':'https://fixture.example/'+str(i)} for i in range(100)])),12)
+        self.assertEqual(len(atticus.agent_sources([{'url':'https://fixture.example/'+str(i)} for i in range(100)],100)),100)
         self.assertEqual(atticus.agent_sources('['*1500+'0'+']'*1500),[])
+
+    def test_managed_agent_urls_require_user_or_tool_provenance(self):
+        identifier='a'*32;directory=Path(self.root.name)/'agents'/identifier;directory.mkdir(parents=True)
+        atticus.agent_url_observe(str(directory),[
+            'User URL: https://shop.example/items?category=vacuum&max=300&sort=rating',
+            {'url':'https://results.example/product/42?ref=search'}])
+        env={'ATTICUS_AGENT':identifier,'ATTICUS_ASK':str(directory)}
+        with patch.dict(os.environ,env):
+            self.assertTrue(atticus.agent_url_allowed('https://shop.example/items?category=vacuum&max=300'))
+            self.assertTrue(atticus.agent_url_allowed('https://results.example/product/42?ref=search'))
+            for invented in ('https://shop.example/items?category=vacuum&max=300&sort=rating&page=2',
+                             'https://shop.example/other','https://unseen.example/'):
+                self.assertFalse(atticus.agent_url_allowed(invented),invented)
+            with patch.object(atticus.subprocess,'run') as run:
+                self.assertIn('not supplied',atticus.web('read','https://unseen.example/'))
+                self.assertIn('not supplied',atticus.show('https://unseen.example/'))
+                run.assert_not_called()
+            with patch.object(sys,'argv',['atticus.py','--read','https://unseen.example/']),contextlib.redirect_stdout(io.StringIO()) as output:
+                atticus.main()
+            self.assertIn('not supplied',output.getvalue())
+        denied,ask=self.gate('WebFetch',{'url':'https://unseen.example/'},directory=str(directory),ATTICUS_AGENT=identifier)
+        self.assertEqual(denied['permissionDecision'],'deny');self.assertIn('not supplied',denied['permissionDecisionReason']);ask.assert_not_called()
+        allowed,ask=self.gate('WebFetch',{'url':'https://results.example/product/42'},directory=str(directory),ATTICUS_AGENT=identifier)
+        self.assertEqual(allowed['permissionDecision'],'allow');ask.assert_not_called()
+
+    def test_agent_prompt_and_tool_results_seed_url_provenance(self):
+        row=self.prepare('WAIT supplied https://user.example/page?keep=1&drop=2');self.manager.start(row['id'])
+        self.until(lambda:row.get('sources'))
+        with patch.dict(os.environ,{'ATTICUS_AGENT':row['id'],'ATTICUS_ASK':row['directory']}):
+            self.assertTrue(atticus.agent_url_allowed('https://user.example/page?keep=1'))
+            self.assertTrue(atticus.agent_url_allowed('https://fixture.example/source'))
+            self.assertFalse(atticus.agent_url_allowed('https://fixture.example/invented'))
+
+    def test_http_redirects_and_page_links_become_observed(self):
+        class Pages(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == '/start':
+                    self.send_response(302);self.send_header('Location','/final?session=1');self.end_headers();return
+                self.send_response(200);self.end_headers()
+                self.wfile.write(b'<a href="/next?item=1&tracking=2">Next</a>')
+            def log_message(self,*_):pass
+        server=HTTPServer(('127.0.0.1',0),Pages);threading.Thread(target=server.serve_forever,daemon=True).start()
+        self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
+        identifier='b'*32;directory=Path(self.root.name)/'agents'/identifier;directory.mkdir(parents=True)
+        start=f'http://127.0.0.1:{server.server_port}/start'
+        atticus.agent_url_observe(str(directory),start)
+        with patch.dict(os.environ,{'ATTICUS_AGENT':identifier,'ATTICUS_ASK':str(directory)}):
+            self.assertIn('Next',atticus.get(start))
+            self.assertTrue(atticus.agent_url_allowed(f'http://127.0.0.1:{server.server_port}/final'))
+            self.assertTrue(atticus.agent_url_allowed(f'http://127.0.0.1:{server.server_port}/next?item=1'))
 
     def test_made_things_come_from_fresh_tool_results_files_and_reported_links(self):
         now=time.time();iso=lambda t:time.strftime('%Y-%m-%dT%H:%M:%S.000Z',time.gmtime(t))
@@ -519,7 +615,8 @@ class AgentTests(unittest.TestCase):
         states=iter([{'connected':['Drive'],'signin':['Gmail']},{'connected':['Drive','Gmail'],'signin':[]}])
         with patch.object(atticus,'connectors',side_effect=lambda:next(states)),patch.object(atticus.time,'sleep'):
             self.manager.command({'action':'answer','id':row['id'],'answer':'y','question':row['question']['_a']})
-            self.until(lambda:'connected Gmail' in Path(row['directory'],'request').read_text())
+            self.until(lambda:any('connected Gmail' in e.get('text','') for e in atticus.read_rows(str(Path(row['directory'])/'log.jsonl')) if e.get('event')=='followup'))
+        self.assertNotIn('connected Gmail',Path(row['directory'],'request').read_text())
         self.assertIsNone(row['question'])
 
     def test_connectors_reads_claude_mcp_list(self):

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -83,3 +84,24 @@ class ReplayTests(unittest.TestCase):
         with patch.object(atticus,'DIR',str(missing)),patch.object(atticus,'RECENT',str(missing/'recent.jsonl')),patch.object(atticus,'MEMORY',str(missing/'memory.md')),patch.object(atticus.threading,'Thread',NoThread),patch('sys.argv',['atticus.py','Find fixture notes']),patch.multiple(atticus,licensed=lambda:True,ping=lambda:None,fast=lambda _:None,front=lambda:('Fixture','Scratch'),osa=lambda *a:'',screens=lambda:[],describe=lambda *a:'Scratch display',selection_context=lambda:'',screen_for=lambda *a:None,run=brain,wait_commit=lambda:True,restore_focus=lambda *a:None,say=lambda *a:None,tip=lambda *a:None,look=lambda:[],hands_map=lambda *a:None):
             atticus.main();self.assertEqual(atticus.recent()[0]['a'],'Found them.');self.assertTrue((missing/'log.jsonl').exists())
         brain.assert_called_once()
+
+    def test_reference_ask_receives_recent_target_and_agent_history(self):
+        class NoThread:
+            def __init__(self,*a,**kw): pass
+            def start(self): pass
+            def join(self,*a): pass
+        url='https://fixture.example/posts/42'
+        agent=self.root/'agents'/('a'*32);agent.mkdir(parents=True)
+        atticus.private_json(str(agent/'context.json'),{'id':'a'*32,'status':'done','created':time.time(),
+                                                       'brief':'Find a useful post','links':[url]})
+        (self.root/'worked.json').write_text(json.dumps({'app':'Reader Fixture','window':'Earlier post'}))
+        brain=unittest.mock.Mock(return_value=('Opened the earlier post.',0,[]));brain.ok=True;brain.cmds=[];brain.ran=[]
+        with patch.object(atticus,'RECENT',str(self.root/'recent.jsonl')),patch.object(atticus,'MEMORY',str(self.root/'memory.md')):
+            atticus.remember_turn('Find a useful post','Opened '+url)
+            with patch.object(atticus.threading,'Thread',NoThread),patch('sys.argv',['atticus.py','Open that post you opened']),patch.multiple(atticus,licensed=lambda:True,ping=lambda:None,fast=lambda _:None,front=lambda:('Fixture','Scratch'),osa=lambda *a:'',screens=lambda:[],describe=lambda *a:'Scratch display',selection_context=lambda:'',screen_for=lambda *a:None,run=brain,wait_commit=lambda:True,restore_focus=lambda *a:None,say=lambda *a:None,tip=lambda *a:None,look=lambda:[],hands_map=lambda *a:None):
+                atticus.main()
+        prompt=brain.call_args.args[0]
+        self.assertIn('Earlier:\nQ: Find a useful post\nA: Opened '+url,prompt)
+        self.assertIn('Last task worked in: Reader Fixture "Earlier post"',prompt)
+        self.assertIn('Background tasks',prompt);self.assertIn('a'*32,prompt)
+        self.assertIn('Request: Open that post you opened',prompt)
