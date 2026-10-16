@@ -417,7 +417,7 @@ Tools:
 - Web actions: {WEB} click <n> | fill <n> "<text>" | type-after "<exact anchor>" "<text>"; numbers come from the window read. Each returns changed page state; check it. Read offset 0 if controls changed.
 - Native actions: {HANDS} see [app] | click <target> [near <label>] [double] [right] | scroll down|up|left|right [pages|all] [target] | scroll-to "text" | press "cmd+t" [times] | drag <from> <to> | type <field> "text" [submit] [append] | type-after "<exact anchor>" "<text>" | wait [seconds]. Prefer labels and menu paths. Returns changed state; use the window reader for document text.
 - For an unscriptable system preference, open its pane directly; read, operate the labelled control, and verify its value. Do not navigate again when that pane is open.
-- Work behind: never activate/raise unless asked to open/show/switch/focus. {SHOW} --bg "<url|path|app>" opens in the background and waits for readiness. {SHOW} "<target>" respects Settings. {FRONT} "<app>" ["tab words"] only when asked to see it. Helpers wait; never add sleep. Chain dependent commands with && and check each result.
+- Work behind: never activate/raise unless asked to open/show/switch/focus. {SHOW} --bg "<url|path|app>" opens in the background and waits for readiness. {SHOW} "<target>" respects Settings. {FRONT} "<app>" ["tab words"] when asked to see it; grants focus. Helpers wait; never add sleep. Chain dependent commands with && and check each result.
 - Windows: {PLACE} "<process>" <left|right|full|center> <laptop|monitor|current|exact Context screen name> ["title words"]. Use for every move/resize; combine moves with +. Find process/window names from running apps and accessibility, not guesses.
 - Type at the current cursor: {TYPE} "<text>".
 - Web: {SEARCH} "<query>" finds URLs/snippets; {READ} "<url>" fetches text; WebSearch/WebFetch on failure. Never invent URLs/parameters. Narrow or recover through the site's search and controls.
@@ -744,6 +744,8 @@ def osa(script, *args):
 
 def wants_focus(task=None, sites=False):
     if os.environ.get('ATTICUS_AGENT') and not sites: return False
+    ask = os.environ.get('ATTICUS_ASK')
+    if ask and os.path.exists(os.path.join(ask, 'focus-requested')): return True
     if task is None:
         task = os.environ.get('ATTICUS_REQUEST', '')
         ask = os.environ.get('ATTICUS_ASK')
@@ -2050,11 +2052,11 @@ NEEDS = {'accessibility': 'Accessibility', 'screen': 'Screen Recording', 'automa
 
 
 def need(kind, why='', app='', do=False):
-    """An agent hit missing setup that would help this task: its chip asks once (Allow/Not now), then this waits for the grant."""
+    """Missing setup that would help this task: ask on its card, then wait for the grant."""
     if kind not in NEEDS: return 'Use one of: ' + ', '.join(NEEDS) + '.'
     name = NEEDS[kind] + (f' for {app}' if app else '')
     skip = f'Not now: continue without {name} by the next-best route, and say in the result what you skipped.'
-    if not os.environ.get('ATTICUS_AGENT'): return f'{name} is off. Tell the user it would help, in one line.'
+    if not os.environ.get('ATTICUS_ASK'): return f'{name} is off. Tell the user it would help, in one line.'
     if kind == 'page-js':
         app = app or 'Google Chrome'
         if do or pref('fixSetup', False): emit([f'▸ Turning on page reading in {app}'])
@@ -2160,14 +2162,16 @@ def hands(*args):
     try:
         if args[0] == 'see':
             r = hands_call(list(args), timeout=2)
+            if r.returncode and 'Accessibility' in r.stdout: return need('accessibility', 'To read apps for this task.'), False
             return with_icons(r.stdout.strip()), not r.returncode
         if args[0] == 'menu':
             r = hands_call(list(args), timeout=2)
+            if r.returncode and 'Accessibility' in r.stdout: return need('accessibility', 'To use app menus for this task.'), False
             emit([line for line in r.stdout.splitlines() if line.startswith('▣ ')])
             return '\n'.join(line for line in r.stdout.strip().splitlines() if not line.startswith('▣ ')), not r.returncode
         if not os.path.exists(hands_state()) and not hands_map(os.environ.get('ATTICUS_FRONT', '')):
-            r = hands_call(['see'] + [os.environ['ATTICUS_FRONT']][:bool(os.environ.get('ATTICUS_FRONT'))], timeout=6)   # a slow app, not a missing permission: say which
-            if 'Accessibility' in r.stdout and os.environ.get('ATTICUS_AGENT'): return need('accessibility', 'To click and type in apps for this task.'), False
+            r = hands_call(['see'] + ([os.environ['ATTICUS_FRONT']] if os.environ.get('ATTICUS_FRONT') else []), timeout=6)   # a slow app, not a missing permission: say which
+            if 'Accessibility' in r.stdout: return need('accessibility', 'To click and type in apps for this task.'), False
             if r.returncode or 'Accessibility' in r.stdout:
                 return r.stdout.strip() or 'Could not read the front app. Run see "<app>" for the app you mean.', False
         r = hands_call(['label', *args], timeout=3)
@@ -2176,7 +2180,7 @@ def hands(*args):
             if bar:
                 return bar
         if r.returncode:
-            return r.stdout.strip(), False
+            return need('accessibility', 'To click and type in apps for this task.') if 'Accessibility' in r.stdout else r.stdout.strip(), False
         check = json.loads(r.stdout)
         if check.get('args') != list(args) or not isinstance(check.get('labels'), list) or not isinstance(check.get('pid'), int):
             return 'Could not resolve the hands action safely.', False
@@ -2198,6 +2202,7 @@ def hands(*args):
             if ask_user({'q': question, 'cmd': f'{check["pid"]}: {args[0]} "{what[:300]}"'}, 60) != 'y':
                 return 'The user said no. Do not try another way; say it was not done.', False
         r = hands_call(list(args), receipt=check)
+        if r.returncode and 'Accessibility' in r.stdout: return need('accessibility', 'To click and type in apps for this task.'), False
         if not r.returncode and check.get('windowID'):
             target = {k: check[k] for k in ('pid', 'windowID', 'windowFrame', 'window', 'app')}
             target['action'] = args[0]
@@ -3456,7 +3461,7 @@ def system_prompt(risky):
     """The Atticus system prompt: the shared helpers and reply protocol, plus this client's risky-action rule."""
     system = SYSTEM.replace('NEVER_RISKY', risky)
     if pref('workIn', 'back') == 'front':
-        system = system.replace('Work behind: never activate/raise unless asked to open/show/switch/focus.', 'Work in front: bring each app/page forward before working in it.').replace('only when asked to see it.', 'to bring the working app forward.')
+        system = system.replace('Work behind: never activate/raise unless asked to open/show/switch/focus.', 'Work in front: bring each app/page forward before working in it.').replace('when asked to see it; grants focus.', 'to bring the working app forward.')
     if client() == 'claude' and not server():
         head, _, rest = system.partition('\n')
         system = head + '\n' + AGENT_HANDOFF + rest
@@ -3479,7 +3484,7 @@ def start_claude(model=None, agent=None):
     if agent:
         system = system.replace(AGENT_HANDOFF, '') + AGENT_SYSTEM + ('\nPersonal tools are enabled.' if pref('agentUserTools', True) else '\nPersonal tools are disabled; do not request them.')
     settings = {}
-    ask = agent['directory'] if agent else tempfile.mkdtemp(prefix='atticus-ask-')   # agents keep their session and private timeline
+    ask = agent['directory'] if agent else os.environ.get('ATTICUS_ASK') or tempfile.mkdtemp(prefix='atticus-ask-')   # keep helpers and focus restoration on the same ask
     if not agent: atexit.register(shutil.rmtree, ask, True)
     if pref('safe', True):
         settings['sandbox'] = {'enabled': True, 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': True, 'excludedCommands': SAFE_OUT}
@@ -3553,7 +3558,8 @@ def relay(p=None, directory=None):
                 open(a + '.tmp', 'w').write(str(j['options'].index(r)) if r in j['options'] else '')
                 os.rename(a + '.tmp', a)   # whole, or the waiting side reads it half-written
             elif os.environ.get('ATTICUS_UI') == '1':
-                print(f"? {j['q']}\t{' '.join(j['cmd'].split())}\t{a}" + (f"\t{j.get('off', '')}\tretry" if j.get('retry') else f"\t{j['off']}" if j.get('off') else ''), flush=True)   # not say(): it would squash the tabs
+                print(f"? {j['q']}\t{' '.join(j['cmd'].split())}\t{a}" + (f"\t\t\t{json.dumps({'need': j['need'], 'app': j.get('app', '')})}" if j.get('need') else
+                      f"\t{j.get('off', '')}\tretry" if j.get('retry') else f"\t{j['off']}" if j.get('off') else ''), flush=True)   # not say(): it would squash the tabs
             else:
                 buttons = ['Not now', 'Retry'] + (['Try Sonnet'] if j.get('off') else []) if j.get('retry') else ["Don't Allow", 'Allow']
                 result = osa('on run argv\ndisplay dialog (item 2 of argv) with title (item 1 of argv) buttons (items 3 thru -1 of argv)\n'
@@ -3741,7 +3747,10 @@ def run(task, p=None, shots=()):
         run.ran = cmds
         return '', cost, steps
     run.ran = cmds   # the exact commands, for the ask log
-    if not reply and p.returncode:
+    if result_error and not cmds and re.search(r'failed to authenticate|oauth (?:session|token).*expired|not logged in', reply, re.I):
+        say('!', 'setup')
+        reply = 'Your Claude sign-in expired. Atticus setup is open to sign in again.'
+    elif not reply and p.returncode:
         c = plan()   # the usual cause: not installed, signed out, or no paid plan
         if not c['ok']:
             say('!', 'setup')
@@ -3750,7 +3759,7 @@ def run(task, p=None, shots=()):
     # a step that failed and was then done another way is dropped, so the way that worked can still be learned
     run.cmds = [] if last_failed or result_error or p.returncode or not completed or not reply else [c for i, c in enumerate(cmds) if i not in bad]
     run.ok = bool(completed and reply and not result_error and not p.returncode and not last_failed and not timed_out[0])
-    if last_failed and not result_error and not p.returncode:
+    if not reply and last_failed and not result_error and not p.returncode:
         reply = 'The last tool failed, so I could not verify that the request was completed. Please try again.'
     return reply or 'No answer came back. Please try again.', cost, steps
 
@@ -4647,13 +4656,15 @@ def main():
     if args[:1] == ['--place']:   # several moves joined with +: all at once
         return print(place_many(args[1:]))
     if args == ['--look']:
-        return print('\n'.join(f'{label}: {path}' for path, label in look(cleanup=False)) or ('no screenshot: ' + need('screen', 'To see your screen for this task.') if os.environ.get('ATTICUS_AGENT') else 'no screenshot: allow Atticus in Screen Recording (System Settings)'))
+        return print('\n'.join(f'{label}: {path}' for path, label in look(cleanup=False)) or 'no screenshot: ' + need('screen', 'To see your screen for this task.'))
     if args[:1] == ['--front'] and len(args) > 1:   # "show me where" on an app or tab the user isn't looking at
         app, words = args[1], ' '.join(args[2:])
-        if not wants_focus() and pref('workIn', 'back') != 'front':
+        if os.environ.get('ATTICUS_AGENT') and pref('workIn', 'back') != 'front':
             preview_app(app, title=words)
             m = hands_map(app)
             return print(m['description'] if m else 'No accessible window. Work in the background with hands see.')
+        if os.environ.get('ATTICUS_ASK') and not os.environ.get('ATTICUS_AGENT'):
+            private_json(os.path.join(os.environ['ATTICUS_ASK'], 'focus-requested'), True)
         free_focus(user=True)
         osa(f'tell application "{app}" to activate')
         if words:   # any app: the window whose title has the words; browsers: also that tab (fails quietly elsewhere). `contains` ignores case.
@@ -4665,7 +4676,7 @@ def main():
                 f'if ({name} of t contains item 1 of argv) or (URL of t contains item 1 of argv) then\n{set_tab}\nset index of w to 1\nreturn\n'
                 'end if\nend repeat\nend repeat\nend tell\nend run', words)
         time.sleep(0.5)   # the window draws before the picture
-        return print('\n'.join(f'{label}: {path}' for path, label in look(cleanup=False)) or ('no screenshot: ' + need('screen', 'To see your screen for this task.') if os.environ.get('ATTICUS_AGENT') else 'no screenshot: allow Atticus in Screen Recording (System Settings)'))
+        return print('\n'.join(f'{label}: {path}' for path, label in look(cleanup=False)) or 'no screenshot: ' + need('screen', 'To see your screen for this task.'))
     if args[:1] == ['--type']:
         r = subprocess.run([APP, '--type'], input=' '.join(args[1:]), capture_output=True, text=True)
         print(r.stdout.strip() or 'Could not type. Rebuild Atticus and allow Accessibility.')

@@ -548,7 +548,7 @@ raise SystemExit(4)
         self.assertTrue(atticus.run.ok)
         self.assertEqual(atticus.run.cmds, [])
 
-    def test_failed_final_tool_cannot_be_reported_as_done(self):
+    def test_failed_final_tool_preserves_reply_without_learning(self):
         p = unittest.mock.Mock()
         p.stdin = io.StringIO(); p.ask = ''; p.returncode = 0
         p.stdout = map(json.dumps, [
@@ -556,8 +556,43 @@ raise SystemExit(4)
             {'type': 'result', 'result': 'I sent the message.'}])
         reply, _, _ = atticus.run('send the question', p)
         self.assertFalse(atticus.run.ok)
-        self.assertIn('could not verify', reply)
-        self.assertNotIn('I sent', reply)
+        self.assertEqual(reply, 'I sent the message.')
+        self.assertEqual(atticus.run.cmds, [])
+
+    def test_harmless_last_tool_failure_keeps_real_reply_or_empty_fallback(self):
+        for answer in ('No matching processes; the app is closed.', ''):
+            with self.subTest(answer=answer):
+                p = unittest.mock.Mock()
+                p.stdin = io.StringIO(); p.ask = ''; p.returncode = 0
+                p.stdout = map(json.dumps, [
+                    {'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': 'probe', 'name': 'Bash', 'input': {'command': 'pgrep fixture'}}]}},
+                    {'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'probe', 'is_error': True, 'content': 'Exit code 1'}]}},
+                    {'type': 'result', 'result': answer}])
+                with patch.object(atticus, 'say'):
+                    reply, _, _ = atticus.run('test', p)
+                self.assertEqual(reply, answer or 'The last tool failed, so I could not verify that the request was completed. Please try again.')
+                self.assertFalse(atticus.run.ok)
+                self.assertEqual(atticus.run.cmds, [])
+                self.assertEqual(atticus.run.ran, ['pgrep fixture'])
+
+    def test_expired_signin_opens_setup_despite_logged_in_status(self):
+        error = 'Failed to authenticate: OAuth session expired and could not be refreshed'
+        for is_error, tools, text in ((True, False, error), (True, True, error), (False, False, error), (True, False, 'Service unavailable')):
+            with self.subTest(is_error=is_error, tools=tools, text=text):
+                p = unittest.mock.Mock()
+                p.stdin = io.StringIO(); p.ask = ''; p.returncode = 0
+                events = [{'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'name': 'Bash', 'input': {'command': 'echo fixture'}}]}}] if tools else []
+                p.stdout = map(json.dumps, events + [{'type': 'result', 'is_error': is_error, 'result': text}])
+                with patch.object(atticus, 'say') as say, patch.object(atticus, 'plan', return_value={'ok': True, 'text': 'Logged in'}) as plan:
+                    reply, _, _ = atticus.run('test', p)
+                if is_error and not tools and text == error:
+                    say.assert_called_once_with('!', 'setup')
+                    self.assertEqual(reply, 'Your Claude sign-in expired. Atticus setup is open to sign in again.')
+                    self.assertFalse(atticus.run.ok)
+                else:
+                    self.assertEqual(reply, text)
+                    self.assertNotIn(unittest.mock.call('!', 'setup'), say.call_args_list)
+                plan.assert_not_called()
 
     def test_cancellation_stops_descendant(self):
         with tempfile.TemporaryDirectory() as root:

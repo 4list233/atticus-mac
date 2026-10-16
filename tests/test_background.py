@@ -206,8 +206,8 @@ class BackgroundTests(unittest.TestCase):
             atticus.window_text('Fixture Browser')
             web.assert_called_with('read',app='Fixture Browser',fresh=False)
 
-    def test_front_defaults_to_background_and_show_respects_user_intent(self):
-        with patch.object(atticus, 'preview_app',return_value=None) as preview, patch.object(atticus, 'hands_map', return_value={'description': 'Notes map'}), patch.object(atticus, 'osa') as osa, patch('sys.argv', ['atticus.py', '--front', 'Notes']), patch('sys.stdout', new_callable=io.StringIO) as out:
+    def test_agent_front_stays_background_and_show_respects_user_intent(self):
+        with patch.dict(os.environ, {'ATTICUS_AGENT': 'fixture'}), patch.object(atticus, 'preview_app',return_value=None) as preview, patch.object(atticus, 'hands_map', return_value={'description': 'Notes map'}), patch.object(atticus, 'osa') as osa, patch('sys.argv', ['atticus.py', '--front', 'Notes']), patch('sys.stdout', new_callable=io.StringIO) as out:
             atticus.main()
             osa.assert_not_called(); self.assertEqual(out.getvalue().strip(), 'Notes map')
             preview.assert_called_once()
@@ -215,6 +215,41 @@ class BackgroundTests(unittest.TestCase):
             atticus.main(); show.assert_called_with('Notes', True)
             Path(os.environ['ATTICUS_ASK'], 'request').write_text('Open Notes')
             atticus.main(); show.assert_called_with('Notes', False)
+
+    def test_front_carries_model_intent_in_any_language(self):
+        marker = Path(os.environ['ATTICUS_ASK'], 'focus-requested')
+        with patch.object(atticus.shutil, 'which', return_value='/fake/claude'), \
+             patch.object(atticus.subprocess, 'Popen') as popen, patch.object(atticus.signal, 'signal'), \
+             patch.object(atticus.atexit, 'register'):
+            worker = atticus.start_claude()
+            self.assertEqual(worker.ask, os.environ['ATTICUS_ASK'])
+            self.assertEqual(popen.call_args.kwargs['env']['ATTICUS_ASK'], worker.ask)
+            worker.errors.close()
+        for request in ('메모 앱 열어줘', '打开微信'):
+            with self.subTest(request=request):
+                marker.unlink(missing_ok=True)
+                Path(os.environ['ATTICUS_ASK'], 'request').write_text(request)
+                self.assertFalse(atticus.wants_focus())
+                with patch.object(atticus, 'osa') as osa, patch.object(atticus, 'free_focus') as free, \
+                     patch.object(atticus, 'look', return_value=[('/fake.jpg', 'Screen')]), \
+                     patch.object(atticus.time, 'sleep'), patch('sys.stdout', new_callable=io.StringIO), \
+                     patch('sys.argv', ['atticus.py', '--front', 'Fixture']):
+                    atticus.main()
+                    osa.assert_called_once_with('tell application "Fixture" to activate')
+                    free.assert_called_once_with(user=True)
+                self.assertTrue(atticus.wants_focus(request))
+                with patch.object(atticus, 'free_focus') as free, patch.object(atticus, 'osa') as osa:
+                    atticus.allow_focus(request)
+                    free.assert_called_once_with(user=True)
+                    atticus.restore_focus('Editor', request, ['Fixture'])
+                    osa.assert_not_called()
+                with patch.object(atticus.subprocess, 'Popen') as popen:
+                    popen.return_value.communicate.return_value = ('', '')
+                    atticus.hands_call(['see'])
+                    self.assertEqual(popen.call_args.kwargs['env']['ATTICUS_FOCUS_REQUESTED'], '1')
+                with patch.dict(os.environ, {'ATTICUS_AGENT': 'fixture'}):
+                    self.assertFalse(atticus.wants_focus())
+                    self.assertTrue(atticus.wants_focus(sites=True))
 
     def test_old_foreground_shortcuts_upgrade_to_background_open(self):
         saved={'cmds':['open -a Notes'],'reply':'Done.'}

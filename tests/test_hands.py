@@ -3,6 +3,7 @@ import io
 import json
 import os
 import signal
+import shutil
 import time
 import threading
 from pathlib import Path
@@ -27,6 +28,77 @@ class HandsTests(unittest.TestCase):
     def result(self, args, labels, risky=True, secure=False):
         check = {'args': list(args), 'labels':labels, 'risky':risky, 'secure':secure, 'pid':123, 'signature':'map', 'windowID':'42', 'windowFrame':[10,20,300,200], 'window':'Fixture', 'app':'Fixture'}
         return Mock(returncode=0,stdout=json.dumps(check)), Mock(returncode=0,stdout='Clicked "Send"\nNow: Sent'), check
+
+    def test_main_ask_missing_permissions_use_allow_card(self):
+        Path(self.root.name, 'hands.json').unlink()
+        with patch.object(atticus, 'hands_map', return_value=None), \
+             patch.object(atticus, 'hands_call', return_value=Mock(returncode=1, stdout='Accessibility is off.')), \
+             patch.object(atticus, 'ask_user', return_value='n') as ask:
+            for args in (('click', 'Fixture'), ('see', 'Fixture'), ('menu', 'Fixture', 'File > Export')):
+                text, ok = atticus.hands(*args)
+                self.assertFalse(ok); self.assertIn('Not now', text)
+                self.assertEqual(ask.call_args.args[0]['need'], 'accessibility')
+            Path(self.root.name, 'hands.json').write_text('{}')
+            self.assertIn('Not now', atticus.hands('click', 'Fixture')[0])
+        for args in (['--look'], ['--front', 'Fixture']):
+            with self.subTest(args=args), patch.object(atticus, 'look', return_value=[]), \
+                 patch.object(atticus, 'osa'), patch.object(atticus, 'free_focus'), patch.object(atticus.time, 'sleep'), \
+                 patch('sys.argv', ['atticus.py', *args]), patch('sys.stdout', new_callable=io.StringIO), \
+                 patch.object(atticus, 'ask_user', return_value='n') as ask:
+                atticus.main()
+                self.assertEqual(ask.call_args.args[0]['need'], 'screen')
+        with patch.object(atticus, 'ask_user', return_value='y') as ask:
+            self.assertIn('on now', atticus.need('screen'))
+            self.assertEqual(ask.call_args.args[0]['need'], 'screen')
+        Path(self.root.name, 'q').write_text(json.dumps({'need': 'screen', 'q': 'Turn on Screen Recording', 'cmd': 'To see the chart.'}))
+        worker = Mock(ask=self.root.name); worker.poll.side_effect = [None, 0]
+        with patch.dict(os.environ, {'ATTICUS_UI': '1'}), patch('sys.stdout', new_callable=io.StringIO) as out, patch.object(atticus.time, 'sleep'):
+            atticus.relay(worker)
+        fields = out.getvalue().strip().split('\t')
+        self.assertEqual(len(fields), 6)
+        self.assertEqual(json.loads(fields[5]), {'need': 'screen', 'app': ''})
+        with patch.dict(os.environ, clear=True), patch.object(atticus, 'ask_user') as ask:
+            self.assertIn('is off', atticus.need('screen'))
+            ask.assert_not_called()
+
+    @unittest.skipUnless(sys.platform == 'darwin' and shutil.which('swiftc'), 'macOS Swift permission bridge')
+    def test_main_permission_allow_waits_for_grant_and_stops_on_cancel(self):
+        source = Path(atticus.ME).with_name('Atticus.swift').read_text()
+        method = source[source.index('    func allow(_ ok: Bool)'):source.index('    // Esc: stop listening')]
+        swift = '''import Foundation
+enum Prefs { static func set(_ k:String,_ v:Bool) {} }
+final class Onboarding {
+    static var granted = false
+    var calls = 0
+    func allow(_ need:String, app:String) { precondition(need == "screen"); calls += 1 }
+    static func granted(_ need:String, app:String) -> Bool { granted }
+}
+let onboarding = Onboarding()
+final class Fixture {
+    var askFile = "", askNeed:[String:Any] = [:]
+''' + method + '''}
+func pump() { RunLoop.current.run(until:Date().addingTimeInterval(1.2)) }
+let path = CommandLine.arguments[1], f = Fixture()
+f.askFile = path; f.askNeed = ["need":"screen"]; f.allow(false)
+precondition(try! String(contentsOfFile:path, encoding:.utf8) == "n")
+precondition(onboarding.calls == 0)
+try! FileManager.default.removeItem(atPath:path)
+f.askFile = path; f.allow(true); pump()
+precondition(onboarding.calls == 1 && !FileManager.default.fileExists(atPath:path))
+Onboarding.granted = true; pump()
+precondition(try! String(contentsOfFile:path, encoding:.utf8) == "y")
+try! FileManager.default.removeItem(atPath:path)
+f.askFile = path; f.allow(true); f.askFile = ""; pump()
+precondition(!FileManager.default.fileExists(atPath:path))
+f.askFile = path; f.askNeed = [:]; f.allow(true)
+precondition(try! String(contentsOfFile:path, encoding:.utf8) == "y")
+'''
+        path, binary = Path(self.root.name, 'permission.swift'), Path(self.root.name, 'permission')
+        path.write_text(swift)
+        compiled = subprocess.run(['swiftc', str(path), '-o', str(binary)], capture_output=True, text=True)
+        self.assertEqual(compiled.returncode, 0, compiled.stderr)
+        result = subprocess.run([str(binary), str(Path(self.root.name, 'answer'))], capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_risky_id_and_coordinate_resolve_label_and_no_means_no_action(self):
         for target,label in [('12','Send'), ('3:640,212','Delete draft')]:

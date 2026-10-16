@@ -692,6 +692,7 @@ final class App: NSObject, WKScriptMessageHandler {
     var composing = false, compH: CGFloat = 0, clickTalk = false, quiet: DispatchWorkItem?   // typing box focused / its height from the bottom; mic button = talk without keys
     var toggleTalk = false, shortcutDown = false
     var askFile = ""   // safe mode: where the Allow / Don't Allow answer goes (atticus.py's gate waits on it)
+    var askNeed: [String:Any] = [:]
     var agentMoveFile = ""
     var retryOffer = false, offerText: String?   // answering a failure card preserves its original request
     var hovering = false, xHot = false, pinned = false, stuck = false, lastDone = Date.distantPast   // pinned: the user clicked the box, so only Esc / click-out / ✕ close it; stuck: the user dragged it, so only ✕
@@ -947,7 +948,7 @@ final class App: NSObject, WKScriptMessageHandler {
             if let k = b["off"] as? String, ["escalate", "tips"].contains(k) { Prefs.set(k, false); Atticus.settings.push() }   // a card's own "Turn off"; never safe mode
             if let v = b["improve"] as? Bool { Atticus.settings.apply("improve", v); Atticus.settings.push() }
             if let item = b["memory"] as? [String: Any] { Atticus.settings.reveal(item) }   // a receipt's item: Settings → Memory, at that item
-            if let ok = b["allow"] as? Bool, !askFile.isEmpty { try? (ok ? "y" : "n").write(toFile: askFile, atomically: true, encoding: .utf8); askFile = "" }
+            if let ok = b["allow"] as? Bool, !askFile.isEmpty { allow(ok) }
             return
         }
         guard let h = (m.body as? NSNumber).map({ CGFloat($0.doubleValue) }), h > 0 else { return }
@@ -1026,6 +1027,26 @@ final class App: NSObject, WKScriptMessageHandler {
         mini.reset()
         panel.orderOut(nil); agentCard = ""; fresh = false; pinned = false; stuck = false; composing = false; js("compose", false); js("visible", false)
         if let r = escRef { UnregisterEventHotKey(r); escRef = nil }
+    }
+
+    func allow(_ ok: Bool) {
+        let path = askFile, need = askNeed["need"] as? String ?? "", app = askNeed["app"] as? String ?? ""
+        if ok && need == "page-js" { Prefs.set("pageJS", true) }
+        guard ok, !need.isEmpty, need != "page-js" else {
+            try? (ok ? "y" : "n").write(toFile:path, atomically:true, encoding:.utf8); askFile = ""; return
+        }
+        onboarding.allow(need, app:app)
+        var tries = 0
+        Timer.scheduledTimer(withTimeInterval:1, repeats:true) { [weak self] t in
+            tries += 1
+            guard let self, self.askFile == path, tries < 900 else { t.invalidate(); return }
+            DispatchQueue.global().async {
+                if Onboarding.granted(need, app:app) { DispatchQueue.main.async {
+                    guard self.askFile == path else { return }
+                    try? "y".write(toFile:path, atomically:true, encoding:.utf8); self.askFile = ""; t.invalidate()
+                } }
+            }
+        }
     }
 
     // Esc: stop listening, stop the answer, or close the box.
@@ -1415,7 +1436,8 @@ final class App: NSObject, WKScriptMessageHandler {
                     if line.hasPrefix("@ ") { if self.mini.target != nil { self.js("line",line) } else { pointAt(line) }; continue }   // experimental "show me where"
                     if line.hasPrefix("? ") {   // safe mode: "? <question>\t<command>\t<answer file>"
                         let p = line.dropFirst(2).components(separatedBy: "\t")
-                        guard (3...5).contains(p.count) else { continue }
+                        guard (3...6).contains(p.count) else { continue }
+                        self.askNeed = p.count == 6 ? (try? JSONSerialization.jsonObject(with:Data(p[5].utf8))) as? [String:Any] ?? [:] : [:]
                         self.retryOffer = p.count == 5 && p[4] == "retry"
                         self.askFile = p[2]; self.show(); self.js("ask", [p[0], p[1], p.count >= 4 ? p[3] : "", self.retryOffer ? "retry" : ""]); continue
                     }
@@ -1426,7 +1448,7 @@ final class App: NSObject, WKScriptMessageHandler {
                         continue
                     }
                     if line.hasPrefix("◇ "), let j = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(2).utf8)) as? [String: Any] {   // "which one?": the choices card
-                        self.askFile = j["a"] as? String ?? ""; self.show(); self.js("pick", j); continue
+                        self.askNeed = [:]; self.askFile = j["a"] as? String ?? ""; self.show(); self.js("pick", j); continue
                     }
                     if line.hasPrefix("⇢ "), let value = try? JSONSerialization.jsonObject(with:Data(line.dropFirst(2).utf8)) as? [String:Any], self.busy {
                         self.agentMoveFile = value["a"] as? String ?? ""; self.js("moveOffer"); continue
