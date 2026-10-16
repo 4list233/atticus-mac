@@ -354,6 +354,7 @@ window.agents={mode(value){mode=value;document.body.classList.toggle('view',mode
  prefs(value){dismissed=new Set(value.dismissed||[]);stack=value.stack||'';if(mode==='shelf')renderShelf();},
  // shortcut: Markdown still reparses once per frame; render incrementally if very long answers stutter.
  text({id,text}){liveText.set(id,(liveText.get(id)||'')+text);if(mode==='view'&&selected===id&&!textFrame)textFrame=requestAnimationFrame(()=>{textFrame=0;if(mode==='view')renderView();});},select(id){selected=id;renderView();},visible(value){visible=value;},
+ resume(){if(mode==='shelf'){visible=true;previewing='';renderShelf();}},
  mini(value){const id=mode==='view'?selected:previewId(),n=document.querySelector('[data-mini="'+id+'"]');if(n){n.dataset.live=value.live?'true':'';setText(n,value.live?'':value.window||value.app||'Window');}fit();}};
 $('send').append(icon('send'));$('send').onclick=()=>{const text=$('followup').value.trim();if(!text||!selected)return;command('followup',selected,{text});$('followup').value='';};
 $('followup').onkeydown=e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();$('send').click();}};$('clear').onclick=()=>command('clear');$('clear-failed').onclick=()=>command('clear-failed');

@@ -1765,7 +1765,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
             view = panel; viewWeb = makeWeb(panel,surface:"view")
             if let bg = panel.contentView { viewWeb?.frame = NSRect(x:0,y:0,width:bg.bounds.width,height:bg.bounds.height-28) }   // the glass strip above keeps the traffic lights and window drag native
             NotificationCenter.default.addObserver(forName:NSWindow.willCloseNotification,object:panel,queue:.main) { [weak self] _ in
-                self?.endPreview(); self?.js("view","visible",false)
+                self?.closeView()
             }
         }
         js("view","visible",true)
@@ -1802,6 +1802,12 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         hovered = ""; mini.reset()
         if app.busy, let target = app.mini.target { app.mini.receive(target) }
     }
+    var hasChips: Bool { rows.values.contains { ["running","needs-you","waiting-screen","queued"].contains($0["status"] as? String ?? "") && !dismissed.contains($0["id"] as? String ?? "") } }
+    func closeView() {
+        endPreview(); js("view","visible",false)
+        guard hasChips, !quiet else { return }
+        shelf?.orderFrontRegardless(); js("shelf","resume")
+    }
     func notify(_ row:[String:Any]) {
         let p = py(["--agent-notify", row["summary"] as? String ?? row["title"] as? String ?? "Your task is done"])
         p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice; try? p.run()
@@ -1817,7 +1823,6 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         if lastBox?.isEqual(to:box) != true { lastBox = NSDictionary(dictionary:box); send(box) }
         if let shelf {
             let hidden = quiet   // never hide in full screen: he works in full-screen apps on both displays
-            let hasChips = rows.values.contains { ["running","needs-you","waiting-screen","queued"].contains($0["status"] as? String ?? "") && !dismissed.contains($0["id"] as? String ?? "") }
             if hidden || !hasChips { shelf.orderOut(nil); js("shelf","visible",false); if miniSurface == "shelf", mini.target != nil { endPreview() } }
             else {
                 if !shelf.isVisible { shelf.orderFrontRegardless(); js("shelf","visible",true) }
@@ -1877,7 +1882,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
             if hovered == id, miniSurface == "shelf" { endPreview() }
         case "stack": Prefs.set("agentStack",body["value"] as? String ?? "")
         case "view": openView(id)
-        case "close": if surface == "view" { view?.orderOut(nil); endPreview(); js("view","visible",false) }
+        case "close": if surface == "view" { view?.orderOut(nil); closeView() }
         case "hover":
             if id.isEmpty { endPreview() }
             else if hovered != id || miniSurface != surface { preview(id,surface:surface) }

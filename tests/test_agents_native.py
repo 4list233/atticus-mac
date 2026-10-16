@@ -268,12 +268,12 @@ Timer.scheduledTimer(withTimeInterval:0.1,repeats:true){_ in
 }
 nsapp.run()''','agent native checks ok')
 
-    def test_real_click_on_chip_opens_agent_view_in_front(self):
+    def test_real_click_opens_agent_view_and_close_restores_the_shelf(self):
         # A real HID click, as the user does it: the app is inactive and the shelf never becomes key.
         run_fixture(self,'''let nsapp=NSApplication.shared;nsapp.setActivationPolicy(.accessory)
 let agentsUI=AgentPanels()
 let id="11111111111111111111111111111111"
-let row:[String:Any]=["id":id,"title":"Cheapest e-bikes","brief":"Find the five cheapest e-bikes.","status":"running","step":"Reading amazon.com","created":Date().timeIntervalSince1970-40,"started":Date().timeIntervalSince1970-40,"steps":["Searching the web"],"timeline":[["tool":"WebSearch","text":"Searching the web"]],"sources":[["title":"Amazon","url":"https://www.amazon.com/s?k=e-bike","domain":"www.amazon.com"]]]
+let row:[String:Any]=["id":id,"title":"Cheapest e-bikes","brief":"Find the five cheapest e-bikes.","status":"running","step":"Reading amazon.com","created":Date().timeIntervalSince1970-40,"started":Date().timeIntervalSince1970-40,"steps":["Searching the web"],"timeline":[["tool":"WebSearch","text":"Searching the web"]],"sources":[["title":"Amazon","url":"https://www.amazon.com/s?k=e-bike","domain":"www.amazon.com"]],"target":["pid":123,"windowID":"77","windowFrame":[10.0,20.0,600.0,400.0],"window":"Deals","app":"Browser Fixture"] as [String:Any]]
 var stage=0,tries=0
 func fail(_ text:String)->Never{print(text);agentsUI.process?.terminate();exit(1)}
 func click(_ p:CGPoint){for type in [CGEventType.mouseMoved,.leftMouseDown,.leftMouseUp]{let e=CGEvent(mouseEventSource:CGEventSource(stateID:.hidSystemState),mouseType:type,mouseCursorPosition:p,mouseButton:.left);e?.setIntegerValueField(.mouseEventClickState,value:1);e?.post(tap:.cghidEventTap);usleep(type == .mouseMoved ? 900_000 : 100_000)}}
@@ -301,12 +301,16 @@ Timer.scheduledTimer(withTimeInterval:0.1,repeats:true){_ in
    guard value as? String==id else{fail("Agent view did not focus the clicked agent")}
    agentsUI.shelfWeb?.evaluateJavaScript("!!document.querySelector('.chip[data-id=\\"\\(id)\\"]')"){value,_ in
     guard value as? Bool==true,agentsUI.shelf?.isVisible==true else{fail("The chip left the shelf after a click")}
-    agentsUI.process?.terminate();print("real click checks ok");exit(0)
+    agentsUI.view?.performClose(nil)
+    DispatchQueue.main.asyncAfter(deadline:.now()+0.8){
+     guard agentsUI.view?.isVisible==false,let content=agentsUI.shelf?.contentView,agentsUI.shelf?.isVisible==true,agentsUI.miniSurface=="shelf",agentsUI.mini.clip.superview===content else{fail("Closing the Agent view did not restore the shelf preview")}
+     agentsUI.process?.terminate();print("real click and close checks ok");exit(0)
+    }
    }
   }
  }
 }
-nsapp.run()''','real click checks ok')
+nsapp.run()''','real click and close checks ok')
 
     def test_hover_expand_is_smooth_and_resizes_once_per_change(self):
         # Real mouse hovers across chips: frames are timed in WebKit, native panel resizes are counted.
