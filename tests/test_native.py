@@ -159,6 +159,8 @@ final class Harness {
     var engine = (isRunning: false, unused: false), agentsUI = (hasLive: false, unused: false)
     var guardUntil = Date.distantPast, allowUntil = Date().addingTimeInterval(3), userSwitch = Date.distantPast
     var userApp: Target? = Target(1), mine = "1"
+    static var switched = false
+    static func userJustSwitched() -> Bool { switched }   // stands in for the hardware input check
 ''' + policy + '''
     func activated(_ a: Target) {
 ''' + observer + '''
@@ -175,6 +177,10 @@ h.allowUntil = .distantPast
 h.activated(Target(1))   // a later background action in the previously used app
 precondition(MiniScreen.restored == chosen.processIdentifier, "background action restored the stale app")
 MiniScreen.restored = nil
+Harness.switched = true   // ⌘-Tab or a swipe: no click the global monitor sees, but real input
+h.activated(Target(4))
+precondition(MiniScreen.restored == nil && h.userApp == Target(4), "the guard pulled the user back after they switched apps")
+Harness.switched = false
 MiniScreen.work(temporary)
 precondition(MiniScreen.restored == nil, "background mode raised a non-browser app")
 setenv("ATTICUS_FOCUS_REQUESTED", "1", 1)

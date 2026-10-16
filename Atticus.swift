@@ -710,6 +710,12 @@ final class App: NSObject, WKScriptMessageHandler {
         now > allowUntil || allowUserApp || now.timeIntervalSince(userSwitch) <= 0.6
     }
     let recent = (Prefs.path as NSString).deletingLastPathComponent + "/recent.jsonl"
+    // ⌘-Tab, a Space swipe and Spotlight never reach a global event monitor, so the guard took them for an app jumping forward and pulled
+    // the user back. Hardware ⌘/⌥ releases, clicks and gestures in the last second mean the user switched; plain typing does not.
+    static func userJustSwitched() -> Bool {
+        ([CGEventType.flagsChanged, .leftMouseDown, .rightMouseDown, .otherMouseDown] + [29, 20].compactMap { CGEventType(rawValue: $0) })
+            .contains { CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0) < 1 }
+    }
     func frame(_ requested: NSRect) {   // keep the close button and composer reachable on every display
         let screen = NSScreen.screens.max { a, b in
             let x = a.visibleFrame.intersection(requested), y = b.visibleFrame.intersection(requested)
@@ -859,7 +865,7 @@ final class App: NSObject, WKScriptMessageHandler {
             let now = Date()
             let workInFront = Prefs.str("workIn") == "front"
             if Self.focusGuardActive(busy:busy, recording:engine.isRunning, agents:agentsUI.hasLive, now:now, until:guardUntil, focusFree:focusFree, workInFront:workInFront),
-               now > allowUntil, now.timeIntervalSince(userSwitch) > 0.6,
+               now > allowUntil, now.timeIntervalSince(userSwitch) > 0.6, !Self.userJustSwitched(),
                let u = userApp, !u.isTerminated, u != a { MiniScreen.activate(u.processIdentifier); return }
             if Self.isUserApp(now:now, allowUntil:allowUntil, userSwitch:userSwitch, allowUserApp:allowUserApp || workInFront) { mine = a.localizedName ?? ""; userApp = a }
         }
