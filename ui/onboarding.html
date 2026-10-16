@@ -132,6 +132,17 @@
     box-shadow: inset 0 0 0 .5px var(--line), 0 10px 30px rgba(0,0,0,.12); }
   .bar2 { display: flex; gap: 10px; margin-top: 26px; }
   .bar2 .btn { margin-top: 0; }
+  /* the tip page: one warm heart, then Leave a Tip beside Next */
+  #tip-heart { width: 72px; height: 72px; margin-bottom: 20px; border-radius: 22px; display: grid; place-items: center;
+    background: linear-gradient(160deg, #ff7a8a, #ff375f); box-shadow: 0 10px 28px rgba(255,55,95,.32), inset 0 .5px 0 rgba(255,255,255,.35); }
+  #tip-heart svg { width: 36px; height: 36px; fill: #fff; }
+  #tip.on #tip-heart { animation: beat 1.6s .5s var(--ease) 2; }
+  @keyframes beat { 0%, 100% { transform: none; } 15% { transform: scale(1.1); } 30% { transform: none; } 45% { transform: scale(1.06); } }
+  #tip p.sub { max-width: 420px; }
+  #kofi { display: inline-flex; align-items: center; gap: 7px; background: #ff375f; }
+  #kofi svg { width: 15px; height: 15px; fill: #fff; }
+  #tip .done-note { margin-top: 18px; }
+  @media (prefers-reduced-motion: reduce) { #tip.on #tip-heart { animation: none; } }
   .done-note { height: 18px; margin-top: 12px; font-size: 12.5px; color: var(--fg3); }
   .done-note a { color: var(--accent); cursor: pointer; } .done-note a:hover { text-decoration: underline; }
   .fake { position: absolute; border-radius: 10px; background: rgba(28,28,30,.92); color: #f5f5f7; box-shadow: 0 8px 24px rgba(0,0,0,.3), inset 0 0 0 .5px rgba(255,255,255,.12);
@@ -359,13 +370,20 @@
   <div class="bar2 r"><button class="btn quiet" data-improve="false">Not Now</button><button class="btn" data-improve="true">Help Improve</button></div>
 </section>
 
+<section class="page" id="tip">
+  <div id="tip-heart" class="r" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 20.5s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.7c0 5.6-7.5 10.2-7.5 10.2z"/></svg></div>
+  <h2 class="r">Atticus is free and open source</h2>
+  <p class="sub r">If you ever find yourself enjoying Atticus, a small tip goes a long way. It keeps Atticus free for everyone, and it would really support me.</p>
+  <div class="bar2 r"><button class="btn" id="kofi"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.7c0 5.6-7.5 10.2-7.5 10.2z"/></svg>Leave a Tip</button><button class="btn quiet" data-go="done" id="tip-next">Next</button></div>
+  <p class="done-note r">You can always find “Leave a Tip” in the menu bar later.</p>
+</section>
+
 <section class="page" id="done">
   <svg id="done-check" class="r" viewBox="0 0 22 22"><circle cx="11" cy="11" r="11"/><path d="M6.5 11.3l3 3 6-6.3"/></svg>
   <h2 class="r">You’re all set</h2>
   <p class="sub r">Hold the keys anytime and just ask. Everything else lives in Settings, in the menu bar.</p>
   <div class="tips r"><div><kbd>esc</kbd> stops an answer</div><div>Click away to close</div><div>Hover the box to type</div></div>
   <p class="done-note r" id="feedback-note">Something off? Report feedback from the menu bar.</p>
-  <p class="done-note r">Atticus is free. Enjoying it? <a id="kofi">Leave a tip</a></p>
   <button class="btn r" id="finish">Start Using Atticus</button>
 </section>
 
@@ -389,13 +407,13 @@
   </div>
 </div>
 
-<div id="dots"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+<div id="dots"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
 
 <script type="text/plain" id="orbsrc">/*ORBS*/</script>
 <script type="module">
   const $ = id => document.getElementById(id);
   const post = m => window.webkit?.messageHandlers.ob.postMessage(m);
-  const pages = ['welcome', 'perms', 'agents', 'try', 'mac', 'learn', 'text', 'point', 'meeting', 'improve', 'done'];
+  const pages = ['welcome', 'perms', 'agents', 'try', 'mac', 'learn', 'text', 'point', 'meeting', 'improve', 'tip', 'done'];
   let cur = '';
   const go = id => {
     if (cur) { $(cur).classList.remove('on'); $(cur).classList.add('gone'); const c = cur; setTimeout(() => $(c).classList.remove('gone'), 600); }
@@ -406,7 +424,7 @@
   document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => go(b.dataset.go));
   $('finish').onclick = () => post({ do: 'done' });
   $('kofi').onclick = () => post({ do: 'kofi' });
-  document.querySelectorAll('[data-improve]').forEach(b => b.onclick = () => { post({ do: 'set', k: 'improve', v: b.dataset.improve }); go('done'); });
+  document.querySelectorAll('[data-improve]').forEach(b => b.onclick = () => { post({ do: 'set', k: 'improve', v: b.dataset.improve }); go('tip'); });
   document.querySelectorAll('.sw input').forEach(i => i.onchange = () => post({ do: 'set', k: i.dataset.k, v: String(i.checked) }));
 
   // Permissions: icon color + SF-style glyph, why it's needed.
