@@ -2057,12 +2057,13 @@ def need(kind, why='', app='', do=False):
     name = NEEDS[kind] + (f' for {app}' if app else '')
     skip = f'Not now: continue without {name} by the next-best route, and say in the result what you skipped.'
     if not os.environ.get('ATTICUS_ASK'): return f'{name} is off. Tell the user it would help, in one line.'
+    wait = 900 if os.environ.get('ATTICUS_AGENT') else 110   # main asks: under the AI's 2-minute tool limit, as pick()
     if kind == 'page-js':
         app = app or 'Google Chrome'
         if do or pref('fixSetup', False): emit([f'▸ Turning on page reading in {app}'])
-        elif ask_user({'need': kind, 'app': app, 'q': f'I can turn on page reading in {app} for you', 'cmd': why}, 600) != 'y': return skip
+        elif ask_user({'need': kind, 'app': app, 'q': f'I can turn on page reading in {app} for you', 'cmd': why}, min(wait, 600)) != 'y': return skip
         return f'Turned on {name}. Continue, and say so in one line.' if allow_page_js(app) else f'Could not turn on {name}. ' + skip
-    return f'{name} is on now. Continue the task with it.' if ask_user({'need': kind, 'app': app, 'q': f'Turn on {name}', 'cmd': why}, 900) == 'y' else skip
+    return f'{name} is on now. Continue the task with it.' if ask_user({'need': kind, 'app': app, 'q': f'Turn on {name}', 'cmd': why}, wait) == 'y' else skip
 
 
 def connectors():
