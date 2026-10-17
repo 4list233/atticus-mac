@@ -40,6 +40,9 @@ class ReplayTests(unittest.TestCase):
         script='osascript -e \'tell application "Fixture" to set name of window 1 to "Done"\''
         self.assertEqual(atticus.shortcut_commands('open Fixture',['open -a Fixture',script]),['open -a Fixture',script])
         self.assertEqual(atticus.shortcut_commands('check',['osascript -e \'get "click"\'']),[])
+        found=f'{atticus.SHOW} --bg "/tmp/Guide.pdf" && ls /tmp'   # a file found by searching: only the open is replayed
+        self.assertEqual(atticus.shortcut_commands('study guide',['mdfind -name guide 2>/dev/null | head -20; mdfind x | grep -i y',found]),[f'{atticus.SHOW} --bg /tmp/Guide.pdf'])
+        with patch.object(atticus,'cached_hands',return_value=None): self.assertIsNone(atticus.learn('study guide',['ls /tmp > /tmp/out',found],'Opened.'))   # a write is not a lookup
 
     def test_unsupported_peekaboo_falls_back_without_running(self):
         atticus.save_skills({'do fixture':{'cmds':['peekaboo click --id 12'],'reply':'Done.','mine':True}})

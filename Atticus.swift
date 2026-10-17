@@ -2122,6 +2122,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
         grant("tools")
         let p = Onboarding.perms()
         walk = ["ax", "auto", "chrome", "screen", "calendar"].filter { p[$0] != true } + (connected ? [] : ["connectors"])   // page reading needs the first two
+        if walk.isEmpty { Atticus.settings.send("notice", ["text": "Everything is already on."]) }   // a click must always answer
         step()
         walkTimer?.invalidate()
         walkTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] t in

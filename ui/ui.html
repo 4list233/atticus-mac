@@ -749,7 +749,7 @@
       const field = el?.closest('.ok input, .ok textarea, .pk input, .pk textarea');   // "Something else…": a text field in a card takes the cursor
       if (field) return field.focus();
       if (b) return b.click();
-      if (el?.closest('#mode')) return post({ safe: true });
+      if (el?.closest('#mode')) { status('Safe mode on · Settings turns it off'); return post({ safe: true }); }
       if ($('comp').classList.contains('pick')) pickRow(false);   // a click anywhere else closes the model row
       if (el?.closest('.tip .off')) { post({ off: 'tips' }); el.closest('.tip').remove(); return fit(); }   // its own "Turn off": no more tips
       if (el?.closest('.tip.kofi')) post({ kofi: true });   // the support line opens Ko-fi, then goes like any tip

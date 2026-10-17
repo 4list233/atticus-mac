@@ -1346,6 +1346,9 @@ def skills():
         return {}
 
 
+LOOKUPS = {'mdfind', 'ls', 'grep', 'head', 'tail', 'cat', 'wc', 'sort', 'uniq', 'stat', 'file', 'which'}   # read-only shell tools; find is out (-delete, -exec)
+
+
 def shortcut_commands(task, commands, app=''):
     """Keep replay actions, with explicit app targets and no discovery or verification reads."""
     result = []
@@ -1358,6 +1361,7 @@ def shortcut_commands(task, commands, app=''):
         for t in lexer:
             if t in (';', '&&', '||', '|', '&'): flow.add(t); parts.append([])
             else: parts[-1].append(t)
+        if all(p and os.path.basename(p[0]) in LOOKUPS and not any('>' in t and not t.endswith('/dev/null') for t in p) for p in parts): continue   # finding the file (mdfind | head, ls) is discovery too
         if flow - {';', '&&'}: return None   # pipes, fallbacks and background jobs need the AI
         if flow:   # "a; b && c" is a list of actions: each one is checked and replayed on its own, in order
             parts = [shlex.join(p) for p in parts if p]
