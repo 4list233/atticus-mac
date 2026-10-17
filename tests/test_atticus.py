@@ -72,7 +72,7 @@ class BrainTests(unittest.TestCase):
                                     screen_for=lambda *a: None, wait_commit=lambda: True, run=brain,
                                     remember_turn=lambda *a: None, restore_focus=lambda *a: None,
                                     remember_workflow=lambda task, reply, *a: (reply, False), learn=lambda *a: False, tip=lambda *a: None), \
-                     patch.object(atticus, 'pref', side_effect=lambda k, d: {'model': model, 'escalate': offer}.get(k, d)), \
+                     patch.object(atticus, 'pref', side_effect=lambda k, d: {'model': model, 'escalate': offer, 'escalateAuto': False}.get(k, d)), \
                      patch.object(atticus, 'ask_user', return_value=answer) as ask, \
                      patch.object(atticus, 'start_ai', return_value=object()) as start, \
                      patch.object(atticus, 'log_turn') as log, patch.object(atticus.threading, 'Thread') as threads, \

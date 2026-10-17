@@ -5055,9 +5055,9 @@ def main():
     if not wait_commit():
         return
     if offer_model and reply.strip() == '[sonnet]' and not steps and not run.ran:
-        if not pref('escalateAuto', False) and warm:
+        if not pref('escalateAuto', True) and warm:
             threading.Thread(target=relay, args=(None, os.environ['ATTICUS_ASK']), daemon=True).start()
-        answer = '0' if pref('escalateAuto', False) else ask_user({
+        answer = '0' if pref('escalateAuto', True) else ask_user({
             'pick': 'Use Sonnet for this harder task?',
             'options': ['Use Sonnet — slower, uses more of your plan per ask', 'Keep Haiku']}, 60)
         if answer not in ('0', '1'):
@@ -5070,7 +5070,7 @@ def main():
         if handed_off(): return
     if not run.ok and os.environ.get('ATTICUS_ASK'):
         sonnet = pref('escalate', True) and model == 'haiku' and client() == 'claude' and not server()   # a custom server has one model
-        auto = sonnet and pref('escalateAuto', False)
+        auto = sonnet and pref('escalateAuto', True)
         if not auto and warm:   # only a warm worker's relay ends with the first attempt; the standalone relay stays alive
             threading.Thread(target=relay, args=(None, os.environ['ATTICUS_ASK']), daemon=True).start()
         answer = 'y' if auto else ask_user({'q': 'Couldn’t finish this', 'cmd': 'Try again with the same model.' +
