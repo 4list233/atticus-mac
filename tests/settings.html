@@ -22,7 +22,7 @@ try {
   assert([...d.querySelectorAll('[data-k=agentModel] button')].map(b=>b.dataset.v).join()==='haiku,sonnet,opus','Agent model offers all three Claude models');
   assert(!d.getElementById('agentClaudeModel').hidden&&d.getElementById('agentServerModel').hidden,'Claude agents show their own model choice');
   w.st.load({prefs:{hotkeyLabel:'⌃⌥Space',model:'haiku',agentModel:'haiku',apiBase:'https://fixture.invalid',apiModel:'main-model',agentApiModel:'agent-model',volume:.16,aheadDelay:.7}});
-  w.st.models(['main-model','agent-model']);
+  w.st.models({base:'https://fixture.invalid',key:'',list:['main-model','agent-model']});
   assert(d.getElementById('agentClaudeModel').hidden&&!d.getElementById('agentServerModel').hidden,'A custom server replaces agent Claude choices with server models');
   assert(d.getElementById('agentApiModel').value==='agent-model'&&d.getElementById('agentApiModel').list.id==='apimodels'&&d.getElementById('apimodels').options.length===2,'Agent picker uses discovered server models and its saved default');
   d.getElementById('agentApiModel').value='main-model';d.getElementById('agentApiModel').dispatchEvent(new w.Event('change'));
@@ -30,7 +30,12 @@ try {
   assert(messages.some(m=>m.do==='set'&&m.k==='agentApiModel'&&m.v==='main-model'),'Changing the agent server model saves its own preference');
   w.st.load({prefs:{hotkeyLabel:'⌃⌥Space',model:'haiku',agentModel:'haiku',volume:.16,aheadDelay:.7}});
   assert(!d.getElementById('agentClaudeModel').hidden&&d.querySelector('[data-k=agentModel] [data-v=haiku]').getAttribute('aria-pressed')==='true','Disconnecting the router restores the saved Claude agent choice');
-  assert(d.querySelector('[data-k=escalate]').closest('.row').textContent.includes('before a difficult task'), 'Sonnet offers disclose proactive difficulty routing');
+  assert(d.querySelector('[data-k=escalate]').closest('.row').textContent.includes('difficult or failed task'), 'Sonnet offers disclose proactive difficulty routing');
+  w.st.load({prefs:{hotkeyLabel:'⌃⌥Space',model:'haiku',escalate:false,volume:.16,aheadDelay:.7}});
+  assert(d.querySelector('[data-k=escalateAuto]').disabled, 'Routing to Sonnet needs Sonnet suggestions on');
+  w.st.load({prefs:{hotkeyLabel:'⌃⌥Space',model:'sonnet',escalate:true,volume:.16,aheadDelay:.7}});
+  assert(d.querySelector('[data-k=escalateAuto]').closest('.row').hidden && !d.querySelector('[data-k=model]').closest('.row').hidden, 'Sonnet routing hides when every ask already uses a bigger model');
+  w.st.load({prefs:{hotkeyLabel:'⌃⌥Space',model:'haiku',escalate:true,volume:.16,aheadDelay:.7}});
   assert(d.querySelector('[data-k=escalateAuto]').closest('.row').textContent.includes('more of your plan per ask'), 'Automatic switching discloses extra plan usage');
   w.st.tab('feedback');
   await new Promise(r=>setTimeout(r,20));
@@ -139,7 +144,9 @@ try {
   contact.open=true;await new Promise(r=>setTimeout(r,20));assert(contact.querySelector('.source-pill').textContent==='contacts · 2026-10-13','Expanded facts show source and date');
   const email=contact.querySelector('[data-profile-id]');email.value='home email: new@example.test';email.dispatchEvent(new w.Event('change'));await new Promise(r=>setTimeout(r,20));
   assert(messages.some(m=>m.do==='me'&&m.action==='set'&&m.id==='email1'&&m.text.includes('new@example.test')),'Profile facts edit inline');
-  contact.querySelector('[data-profile-drop]').click();await new Promise(r=>setTimeout(r,20));assert(messages.some(m=>m.do==='me'&&m.action==='drop'&&m.id==='email1'),'Profile facts delete inline');
+  const dropped=()=>messages.some(m=>m.do==='me'&&m.action==='drop'&&m.id==='email1');
+  contact.querySelector('[data-profile-drop]').click();await new Promise(r=>setTimeout(r,20));assert(!dropped(),'Profile deletes wait out Undo');
+  w.st.notice({text:''});await new Promise(r=>setTimeout(r,20));assert(dropped(),'Profile facts delete inline');
   const add=contact.querySelector('[data-profile-add]');add.value='phone: +1 555 0100';add.nextElementSibling.click();await new Promise(r=>setTimeout(r,20));
   assert(messages.some(m=>m.do==='me'&&m.action==='add'&&m.category==='contact'),'Expanded categories add facts');
   w.st.state({...profileState,rules:['Use Chrome for browsing'],me:{version:2,facts:[...profileState.me.facts,{id:'dad1',category:'people',kind:'dad email',value:'pat@example.test',source:'learned',date:'2026-10-13'}]}});

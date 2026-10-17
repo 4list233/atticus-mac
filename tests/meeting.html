@@ -18,7 +18,7 @@ assert(!$('prep').hidden&&$('live').hidden,'Prep is optional and visible first')
 m.savedPrep('Saved pilot notes');m.prep();assert($('context').value==='Saved pilot notes','Saved prep loads before the next call');
 $('context').value='Edited saved prep';$('context').dispatchEvent(new w.Event('input'));await wait(230);assert(messages.some(x=>x.do==='savePrep'&&x.text==='Edited saved prep'),'Prep edits save locally before listening');
 $('context').value='';
-assert(!d.getElementById('copyprep')&&!$('prep').querySelector('p'),'Prep has no paragraphs; the prep prompt lives in Settings');
+assert(!$('prep').querySelector('p'),'Prep has no paragraphs; the prep prompt lives in Settings');
 assert(!$('prepstatus').hidden&&$('prepstatus').textContent==='Notes saved for next time'&&$('prepstatus').classList.contains('ok')&&$('close').title.includes('notes stay saved')&&$('close').classList.contains('done'),'Autosave shows Saved and the close button says notes stay');
 w.meeting.calendar(false);assert($('gather').textContent==='Allow Calendar','Without calendar access the button asks for it');
 $('gather').click();await wait(20);assert(messages.some(x=>x.do==='allowCalendar')&&!messages.some(x=>x.do==='gather'),'Allow Calendar asks for access instead of a blind prep');

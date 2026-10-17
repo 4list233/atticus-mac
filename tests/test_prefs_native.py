@@ -76,6 +76,24 @@ precondition(usage.contains("Today: 1 ask") && usage.contains("1.00¢"), "usage 
                                     env={**os.environ, "ATTICUS_DIR": root})
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_unwritable_settings_keep_the_old_value(self):
+        source = (ROOT / "Atticus.swift").read_text()
+        prefs = source[source.index("enum Prefs"):source.index("func audioProp")]
+        swift = """import Cocoa
+let controlKey = 1, optionKey = 2
+""" + prefs + """
+precondition(!Prefs.set("speak", true), "a write to an unwritable folder reported success")
+precondition(!Prefs.bool("speak"), "the unsaved value stayed in memory")
+"""
+        with tempfile.TemporaryDirectory() as root:
+            path, binary, blocked = Path(root) / "check.swift", Path(root) / "check", Path(root) / "not-a-folder"
+            path.write_text(swift); blocked.write_text("")   # ATTICUS_DIR is a file, so settings.json can't be written
+            compiled = subprocess.run(["swiftc", str(path), "-o", str(binary)], capture_output=True, text=True)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            result = subprocess.run([str(binary)], capture_output=True, text=True,
+                                    env={**os.environ, "ATTICUS_DIR": str(blocked)})
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

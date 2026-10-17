@@ -2,22 +2,19 @@
 import io
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import unittest
 import urllib.parse
 from unittest.mock import patch
 import atticus
+from tests import scratch_dir
 
 
 class FeedbackTests(unittest.TestCase):
     def setUp(self):
-        root = tempfile.TemporaryDirectory(); self.addCleanup(root.cleanup)
-        self.root = Path(root.name)
-        for p in [patch.object(atticus, 'DIR', root.name), patch.object(atticus, 'pref', side_effect=lambda k, d: d),
-                  patch.object(atticus.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'Mac14,5\n')),
+        self.root = scratch_dir(self)
+        for p in [patch.object(atticus.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'Mac14,5\n')),
                   patch.object(atticus.platform, 'mac_ver', return_value=('26.0', (), ''))]:
             p.start(); self.addCleanup(p.stop)
         (self.root / 'log.jsonl').write_text(json.dumps({'task': 'Private ask /Users/person/name', 'reply': 'PRIVATE ANSWER', 'ran': ['PRIVATE COMMAND']})+'\n'+json.dumps({'task': 'report feedback'})+'\n')

@@ -191,11 +191,11 @@
     animation: pop .5s var(--spring) .4s both; }
   .tip::before { content: attr(data-k); flex: none; font-weight: 600; color: #64d2ff; }
   .tip.learned { background: rgba(48,209,88,.14); box-shadow: inset 0 0 0 .5px rgba(48,209,88,.45); } .tip.learned::before { color: #30d158; }
-  .tip .off, .ok .off { flex: none; margin-left: auto; padding: 0; border: 0; background: none; font: 500 11px -apple-system, system-ui, sans-serif; color: var(--fg2); cursor: pointer; transition: color .2s; }
-  .tip .off:hover, .ok .off:hover { color: #f5f5f7; }
+  .tip .off, .ok .off, .ok .details { flex: none; margin-left: auto; padding: 0; border: 0; background: none; font: 500 11px -apple-system, system-ui, sans-serif; color: var(--fg2); cursor: pointer; transition: color .2s; }
+  .tip .off:hover, .ok .off:hover, .ok .details:hover { color: #f5f5f7; }
   .ok.offer { cursor: default; } .ok.offer:hover { background: rgba(255,255,255,.07); }   /* a question, not a command: nothing to unfold */
   .ok.offer p { margin: 4px 0 0; font-size: 12px; line-height: 1.4; color: var(--fg2); }
-  .ok.offer .off { display: block; margin: 9px auto 0; height: auto; flex: none; border-radius: 0; background: none; box-shadow: none; }
+  .ok.offer .off, .ok.offer .details { display: block; margin: 9px auto 0; height: auto; flex: none; border-radius: 0; background: none; box-shadow: none; }
   .tip.kofi { cursor: pointer; background: rgba(255,255,255,.07); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.16); } .tip.kofi::before { color: #f5f5f7; }   /* quiet: no accent, it's an ask not a hint */
   .tip.gone { opacity: 0; transform: translateY(-4px); transition: opacity .4s, transform .4s; }
 
@@ -392,7 +392,7 @@
       const q = part('q'); if (q && !q.classList.contains('empty')) { e.preventDefault(); e.target.value = q.textContent; }
     }
     if (e.key !== 'Enter' || e.isComposing) return;
-    if(working&&!$('thread').querySelector('.pk:not(.gone),.ok.retry:not(.gone)')){e.preventDefault();return;}
+    if(working&&!$('thread').querySelector('.pk:not(.gone),.ok.retry:not(.gone)')){e.preventDefault();status('Finish or stop the current answer first');return;}
     const t = $('ask').value.trim();
     if (t && !window.ui.respond(t)) post({ send: t });
   };
@@ -577,7 +577,7 @@
     (turn()||$('thread')).append(d);working=false;clockStop();setState('breathing');status(done?'Done':'Ready to start');fit();
   };
   $('agents-pill').onclick=()=>post({agents:true});
-  document.addEventListener('keydown',e=>{const b=defaultButton();if(b&&e.key==='Enter'&&!e.isComposing&&!(e.target instanceof HTMLButtonElement)){e.preventDefault();e.stopPropagation();b.click();}},true);
+  document.addEventListener('keydown',e=>{const b=defaultButton();if(b&&e.key==='Enter'&&!e.isComposing&&!e.target.closest('button,input,textarea,select,a,[contenteditable=true]')){e.preventDefault();e.stopPropagation();b.click();}},true);
   window.ui = {
     agentDefaultAction(){defaultButton()?.click();},
     moveOffer(){
@@ -589,6 +589,18 @@
     },
     movePending(){moveClear();status('Moving to an agent…',true);fit();},
     moveFailed(){const b=$('thread').querySelector('.move-option .go');if(b){b.disabled=false;b.firstChild.textContent='Move';}status('Could not move',true);fit();},
+    paused(on=true){
+      $('thread').querySelector('.paused')?.remove();
+      if(!on){status('Atticus resumed');fit();return}
+      const d=document.createElement('div');d.className='ok offer paused';d.innerHTML='<b>Atticus is paused</b><div><button class="go">Resume</button></div>';d.querySelector('button').onclick=()=>post({resume:true});
+      $('thread').append(d);status('Paused');fit();
+    },
+    workerFailed(){
+      working=false;clockStop();settle();status('Couldn’t start');
+      const d=document.createElement('div');d.className='ok offer retry';d.innerHTML='<b>Atticus’s helper couldn’t start</b><p>Retry, or open Setup & Permissions to repair it.</p><div><button>Open Setup</button><button class="go">Retry</button></div>';
+      const [setup,retry]=d.querySelectorAll('button');setup.onclick=()=>post({setup:true});retry.onclick=()=>{retry.disabled=true;status('Starting…',true);post({workerRetry:true})};
+      (turn()||$('thread')).append(d);fit();
+    },
     agentOffer(row){agentCard(row);},
     agentDone(row){agentCard(row,true);},
     agentCancelled(){$('thread').querySelectorAll('.agent-card').forEach(e=>e.remove());status('Ready');clockStop();fit();},
@@ -767,7 +779,7 @@
       else { $('ask').value = text; status('Say “Retry”, “Try Sonnet” or “Not now”', true); }   // heard, but not an answer: say so, keep the card
       return true;
     },
-    ask([q, cmd, off, retry]) {   // off: a setting this card can turn off
+    ask([q, cmd, off, retry, details]) {   // off: a setting this card can turn off
       $('thread').querySelectorAll('.ok:not(.move-option)').forEach(e => e.remove()); unpin();
       const d = document.createElement('div'); d.className = 'ok';
       if (off || retry) {
@@ -775,6 +787,7 @@
         d.innerHTML = '<b></b><p></p><div><button data-answer="n">Not now</button>' +
           (retry ? '<button data-answer="r"' + (off ? '' : ' class="go"') + '>Retry</button>' : '') +
           (off ? '<button data-answer="y" class="go">' + (retry ? 'Try Sonnet' : 'Yes') + '</button>' : '') + '</div>' +
+          (details ? '<button class="details">Copy Details</button>' : '') +
           (off ? '<button class="off">Don’t ask again</button>' : '');
         d.querySelector('p').textContent = cmd;
       } else {
@@ -790,6 +803,8 @@
       d.onanimationend = () => d.style.animation = 'none';   // so the shrink below can transition
       const offBtn = d.querySelector('.off');
       if (offBtn) offBtn.onclick = e => { e.stopPropagation(); post({ off }); d.querySelectorAll(':scope > div > button')[0].click(); };   // off, and no to this one
+      const detailsBtn = d.querySelector('.details');
+      if (detailsBtn) detailsBtn.onclick = e => { e.stopPropagation(); post({ copy: details }); };
       d.querySelectorAll(':scope > div > button').forEach((b, i) => b.onclick = e => {
         e.stopPropagation(); if (d.classList.contains('gone')) return;
         post(retry ? { pick: b.dataset.answer } : { allow: !!i }); clockGo(); status(retry ? (i ? 'Trying again' : 'Not now') : i ? 'Allowed' : 'Not allowed', true); setState('solving');
@@ -847,13 +862,13 @@
         if (e.target.matches('input') || e.metaKey || e.ctrlKey || e.altKey) return;
         const cs = [...g.children], at = cs.indexOf(document.activeElement);
         if (/^[1-9]$/.test(e.key) && cs[e.key - 1]) { e.preventDefault(); cs[e.key - 1].click(); }
-        else if (e.key === 'Enter' && on) { e.preventDefault(); go.click(); }   // a file grown big: Return uses it
+        else if (e.key === 'Enter' && on && !e.isComposing && !e.target.closest('button,textarea,select,a,[contenteditable=true]')) { e.preventDefault(); go.click(); }   // a file grown big: Return uses it
         else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); cs[Math.max(0, Math.min(cs.length - 1, at < 0 ? 0 : at + (e.key === 'ArrowDown' ? 1 : -1)))].focus(); }
       };
       d.onanimationend = e => { if (e.target === d) d.style.animation = 'none'; };   // so the shrink can transition
       const other = d.querySelector('.other');
       other.onclick = e => e.stopPropagation();
-      other.onkeydown = e => { if (e.key === 'Enter' && other.value.trim()) { e.preventDefault(); done(-1, 'Got it', other.value.trim().slice(0, 300)); } };
+      other.onkeydown = e => { if (e.key === 'Enter' && !e.isComposing && other.value.trim()) { e.preventDefault(); done(-1, 'Got it', other.value.trim().slice(0, 300)); } };
       const [none, back, go] = d.querySelectorAll('.bar button');
       none.onclick = e => { e.stopPropagation(); done(-1); };
       back.onclick = e => { e.stopPropagation(); view(null); };

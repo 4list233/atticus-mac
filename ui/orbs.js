@@ -143,24 +143,6 @@ function scaleRadii(opts, scale) {
   out.rSizeMul = (out.rSizeMul ?? 1) * scale;
   return out;
 }
-function countDots(opts) {
-  let total = 0;
-  const done = /* @__PURE__ */ new Set();
-  for (const [a, b] of COUNT_PAIRS) {
-    const va = opts[a];
-    const vb = opts[b];
-    if (va != null && vb != null && !done.has(a) && !done.has(b)) {
-      total += va * vb;
-      done.add(a);
-      done.add(b);
-    }
-  }
-  for (const k of COUNT_KEYS) {
-    const v = opts[k];
-    if (v != null && v !== 0 && !done.has(k)) total += v;
-  }
-  return Math.round(total);
-}
 const BASE_PROFILES = {
   globe: {
     latRings: 17,
@@ -851,24 +833,4 @@ function resolvePreset(state, size) {
   cache.set(key, resolved);
   return resolved;
 }
-export {
-  MODE_FRAMES as M,
-  STATE_TO_MODE as S,
-  scaleRadii as a,
-  MODE_DRAWS as b,
-  angleDelta as c,
-  countDots as d,
-  finalizeFrame as e,
-  fibDir as f,
-  frac as g,
-  hashD as h,
-  radiusScale as i,
-  paint as j,
-  paintLines as k,
-  lerp as l,
-  makeProj as m,
-  paintFrame as p,
-  resolvePreset as r,
-  scaleCounts as s,
-  vnoise as v
-};
+export { MODE_FRAMES as M, paintFrame as p, resolvePreset as r };

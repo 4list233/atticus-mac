@@ -1,9 +1,12 @@
 """Spotify actions use fake lookup, AppleScript, and accessibility layers only."""
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -12,6 +15,36 @@ import atticus
 
 
 class SpotifyTests(unittest.TestCase):
+    def test_playlist_cache_recovers_from_bad_json_and_replaces_atomically(self):
+        with tempfile.TemporaryDirectory() as root, patch.multiple(atticus, DIR=root, PLAYLISTS=os.path.join(root, 'playlists.json')), \
+             patch.object(atticus.os, 'walk', return_value=[]):
+            cache = Path(atticus.PLAYLISTS)
+            cache.write_text('{cut off')
+            self.assertIsNone(atticus.playlist('missing'))
+            self.assertEqual(json.loads(cache.read_text()), {})
+
+            cache.write_text(json.dumps({'old': 'Old playlist'}))
+            os.utime(cache, (time.time() - 4000,) * 2)
+            with patch.object(atticus.json, 'dump', side_effect=RuntimeError('interrupted')):
+                with self.assertRaises(RuntimeError):
+                    atticus.playlist('missing')
+            self.assertEqual(json.loads(cache.read_text()), {'old': 'Old playlist'})
+
+    def test_playlist_retries_a_cached_blank_title(self):
+        playlist_id = 'H' * 22
+        with tempfile.TemporaryDirectory() as root:
+            spotify = Path(root) / 'Library/Application Support/Spotify'
+            spotify.mkdir(parents=True)
+            (spotify / 'cache').write_bytes(f'spotify:playlist:{playlist_id}'.encode())
+            cache = Path(root) / 'playlists.json'
+            cache.write_text(json.dumps({playlist_id: ''}))
+            os.utime(cache, (time.time() - 4000,) * 2)
+            with patch.multiple(atticus, HOME=root, DIR=root, PLAYLISTS=str(cache)), \
+                 patch.object(atticus, 'get', return_value=json.dumps({'title': 'Recovered playlist'})) as get:
+                self.assertEqual(atticus.playlist('recovered playlist'),
+                                 (f'spotify:playlist:{playlist_id}', 'Recovered playlist'))
+            get.assert_called_once()
+
     def test_lookup_prefers_cached_playlist_and_falls_back_to_web(self):
         cached = ('spotify:playlist:cached', 'Road trip')
         with patch.object(atticus, 'playlist', return_value=cached), patch.object(atticus, 'get') as get:
@@ -27,20 +60,33 @@ class SpotifyTests(unittest.TestCase):
     def test_play_uses_shared_lookup_and_keeps_spotify_behind(self):
         item = ('spotify:track:' + 'B' * 22, 'Fixture song')
         with patch.object(atticus, 'spotify_item', return_value=item) as lookup, \
-             patch.object(atticus, 'osa', side_effect=['Editor', '']) as osa, \
+             patch.object(atticus, 'osa', return_value='Editor'), \
+             patch.object(atticus.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'playing', '')) as run, \
              patch.object(atticus, 'preview_app') as preview, patch.object(atticus, 'wants_focus', return_value=False), \
              patch.object(atticus, 'keep_behind') as behind:
             self.assertEqual(atticus.play('fixture'), 'Playing Fixture song on Spotify.')
         lookup.assert_called_once_with('fixture', True)
-        self.assertIn(item[0], osa.call_args_list[1].args[0])
+        self.assertEqual(run.call_args.args[0][-1], item[0])
         preview.assert_called_once_with('Spotify', 'play')
         behind.assert_called_once_with('Editor', 'Spotify')
+
+    def test_play_reports_rejected_or_unverified_spotify_commands(self):
+        item = ('spotify:track:' + 'G' * 22, 'Fixture song')
+        for result in (subprocess.CompletedProcess([], 1, '', 'denied'),
+                       subprocess.CompletedProcess([], 0, 'paused', '')):
+            with self.subTest(result=result), patch.object(atticus, 'spotify_item', return_value=item), \
+                 patch.object(atticus, 'osa', return_value='Editor'), patch.object(atticus.subprocess, 'run', return_value=result), \
+                 patch.object(atticus, 'preview_app') as preview, patch.object(atticus, 'keep_behind') as behind:
+                reply = atticus.play('fixture')
+            self.assertIn('Could not start Fixture song', reply)
+            preview.assert_not_called()
+            behind.assert_not_called()
 
     def test_queue_uses_discovered_ax_labels_and_verifies_the_toast(self):
         item = ('spotify:track:' + 'C' * 22, 'Fixture song')
         page = {'texts': ['Fixture song'], 'nodes': [{'role': 'AXButton', 'label': 'More options for Fixture song'}]}
         menu = {'texts': [], 'nodes': [{'role': 'AXMenuItem', 'label': 'Add to queue'}]}
-        toast = {'texts': ['Added to queue'], 'nodes': []}
+        toast = {'texts': ['Fixture song', 'Added to queue'], 'nodes': []}
         actions = [('Clicked More options', True), ('Clicked Add to queue\nAdded to queue', True)]
         with patch.object(atticus, 'spotify_item', return_value=item), \
              patch.object(atticus, 'osa', return_value='Editor'), \
@@ -54,6 +100,26 @@ class SpotifyTests(unittest.TestCase):
         self.assertEqual(hands.call_args_list[0].args, ('click', 'More options for Fixture song', 'near', 'Fixture song'))
         self.assertEqual(hands.call_args_list[1].args, ('click', 'Add to queue'))
         self.assertEqual(behind.call_count, 3)
+
+    def test_queue_waits_for_the_requested_track_before_opening_its_menu(self):
+        item = ('spotify:track:' + 'F' * 22, 'Requested fixture')
+        old_page = {'texts': ['Different track'], 'nodes': [{'role': 'AXButton', 'label': 'More options'}]}
+        with patch.object(atticus, 'spotify_item', return_value=item), patch.object(atticus, 'osa', return_value='Editor'), \
+             patch.object(atticus.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
+             patch.object(atticus, 'preview_app'), patch.object(atticus, 'hands_map', return_value=old_page), \
+             patch.object(atticus, 'hands') as hands, patch.object(atticus, 'keep_behind'), patch.object(atticus.time, 'sleep'):
+            reply = atticus.queue('requested')
+        self.assertIn('could not find its More options control', reply)
+        hands.assert_not_called()
+
+    def test_queue_identity_requires_an_exact_title_and_matching_control(self):
+        wrong = {'texts': ['Homecoming'], 'nodes': [{'label': 'More options for Homecoming'}]}
+        with patch.object(atticus, 'hands_map', return_value=wrong), patch.object(atticus.time, 'sleep'):
+            self.assertEqual(atticus._spotify_wait_control(('more', 'option'), 'Home'), (None, None))
+        self.assertIsNone(atticus._spotify_control({**wrong, 'texts': ['Home']}, ('more', 'option'), 'Home'))
+        self.assertFalse(atticus._spotify_verified('Added to queue', wrong, 'Home', action=True))
+        self.assertFalse(atticus._spotify_verified('Added to queue', {'texts': ['Home']}, 'Homecoming', action=True))
+        self.assertTrue(atticus._spotify_verified('Added to queue', {'texts': ['Up']}, 'Up', action=True))
 
     def test_queue_can_verify_the_track_in_the_queue_view(self):
         item = ('spotify:track:' + 'D' * 22, 'Another fixture')
@@ -77,7 +143,7 @@ class SpotifyTests(unittest.TestCase):
         with patch.object(atticus, 'spotify_item', return_value=item), patch.object(atticus, 'osa', return_value='Editor'), \
              patch.object(atticus.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
              patch.object(atticus, 'preview_app'), patch.object(atticus, 'hands_map', return_value=page), \
-             patch.object(atticus, 'cached_hands', side_effect=[menu, {}]), \
+             patch.object(atticus, 'cached_hands', side_effect=[menu, {'texts': ['Unverified fixture'], 'nodes': []}]), \
              patch.object(atticus, 'hands', side_effect=[('More', True), ('Added', True)]) as hands, \
              patch.object(atticus, 'keep_behind'), patch.object(atticus.time, 'sleep'):
             reply = atticus.queue('unverified')

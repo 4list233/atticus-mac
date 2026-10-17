@@ -136,6 +136,33 @@ class MeetingTests(unittest.TestCase):
         self.assertEqual(''.join(e['text'] for e in events[:-1]), 'First line.')
         self.assertEqual(events[-1]['result']['lines'], ['First line.'])
 
+    def test_live_worker_drains_diagnostics_and_times_out_a_silent_answer(self):
+        real_popen=atticus.subprocess.Popen
+        real_timer=atticus.threading.Timer
+        for hangs in (False,True):
+            with self.subTest(hangs=hangs):
+                children=[]
+                code="import sys,json,time;sys.stdin.readline();sys.stderr.write('x'*1048576);sys.stderr.flush();"
+                code += "time.sleep(30)" if hangs else "print(json.dumps({'type':'result','result':'ANSWER\\nDone.'}),flush=True)"
+                def launch(args,**kwargs):
+                    self.assertNotEqual(kwargs['stderr'],subprocess.PIPE)
+                    child=real_popen([sys.executable,'-c',code],**kwargs)
+                    children.append(child)
+                    return child
+                out=io.StringIO()
+                with patch.object(atticus.subprocess,'Popen',side_effect=launch),patch.object(atticus,'server',return_value={}), \
+                     patch.object(atticus,'client',return_value='claude'),patch.object(atticus,'log_turn'), \
+                     patch.object(atticus.signal,'signal'),patch.object(atticus.atexit,'register'), \
+                     patch.object(atticus.threading,'Timer',side_effect=lambda seconds,fn:real_timer(.2 if hangs else seconds,fn)), \
+                     patch.object(sys,'stdin',io.StringIO(json.dumps({'question':'Fixture?'}))),redirect_stdout(out):
+                    atticus.meeting_live()
+                events=[json.loads(line) for line in out.getvalue().splitlines()]
+                self.assertEqual(events[-1]['event'],'result')
+                if hangs: self.assertIn('error',events[-1]['result'])
+                else: self.assertEqual(events[-1]['result']['lines'],['Done.'])
+                self.assertIsNotNone(children[0].poll())
+                children[0].stdout.close()
+
     def test_connector_brief_has_only_exact_read_tools_and_data_stays_data(self):
         class Worker:
             pid = 12345

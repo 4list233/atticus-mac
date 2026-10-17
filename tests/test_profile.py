@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -40,6 +41,25 @@ class ProfileTests(unittest.TestCase):
         with patch.object(atticus, '_save_profile', side_effect=OSError('disk full')):
             self.assertEqual(atticus.profile_name(atticus.me()), 'Still Here')
 
+    def test_profile_transactions_serialize_across_processes_including_migration(self):
+        self.me.write_text(json.dumps({'name': 'Legacy', 'facts': []}))
+        code = """import atticus,sys,time
+save=atticus._save_profile
+def delayed(profile):
+    time.sleep(.05)
+    save(profile)
+atticus._save_profile=delayed
+atticus.profile_add('notes',sys.argv[1],source='you')
+"""
+        env={**os.environ,'ATTICUS_DIR':str(self.root)}
+        children=[subprocess.Popen([atticus.sys.executable,'-c',code,str(i)],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True) for i in range(6)]
+        for child in children:
+            out,err=child.communicate(timeout=10)
+            self.assertEqual(child.returncode,0,err)
+        self.assertEqual({f['value'] for f in atticus.me()['facts']},{'Legacy',*map(str,range(6))})
+        self.assertEqual(atticus.me_set('name','Updated'),'saved')
+        self.assertEqual(atticus.profile_name(),'Updated')
+
     def test_fake_mac_import_refreshes_each_source_and_keeps_user_facts(self):
         self.add('notes', 'note', 'Keep me')
         first = {'contacts': {
@@ -74,6 +94,36 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0][:4], ['osascript', '-l', 'JavaScript', '-e'])
         self.assertIn('myCard', run.call_args.args[0][4])
         self.assertIn('Mail', run.call_args.args[0][4])
+
+    @unittest.skipUnless(shutil.which('node'), 'JavaScript runtime required')
+    def test_source_read_failures_preserve_facts_and_empty_success_clears(self):
+        completed=subprocess.CompletedProcess([],0,'{}','')
+        with patch.object(atticus.subprocess,'run',return_value=completed) as run:
+            atticus.mac_profile()
+        script=run.call_args.args[0][4]
+        for failed, reason in [('contacts','read'), ('mail','read'), ('contacts','automation'), ('mail','automation'), ('','')]:
+            with self.subTest(failed=failed, reason=reason):
+                for source in ('contacts','mail'):
+                    self.add('contact','email','old-'+source,source)
+                fake = """const failed=process.argv[1], reason=process.argv[2];
+function failure() { const e=Error('read failed'); e.errorNumber=reason==='automation'?-1743:-1700; throw e; }
+function Application(name) {
+ return {myCard:()=>new Proxy({}, {get:(_,key)=>()=> {
+   if(failed==='contacts' && key==='emails') failure();
+   return key==='name'?'New Name':(['emails','phones','urls','addresses','socialProfiles','relatedNames'].includes(key)?[]:null);
+ }}), accounts:()=> {if(failed==='mail') failure(); return [];}};
+}
+"""
+                result=subprocess.run(['node','-e',fake+script+';console.log(run());',failed,reason],capture_output=True,text=True,check=True)
+                snapshot=json.loads(result.stdout)
+                self.assertEqual(snapshot['errors'],[failed] if failed else [])
+                self.assertEqual(snapshot['errorReasons'], {failed:reason} if failed else {})
+                outcome=atticus.profile_import(snapshot)
+                values={f['value'] for f in atticus.me()['facts']}
+                self.assertEqual('old-contacts' in values,failed=='contacts')
+                self.assertEqual('old-mail' in values,failed=='mail')
+                self.assertEqual(outcome['errors'],snapshot['errors'])
+                self.assertEqual(outcome['errorReasons'],snapshot['errorReasons'])
 
     def test_only_relevant_categories_join_the_short_always_line(self):
         self.add('basics', 'name', 'Sam Example')

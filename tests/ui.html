@@ -266,13 +266,13 @@ try {
   assert(d.querySelector('.move-option b').textContent==='Move this to an agent?','Long foreground work offers a nonblocking move');
   assert(d.getElementById('status').textContent===moveStatus&&!!d.querySelector('.elapsed'),'Move offer keeps foreground work and its clock running');
   const beforeApprovalMove=messages.filter(m=>m.agentMove).length;
-  ui.ask(['Allow this action?','Fixture change']);d.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,20));
+  ui.ask(['Allow this action?','Fixture change']);d.body.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,20));
   assert(messages.filter(m=>m.agentMove).length===beforeApprovalMove,'A live approval takes precedence over Move Return');
   d.querySelector('.ok:not(.move-option) .go').click();await new Promise(r=>setTimeout(r,400));
   d.getElementById('ask').value='Keep this draft';const moves=messages.filter(m=>m.agentMove).length;
   d.getElementById('ask').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,20));
   assert(d.getElementById('ask').value==='Keep this draft'&&messages.filter(m=>m.agentMove).length===moves,'Return with a typed draft neither moves nor discards it');
-  d.getElementById('ask').value='';d.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,20));
+  d.getElementById('ask').value='';d.body.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,20));
   assert(messages.filter(m=>m.agentMove).length===moves+1,'Blank Return accepts the move');
   ui.moveFailed();assert(!d.querySelector('.move-option .go').disabled&&d.querySelector('.move-option .go span').textContent==='Move','A failed move signal restores its button while main continues');
   ui.movePending();assert(!d.querySelector('.move-option'),'Accepted move clears its option');ui.agentStarted();
@@ -289,7 +289,7 @@ try {
   assert(d.querySelector('.agent-card b').textContent==='Prepare report'&&d.querySelector('.agent-card .go span').textContent==='Start'&&d.querySelector('.agent-card .go kbd').textContent==='↩'&&d.querySelector('.agent-card [data-esc] kbd').textContent==='esc','Handoff offers Start ↩ and Not now esc keycaps');
   assert(!d.querySelector('.agent-card').closest('.turn')?.querySelector('.elapsed'),'Handoff drops the box timer');
   assert(!d.querySelector('.agent-card').textContent.includes('stream-json'),'Handoff keeps implementation details out');
-  d.getElementById('ask').value='';d.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,20));
+  d.getElementById('ask').value='';d.body.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,20));
   assert(messages.some(m=>m.agentStart===agent.id),'Return starts the offered agent');
   assert(messages.some(m=>m.agentDefault===true)&&messages.some(m=>m.agentDefault===false),'Only actionable cards register the native Return default');
   assert(messages.find(m=>m.agentStart===agent.id).cardRect.length===4,'Start passes the card geometry for its flight');

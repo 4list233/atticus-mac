@@ -2,25 +2,21 @@
 import io
 import json
 import os
-from pathlib import Path
 import subprocess
-import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
 import atticus
+from tests import scratch_dir
 
 
 class NightTests(unittest.TestCase):
     def setUp(self):
-        root = tempfile.TemporaryDirectory(); self.addCleanup(root.cleanup)
-        self.root = Path(root.name)
-        for p in [patch.object(atticus, 'DIR', root.name),
-                  *[patch.object(atticus, k, str(self.root / name)) for k, name in
+        self.root = scratch_dir(self)
+        for p in [*[patch.object(atticus, k, str(self.root / name)) for k, name in
                     [('SKILLS', 'skills.json'), ('LAST', 'last'), ('RECENT', 'recent.jsonl'),
                      ('ME_FILE', 'me.json'), ('WORKED', 'worked.json'), ('MEMORY', 'memory.md')]],
-                  patch.object(atticus, 'pref', side_effect=lambda k, d: d),
-                  patch.dict(os.environ, {'ATTICUS_DIR': root.name, 'ATTICUS_SCREEN': 'Request display'}, clear=True)]:
+                  patch.dict(os.environ, {'ATTICUS_DIR': str(self.root), 'ATTICUS_SCREEN': 'Request display'}, clear=True)]:
             p.start(); self.addCleanup(p.stop)
 
     def test_help_discovers_advertised_goal_subtree_and_readback_cached(self):
@@ -97,7 +93,7 @@ class NightTests(unittest.TestCase):
     def test_teaching_simple_action_waits_for_confirmation_saves_and_shows_pill(self):
         with patch.object(atticus, 'app_named', side_effect=lambda s: 'Fixture' if s == 'fixture' else None), \
              patch.object(atticus, 'proc_of', side_effect=lambda s: s), patch.object(atticus, 'place', return_value='Fixture window -> left of Request display') as place, \
-             patch.object(atticus.subprocess, 'run'), patch.object(atticus, 'cached_hands', return_value=None), \
+             patch.object(atticus.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), patch.object(atticus, 'cached_hands', return_value=None), \
              patch.dict(os.environ, {'ATTICUS_UI': '1'}), patch('sys.stdout', new_callable=io.StringIO) as out:
             with patch.dict(os.environ, {'ATTICUS_LIVE': '1'}):
                 self.assertIsNone(atticus.fast('When I say quiet time, open fixture on the left'))
@@ -148,7 +144,7 @@ class NightTests(unittest.TestCase):
 
     def test_continuation_punctuation_does_not_block_other_simple_actions(self):
         with patch.object(atticus, 'app_named', side_effect=lambda t: 'Fixture' if t == 'fixture' else None), \
-             patch.object(atticus.subprocess, 'run') as open_:
+             patch.object(atticus.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as open_:
             self.assertEqual(atticus.fast(', and open fixture'), 'Opened Fixture.')
             open_.assert_called_once_with(['open', '-a', 'Fixture'])
         self.assertEqual(atticus.plain('; then search example.test for reports'), 'search example.test for reports')

@@ -1,29 +1,19 @@
 """Audio policy regressions with fake devices and volume; never touches VM audio hardware."""
 from pathlib import Path
-import subprocess
 import sys
-import tempfile
 import unittest
+
+from tests import run_swift
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 @unittest.skipUnless(sys.platform == "darwin", "macOS Swift audio regression")
 class AudioNativeTests(unittest.TestCase):
-    def compile_and_run(self, body):
-        with tempfile.TemporaryDirectory() as root:
-            source = Path(root) / "audio.swift"
-            binary = Path(root) / "audio"
-            source.write_text(body)
-            compiled = subprocess.run(["swiftc", str(source), "-o", str(binary)], capture_output=True, text=True)
-            self.assertEqual(compiled.returncode, 0, compiled.stderr)
-            result = subprocess.run([str(binary)], capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
     def test_device_choice_falls_back_without_opening_bluetooth(self):
         source = (ROOT / "Atticus.swift").read_text()
         policy = source[source.index("struct MicrophoneDevice"):source.index("func listenMic()")]
-        self.compile_and_run(
+        run_swift(self, 
             """import Foundation
 import CoreAudio
 func audioProp<T>(_ obj: AudioObjectID, _ sel: AudioObjectPropertySelector, _ zero: T) -> [T] { [] }
@@ -53,7 +43,7 @@ print("microphone policy ok")
         source = (ROOT / "Atticus.swift").read_text()
         model = source[source.index("struct AudioVolumeSnapshot"):source.index("struct CoreAudioVolume")]
         quiet = source[source.index("final class AudioQuiet"):source.index("enum AudioRecovery")]
-        self.compile_and_run(
+        run_swift(self, 
             """import Foundation
 """
             + model

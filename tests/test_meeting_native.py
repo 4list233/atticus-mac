@@ -19,10 +19,15 @@ enum Prefs { static let root = NSTemporaryDirectory() + UUID().uuidString; stati
 let fm = FileManager.default
 defer { try? fm.removeItem(atPath: Prefs.root) }
 let archive = try! MeetingArchive(title: "Pilot", app: "Zoom", started: Date())
-try! archive.append(["kind":"transcript","text":"First"])
+func append(_ event: [String: Any]) {
+ var finished = false
+ archive.append([event]) { error in precondition(error == nil); finished = true }
+ while !finished { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+}
+append(["kind":"transcript","text":"First"])
 let other = try! FileHandle(forWritingTo: URL(fileURLWithPath: archive.folder + "/events.jsonl"))
 try! other.seekToEnd(); try! other.write(contentsOf: Data("{\\"kind\\":\\"summary\\",\\"text\\":\\"Recap\\"}\\n".utf8)); try! other.close()
-try! archive.append(["kind":"transcript","text":"Resumed"])
+append(["kind":"transcript","text":"Resumed"])
 let text = try! String(contentsOfFile: archive.folder + "/events.jsonl", encoding: .utf8)
 precondition(text.contains("First") && text.contains("Recap") && text.contains("Resumed"), "append overwrote summary")
 for path in [archive.folder, Prefs.root + "/meetings"] {

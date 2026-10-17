@@ -332,7 +332,10 @@ func AXUIElementGetPid(_ e:TestElement,_ pid:UnsafeMutablePointer<pid_t>)->AXErr
  static func wheel(_ d:String,_ p:CGPoint,_ a:TestApp,fraction:Double=1)throws { preconditionFailure("Unexpected real mouse fallback") }
  static func raise(_ a:TestApp)throws { preconditionFailure("Unexpected app activation") }
  static func restoreFocus(_ a:TestApp)->()->Void { {} }   // menu presses tell the focus guard; nothing to restore in memory
- static func sendKeys(_ text:String,pid:Int32,times:Int=1)throws { precondition(pid==123); keysSent.append(text); if text == "cmd+v", let field=application.attrs[kAXFocusedUIElementAttribute] as? TestElement { field.attrs[kAXValueAttribute]=Clipboard.general.text as NSString } }
+ static func sendKeys(_ text:String,pid:Int32,times:Int=1)throws { precondition(pid==123); keysSent.append(text)
+  guard let field=application.attrs[kAXFocusedUIElementAttribute] as? TestElement, let value=field.attrs[kAXValueAttribute] as? String else { return }
+  if text == "cmd+a" { var all=CFRange(location:0,length:(value as NSString).length); field.attrs[kAXSelectedTextRangeAttribute]=AXValueCreate(.cfRange,&all)! }
+  if text == "cmd+v", let r=Hands.selectedRange(field) { field.attrs[kAXValueAttribute]=(value as NSString).replacingCharacters(in:NSRange(location:r.location,length:r.length),with:Clipboard.general.text) as NSString } }
 ''' + methods + '''
 }
 Hands.selftest()
@@ -474,7 +477,10 @@ precondition(name.attrs[kAXValueAttribute] as? String == "Question remains: Answ
 do { _=try Hands.checked(["press","backspace"],try Hands.capture(app),app); preconditionFailure("Destructive key accepted in editable text") } catch {}
 refuseValueWrite=true; try Hands.typeText("Background paste",field,name,app,append:false)
 precondition(name.attrs[kAXValueAttribute] as? String == "Background paste" && Clipboard.general.text == "Original clipboard")
-precondition(keysSent.suffix(2) == ["cmd+a","cmd+v"]); refuseValueWrite=false
+precondition(keysSent.suffix(2) == ["cmd+a","cmd+v"])
+name.attrs[kAXValueAttribute]="Line one\\nLine two" as NSString; caret=CFRange(location:0,length:0); name.attrs[kAXSelectedTextRangeAttribute]=AXValueCreate(.cfRange,&caret)!
+try Hands.typeText("!",field,name,app,append:true) // Paste-only append lands at the value's end, not the caret's line.
+precondition(name.attrs[kAXValueAttribute] as? String == "Line one\\nLine two!" && keysSent.last == "cmd+v" && !keysSent.contains("cmd+right")); refuseValueWrite=false
 precondition(!Hands.pageKeysAllowed(app))
 precondition(try! Hands.settle(app,seconds:0.5))
 print("hands in-memory AX fixture ok")

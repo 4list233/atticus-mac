@@ -27,6 +27,7 @@ class PageReadyTests(unittest.TestCase):
                 self.assertEqual(run.call_args.args[0][-2:], ['https://old.invalid/', 'https://new.invalid/'])
                 page = json.loads(Path(scratch, 'web.json').read_text())
                 self.assertEqual((page['window'], page['tab'], page['target']), (10, 2, None))
+                self.assertEqual(Path(scratch, 'web.json').stat().st_mode & 0o777, 0o600)
 
     def test_background_page_changed_by_the_user_is_not_reused(self):
         with tempfile.TemporaryDirectory() as scratch:

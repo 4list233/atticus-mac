@@ -138,7 +138,7 @@ class UniversalTests(unittest.TestCase):
 
     def test_completed_tool_durations_and_failed_request_preserve_steps(self):
         atticus.begin_turn('Read and act')
-        p = Mock(); p.ask = ''; p.stdin = io.StringIO(); p.returncode = 0
+        p = Mock(); p.ask = ''; p.stdin = io.StringIO(); p.errors = io.StringIO(); p.returncode = 0
         p.stdout = map(json.dumps, [
             {'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': 't', 'name': 'Bash', 'input': {'command': 'fixture read'}}]}},
             {'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't', 'is_error': True}]}},
@@ -244,6 +244,21 @@ class UniversalTests(unittest.TestCase):
             self.assertEqual(atticus.fast('search for restaurants in boston'), 'Searched restaurants in boston.')
             self.assertIn('restaurants%20in%20boston', show.call_args.args[0])
             self.assertEqual(atticus.fast('search for reporting on unfamiliar events'), 'Searched reporting on unfamiliar events.')
+
+    def test_failed_fast_launches_fall_through_without_recording_success(self):
+        failed = subprocess.CompletedProcess([], 1)
+        with patch.object(atticus, 'skills', return_value={}), patch.object(atticus, 'fast_hands', return_value=None), \
+             patch.object(atticus, 'show', return_value='could not open search'):
+            self.assertIsNone(atticus.fast('search for unfamiliar words'))
+            self.assertEqual(atticus.fast.cmds, [])
+        with patch.object(atticus, 'skills', return_value={}), patch.object(atticus, 'fast_hands', return_value=None), \
+             patch.object(atticus.subprocess, 'run', return_value=failed):
+            self.assertIsNone(atticus.fast('open unfamiliar.example'))
+            self.assertEqual(atticus.fast.cmds, [])
+        with patch.object(atticus, 'skills', return_value={}), patch.object(atticus, 'fast_hands', return_value=None), \
+             patch.object(atticus, 'app_named', return_value='Fixture'), patch.object(atticus.subprocess, 'run', return_value=failed):
+            self.assertIsNone(atticus.fast('open fixture'))
+            self.assertEqual(atticus.fast.cmds, [])
 
     def test_searching_an_installed_app_defers_to_the_ai(self):
         with patch.object(atticus, 'skills', return_value={}), patch.object(atticus, 'app_named', side_effect=lambda name: 'Fixture' if name == 'fixture' else None), \

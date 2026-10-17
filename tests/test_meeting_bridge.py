@@ -19,7 +19,7 @@ class MeetingBridgeTests(unittest.TestCase):
         begin = classes.index('        let g = generation', classes.index('    func start(_ context: String)'))
         end = classes.index('    func speech(', begin)
         classes = classes[:begin] + '        Prefs.set("meetingPrep", "")\n    }\n' + classes[end:]
-        prefs = source[source.index('enum Prefs'):source.index('// Read-aloud uses')]
+        prefs = source[source.index('enum Prefs'):source.index('// Read-aloud uses')] + source[source.index('func callJS('):source.index('func currentRequestScreen(')]
         swift = '''import Cocoa
 import Carbon
 import AVFoundation
@@ -91,7 +91,10 @@ Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
    evaluate("document.getElementById('context').value='Pilot notes';document.getElementById('gather').click()") { _ in }
   }
  case 21:
-  guard meeting.gathering, meeting.process != nil else { return }
+  guard meeting.gathering, let gatherer = meeting.process else { return }
+  meeting.showAgentPrep(["preparedBrief":"Agent brief","meetingEvent":["title":"Pilot review"]])   // a second helper waits; it never replaces the running one
+  guard meeting.prepWaiting, meeting.process === gatherer, gatherer.isRunning else { fail("Agent prep orphaned the running gather") }
+  meeting.prepWaiting = false; meeting.agentPrep = nil
   stage = 22
   evaluate("document.getElementById('gather').click()") { _ in }
  case 22:
@@ -176,6 +179,7 @@ Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
   meeting.speech("Unfinished question", final: false); meeting.stop()
   guard meeting.transcript.count == 2, meeting.transcript.last?["text"] as? String == "Unfinished question",
         meeting.partial.isEmpty, meeting.queue.isEmpty, meeting.process == nil else { fail("Stop lost partial speech or left work queued") }
+  MeetingArchive.writes.wait()   // archive writes are queued; quitting waits on the same group
   guard let archive = meeting.archive,
         let journal = try? String(contentsOfFile: archive.folder + "/events.jsonl", encoding: .utf8), journal.contains("Unfinished question"), journal.contains("Zoom") else { fail("Stop did not durably save speaker transcript") }
   for file in ["metadata.json", "events.jsonl"] {
@@ -214,11 +218,15 @@ Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
   guard abs(panel.frame.minX - savedFrame.minX) < 1, abs(panel.frame.maxY - savedFrame.maxY) < 1 else { fail("Next open did not restore the saved anchor") }
   meeting.resetFrame()
   guard abs(panel.frame.minX - panel.screen!.visibleFrame.minX - 12) < 1 else { fail("Reset did not use the default spot") }
-  meeting.start("Resume lifecycle fixture");meeting.pending="A durable line";meeting.flush(answer:false);meeting.stop()
-  guard let first=meeting.finishing,first.isRunning else { fail("Summary worker was not tracked") };cancelledFinishes.append(first)
+  meeting.start("Resume lifecycle fixture");meeting.pending="A durable line";meeting.flush(answer:false);meeting.stop();stage=24
+ case 24:   // the recap starts once the queued End write lands
+  guard let first=meeting.finishing else { return }
+  guard first.isRunning else { fail("Summary worker was not tracked") };cancelledFinishes.append(first)
   meeting.start("Resumed");guard meeting.finishing == nil else { fail("Resume kept stale summary work") }
-  meeting.pending="Resumed line";meeting.flush(answer:false);meeting.stop()
-  guard let second=meeting.finishing,second.isRunning else { fail("Resumed summary worker was not tracked") };cancelledFinishes.append(second)
+  meeting.pending="Resumed line";meeting.flush(answer:false);meeting.stop();stage=25
+ case 25:
+  guard let second=meeting.finishing else { return }
+  guard second.isRunning else { fail("Resumed summary worker was not tracked") };cancelledFinishes.append(second)
   let folder=meeting.archive!.folder;meeting.discard()
   guard FileManager.default.fileExists(atPath:folder+"/events.jsonl") else { fail("Close deleted durable transcript") }
   stage=18
@@ -228,8 +236,10 @@ Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
   meeting.open();stage=19
  case 19:
   guard meeting.loaded else { return }
-  meeting.start("Failed journal fixture");try! meeting.archive!.handle.close();meeting.stop()
-  guard meeting.archive == nil && !meeting.archiveEnded && meeting.finishing == nil else { fail("Failed End pretended to save or started a recap") }
+  meeting.start("Failed journal fixture");try! meeting.archive!.handle.close();meeting.stop();stage=26
+ case 26:   // the failed End write reports back on the main queue
+  guard meeting.archive == nil else { return }
+  guard !meeting.archiveEnded && meeting.finishing == nil else { fail("Failed End pretended to save or started a recap") }
   stage=20
  case 20:
   evaluate("document.getElementById('toast').textContent") { value in

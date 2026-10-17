@@ -358,7 +358,7 @@ window.agents={mode(value){mode=value;document.body.classList.toggle('view',mode
  mini(value){const id=mode==='view'?selected:previewId(),n=document.querySelector('[data-mini="'+id+'"]');if(n){n.dataset.live=value.live?'true':'';setText(n,value.live?'':value.window||value.app||'Window');}fit();}};
 $('send').append(icon('send'));$('send').onclick=()=>{const text=$('followup').value.trim();if(!text||!selected)return;command('followup',selected,{text});$('followup').value='';};
 $('followup').onkeydown=e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();$('send').click();}};$('clear').onclick=()=>command('clear');$('clear-failed').onclick=()=>command('clear-failed');
-document.addEventListener('keydown',e=>{const card=mode==='view'&&!e.target.closest('input')&&document.querySelector('.pk');   // the view's card answers ↩ and esc, like the box's
+document.addEventListener('keydown',e=>{const fallback=!e.isComposing&&(e.key==='Escape'||!e.target.closest('button,input,textarea,select,a,[contenteditable=true]')),card=mode==='view'&&fallback&&document.querySelector('.pk');   // the view's card answers ↩ and esc, like the box's
  if(card&&(e.key==='Enter'||e.key==='Escape')){const b=card.querySelector(e.key==='Enter'?'button.go':'[data-esc]');if(b){e.preventDefault();b.click();return;}}
  if(e.key==='Escape')post({action:'close'});});document.addEventListener('pointerdown',e=>{if(mode==='shelf'&&!e.target.closest('button,input,a,.mini'))post({action:'drag'});});
 setInterval(()=>{if(!visible)return;for(const r of rows){const chip=$('shelf').querySelector('[data-id="'+r.id+'"]');if(chip){const label=chip.querySelector('.time');if(label)setText(label,time(r));}

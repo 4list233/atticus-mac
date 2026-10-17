@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import unittest
 import threading
 import urllib.error
@@ -13,15 +12,15 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import atticus
+from tests import scratch_dir
 
 
 class BackgroundTests(unittest.TestCase):
     def setUp(self):
-        root = tempfile.TemporaryDirectory(); self.addCleanup(root.cleanup)
-        for p in [patch.dict(os.environ, {'ATTICUS_ASK': root.name}, clear=True),
-                  patch.object(atticus, 'WORKED', str(Path(root.name, 'worked.json'))),
-                  patch.object(atticus, 'wait_commit', return_value=True),
-                  patch.object(atticus, 'pref', side_effect=lambda k, d: d)]:
+        root = scratch_dir(self)
+        for p in [patch.dict(os.environ, {'ATTICUS_ASK': str(root)}, clear=True),
+                  patch.object(atticus, 'WORKED', str(root / 'worked.json')),
+                  patch.object(atticus, 'wait_commit', return_value=True)]:
             p.start(); self.addCleanup(p.stop)
         self.target = {'pid': 123, 'windowID': '42', 'windowFrame': [0, 0, 300, 200], 'app': 'Notes', 'window': 'Fixture'}
 

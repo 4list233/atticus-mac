@@ -14,18 +14,12 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import atticus
+from tests import scratch_dir
 
 
 class BrainTests(unittest.TestCase):
     def setUp(self):
-        root = tempfile.TemporaryDirectory()   # never the user's real log, chat or rules (and CI has no ~/.config/atticus)
-        self.addCleanup(root.cleanup)
-        p = patch.object(atticus, 'DIR', root.name)
-        p.start()
-        self.addCleanup(p.stop)
-        self.prefs = patch.object(atticus, 'pref', side_effect=lambda k, d: d)
-        self.prefs.start()
-        self.addCleanup(self.prefs.stop)
+        scratch_dir(self)   # never the user's real log, chat or rules (and CI has no ~/.config/atticus)
 
     def test_custom_server_replaces_claude_sign_in_and_models(self):
         self.assertEqual(atticus.server(), {})   # empty address: plain Claude
@@ -131,6 +125,30 @@ class BrainTests(unittest.TestCase):
                     ask.assert_called_once()
                     self.assertIn('more of your plan', ask.call_args.args[0]['options'][0])
 
+    def test_escalation_and_retry_handoffs_are_terminal_with_unknown_usage(self):
+        for first in ('[sonnet]', 'Failed attempt.'):
+            with self.subTest(first=first):
+                def attempt(*args):
+                    brain.ok = False; brain.cmds = []; brain.ran = ['attempt']
+                    brain.handoff = {'accepted': True} if brain.call_count == 2 else None
+                    return ('', None, ['moved']) if brain.handoff else (first, .001, [])
+                brain = unittest.mock.Mock(side_effect=attempt)
+                with patch.multiple(atticus, licensed=lambda: True, ping=lambda: None, fast=lambda _: None,
+                                    front=lambda: ('Fixture', 'Scratch'), osa=lambda *a: '', screens=lambda: [],
+                                    selection_context=lambda: '', relevant_rules=lambda _: '', recent=lambda: [],
+                                    workflows=lambda *a: '', screen_for=lambda *a: None, wait_commit=lambda: True,
+                                    run=brain, start_ai=lambda *a: None, remember_turn=unittest.mock.Mock()), \
+                     patch.object(atticus,'pref',side_effect=lambda k,d: {'escalateAuto':True}.get(k,d)), \
+                     patch.object(atticus,'log_turn') as log,patch.object(atticus,'remember_workflow') as learn, \
+                     patch.object(atticus.threading,'Thread'),patch.dict(os.environ,{'ATTICUS_UI':'1','ATTICUS_ASK':atticus.DIR}), \
+                     patch('sys.argv',['atticus.py','Fixture task']),patch('sys.stdout',io.StringIO()):
+                    atticus.main()
+                    atticus.remember_turn.assert_not_called()
+                self.assertEqual(brain.call_count,2)
+                self.assertIsNone(log.call_args.args[3]);self.assertEqual(log.call_args.args[4],['moved'])
+                self.assertEqual(log.call_args.args[1],'Moved the task to a background agent.')
+                learn.assert_not_called()
+
     def test_summary_deadline_does_not_start_a_late_unused_capture(self):
         class NoThread:
             made = []
@@ -195,7 +213,8 @@ class BrainTests(unittest.TestCase):
         self.assertIn(atticus.MISS, out.getvalue())
 
     def test_domain_dots_and_url_case_survive(self):
-        with patch.object(atticus, 'skills', return_value={}), patch.object(atticus.subprocess, 'run') as run:
+        with patch.object(atticus, 'skills', return_value={}), \
+             patch.object(atticus.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
             for request, url in [('Open github.com.', 'https://github.com'),
                                  ('Open github dot com', 'https://github.com'),
                                  ('Open https://github.com/SaarthurR/atticus?q=UI', 'https://github.com/SaarthurR/atticus?q=UI')]:
@@ -527,7 +546,7 @@ raise SystemExit(4)
 
     def test_error_result_is_not_learned(self):
         p = unittest.mock.Mock()
-        p.stdin = io.StringIO(); p.ask = ''; p.returncode = 0
+        p.stdin = io.StringIO(); p.ask = ''; p.returncode = 0; p.errors = io.StringIO()
         p.stdout = map(json.dumps, [
             {'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'name': 'Bash', 'input': {'command': 'open -a Notes'}}]}},
             {'type': 'result', 'is_error': True, 'result': 'Could not finish.'}])
@@ -563,7 +582,7 @@ raise SystemExit(4)
         for answer in ('No matching processes; the app is closed.', ''):
             with self.subTest(answer=answer):
                 p = unittest.mock.Mock()
-                p.stdin = io.StringIO(); p.ask = ''; p.returncode = 0
+                p.stdin = io.StringIO(); p.ask = ''; p.returncode = 0; p.errors = io.StringIO()
                 p.stdout = map(json.dumps, [
                     {'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': 'probe', 'name': 'Bash', 'input': {'command': 'pgrep fixture'}}]}},
                     {'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'probe', 'is_error': True, 'content': 'Exit code 1'}]}},
@@ -580,19 +599,53 @@ raise SystemExit(4)
         for is_error, tools, text in ((True, False, error), (True, True, error), (False, False, error), (True, False, 'Service unavailable')):
             with self.subTest(is_error=is_error, tools=tools, text=text):
                 p = unittest.mock.Mock()
-                p.stdin = io.StringIO(); p.ask = ''; p.returncode = 0
+                p.stdin = io.StringIO(); p.ask = ''; p.returncode = 0; p.errors = io.StringIO()
                 events = [{'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'name': 'Bash', 'input': {'command': 'echo fixture'}}]}}] if tools else []
                 p.stdout = map(json.dumps, events + [{'type': 'result', 'is_error': is_error, 'result': text}])
                 with patch.object(atticus, 'say') as say, patch.object(atticus, 'plan', return_value={'ok': True, 'text': 'Logged in'}) as plan:
                     reply, _, _ = atticus.run('test', p)
-                if is_error and not tools and text == error:
-                    say.assert_called_once_with('!', 'setup')
+                if is_error and text == error:
+                    self.assertEqual(say.call_args_list.count(unittest.mock.call('!', 'setup')), 1)
                     self.assertEqual(reply, 'Your Claude sign-in expired. Atticus setup is open to sign in again.')
                     self.assertFalse(atticus.run.ok)
+                elif is_error:
+                    self.assertIn('temporarily unavailable', reply)
+                    self.assertEqual(atticus.run.error, text)
                 else:
                     self.assertEqual(reply, text)
                     self.assertNotIn(unittest.mock.call('!', 'setup'), say.call_args_list)
                 plan.assert_not_called()
+
+    def test_claude_process_errors_are_actionable_and_keep_clean_details(self):
+        cases = [
+            ('HTTP 429 rate limit exceeded', 'temporarily rate-limited'),
+            ('network connection timed out', 'Check your internet connection'),
+            ('Traceback in /private/fixture with token abcdefghijklmnopqrstuvwxyz123456', 'stopped before answering'),
+        ]
+        for detail, expected in cases:
+            with self.subTest(detail=detail):
+                p = unittest.mock.Mock()
+                p.stdin = io.StringIO(); p.stdout = []; p.ask = ''; p.returncode = 1; p.errors = io.StringIO(detail)
+                with patch.object(atticus, 'plan', return_value={'ok': True, 'text': 'Ready'}):
+                    reply, _, _ = atticus.run('test', p)
+                self.assertIn(expected, reply)
+                self.assertNotIn(detail, reply)
+                self.assertNotIn('abcdefghijklmnopqrstuvwxyz123456', atticus.run.error)
+
+    def test_terminal_error_text_uses_friendly_mapping_and_copy_details(self):
+        for detail, expected in [('HTTP 429 rate limit exceeded', 'rate-limited'),
+                                 ('network timeout at /private/fixture', 'could not connect'),
+                                 ('Error: stack/path token abcdefghijklmnopqrstuvwxyz123456', 'stopped before answering')]:
+            with self.subTest(detail=detail):
+                p = unittest.mock.Mock()
+                p.stdin = io.StringIO(); p.ask = ''; p.returncode = 0; p.errors = io.StringIO('stderr context')
+                p.stdout = [json.dumps({'type': 'result', 'is_error': True, 'result': detail})]
+                reply, _, _ = atticus.run('test', p)
+                self.assertIn(expected, reply)
+                self.assertNotIn(detail, reply)
+                self.assertIn('stderr context', atticus.run.error)
+                self.assertNotIn('abcdefghijklmnopqrstuvwxyz123456', atticus.run.error)
+                self.assertFalse(atticus.run.ok)
 
     def test_cancellation_stops_descendant(self):
         with tempfile.TemporaryDirectory() as root:
@@ -700,9 +753,9 @@ class WatchAndBudgetTests(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def fake_app(self, out, code=0):
+    def fake_app(self, out='', code=0, script=None):
         f = tempfile.NamedTemporaryFile('w', suffix='.sh', delete=False)
-        f.write(f'#!/bin/sh\nprintf %s "{out}"\nexit {code}\n')
+        f.write('#!/bin/sh\n' + (script or f'printf %s "{out}"\nexit {code}\n'))
         f.close()
         os.chmod(f.name, 0o755)
         self.addCleanup(os.remove, f.name)
@@ -727,12 +780,7 @@ class WatchAndBudgetTests(unittest.TestCase):
         self.assertIn("can't read its window", self.notes[-1])
 
     def test_title_words_that_name_a_tab_fall_back_to_the_main_window(self):
-        f = tempfile.NamedTemporaryFile('w', suffix='.sh', delete=False)   # no window has that title; the main one reads fine
-        f.write('#!/bin/sh\n[ -n "$3" ] && exit 1\nprintf %s "All set"\n')
-        f.close()
-        os.chmod(f.name, 0o755)
-        self.addCleanup(os.remove, f.name)
-        with patch.object(atticus, 'APP', f.name):
+        with self.fake_app(script='[ -n "$3" ] && exit 1\nprintf %s "All set"\n'):   # no window has that title; the main one reads fine
             atticus.watch('', '', 'Orca', 'Atticus meeting mode spec', 'gone', 'esc to interrupt')
         self.assertIn('Orca: done.', self.notes[-1])
 
@@ -838,11 +886,7 @@ class WatchAndBudgetTests(unittest.TestCase):
 
 class WebAndHistoryTests(unittest.TestCase):
     def setUp(self):
-        root = tempfile.TemporaryDirectory()   # never the user's real log or settings
-        self.addCleanup(root.cleanup)
-        for p in (patch.object(atticus, 'DIR', root.name), patch.object(atticus, 'pref', side_effect=lambda k, d: d)):
-            p.start()
-            self.addCleanup(p.stop)
+        scratch_dir(self)   # never the user's real log or settings
 
     def test_history_finds_past_asks_by_words_or_date(self):
         with open(os.path.join(atticus.DIR, 'log.jsonl'), 'w') as f:

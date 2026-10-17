@@ -12,8 +12,8 @@
   body { display: flex; }
 
   [hidden] { display: none !important; }
-  #meetingq { width:100%;box-sizing:border-box;background:var(--card);color:var(--fg);border:0;border-radius:9px;padding:10px 12px;font:13px system-ui;box-shadow:inset 0 0 0 .5px var(--line);outline:none;-webkit-user-select:text; }
-  #meetingq:focus { box-shadow:inset 0 0 0 1px var(--accent); }
+  #meetingq,#askq { width:100%;box-sizing:border-box;background:var(--card);color:var(--fg);border:0;border-radius:9px;padding:10px 12px;font:13px system-ui;box-shadow:inset 0 0 0 .5px var(--line);outline:none;-webkit-user-select:text; }
+  #meetingq:focus,#askq:focus { box-shadow:inset 0 0 0 1px var(--accent); }
   #meetingcount { margin:12px 2px 8px;font-size:11px;color:var(--fg3); }
   #meetinglist { overflow:hidden; }
   .meetingrow { all:unset;display:block;box-sizing:border-box;width:100%;padding:13px 14px;cursor:pointer;transition:background .15s; }
@@ -35,6 +35,10 @@
   .savedline div { min-width:0;overflow-wrap:anywhere;white-space:pre-wrap; }
   .savedline b { display:block;color:var(--fg2);font-size:11px;font-weight:500;margin-bottom:2px; }
   #meetingmessage { font-size:12px;color:var(--fg2);margin:12px 0; }
+  #askq { margin-bottom:8px; } #asklist { max-height:320px;overflow-y:auto; }
+  #asklist .t span { -webkit-user-select:text;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap; }
+  #notice { position:fixed;bottom:16px;left:208px;right:0;margin:0 auto;width:fit-content;max-width:420px;display:flex;align-items:center;gap:12px;
+    padding:8px 8px 8px 14px;border-radius:11px;background:rgba(44,44,46,.96);box-shadow:inset 0 0 0 .5px var(--line),0 6px 20px rgba(0,0,0,.3);font-size:12.5px;animation:rise .2s var(--out); }
   @media(prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none!important;transition:none!important; } }
   body.reduce * { animation:none!important;transition:none!important; }
 
@@ -104,7 +108,7 @@
   .caps .hint { color: var(--fg2); font-size: 14px; animation: blink 1.4s ease-in-out infinite; }
   @keyframes blink { 50% { opacity: .45; } }
   .shortcut .acts { display: flex; gap: 8px; align-items: center; }
-  .shortcut small { color: var(--fg3); font-size: 11.5px; } .shortcut small.warn { color: #ff9f0a; }
+  .shortcut small { color: var(--fg3); font-size: 11.5px; } .shortcut small.warn, .shortcut small.taken { color: #ff9f0a; }
   .cap { min-width: 26px; height: 26px; padding: 0 7px; box-sizing: border-box; border-radius: 6px; display: grid; place-items: center;
     font: 500 12px system-ui; background: linear-gradient(#fdfdfd, #e8e8ed); color: #1d1d1f;
     box-shadow: 0 0 0 .5px rgba(0,0,0,.16), 0 1.5px 0 rgba(0,0,0,.16); }
@@ -160,7 +164,7 @@
   .source-pill { color:var(--fg2);background:var(--sel);border-radius:9px;padding:2px 7px;font-size:10.5px;white-space:nowrap; }
   .profile-add { margin-left:24px; }
   .profile-sources { display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 4px 0; }
-  #profileStatus { color:var(--fg3);font-size:11.5px;line-height:1.4;min-height:16px; }
+  #profileStatus { color:var(--fg3);font-size:11.5px;line-height:1.4;min-height:16px; } #profileStatus .btn { margin:6px 0 0;display:inline-flex;align-items:center; }
 
   .status { display: flex; align-items: center; gap: 8px; }
   .dot { width: 8px; height: 8px; border-radius: 4px; background: var(--green); flex: none; }
@@ -281,8 +285,8 @@
     <div class="group">
       <div class="row"><div class="t"><b>AI client</b><span id="clientwhy"></span></div><div class="seg" data-k="client"><button data-v="claude">Claude</button><button data-v="devin">Devin</button></div></div>
       <div class="row"><div class="t"><b>Claude model</b><span id="modelwhy"></span></div><div class="seg" data-k="model"><button data-v="haiku">Haiku</button><button data-v="sonnet">Sonnet</button><button data-v="opus">Opus</button></div></div>
-      <div class="row"><div class="t"><b>Offer Sonnet for harder tasks</b><span>Haiku can suggest Sonnet before a difficult task or after a failure. Sonnet is slower and uses more of your plan per ask. Your other asks keep their selected model.</span></div><label class="sw"><input type="checkbox" data-k="escalate"></label></div>
-      <div class="row"><div class="t"><b>Switch automatically</b><span>Use Sonnet for that task without asking, based on difficulty or a failed attempt. Off by default. Uses more of your plan per ask.</span></div><label class="sw"><input type="checkbox" data-k="escalateAuto"></label></div>
+      <div class="row"><div class="t"><b>Suggest Sonnet for harder tasks</b><span>Haiku asks before it moves a difficult or failed task to Sonnet. Sonnet gives better answers on hard tasks but is slower and uses more of your plan per ask.</span></div><label class="sw"><input type="checkbox" data-k="escalate"></label></div>
+      <div class="row"><div class="t"><b>Route harder tasks to Sonnet</b><span>Haiku answers simple asks. A task that needs deeper reasoning, or that Haiku fails, goes to Sonnet without asking. Uses more of your plan per ask, only on those tasks.</span></div><label class="sw"><input type="checkbox" data-k="escalateAuto"></label></div>
     </div>
     <h3>Background agents</h3>
     <div class="group">
@@ -295,7 +299,7 @@
     <div class="group">
       <div class="row"><div class="t"><b>Address</b><span>Think with DeepSeek, Ollama, LM Studio or any server with Claude’s API instead of your Claude plan. Empty uses Claude.</span></div><input class="field" id="apiBase" placeholder="https://api.deepseek.com/anthropic" spellcheck="false" aria-label="Custom server address"></div>
       <div class="row"><div class="t"><b>Key</b></div><input class="field" id="apiKey" type="password" placeholder="Not needed for local servers" aria-label="Custom server key"></div>
-      <div class="row"><div class="t"><b>Model</b><span>Screen tasks need a model that can see images.</span></div><input class="field" id="apiModel" list="apimodels" placeholder="deepseek-flash" spellcheck="false" aria-label="Custom server model"><datalist id="apimodels"></datalist></div>
+      <div class="row"><div class="t"><b>Model</b><span id="srvnote" role="status">Screen tasks need a model that can see images.</span></div><input class="field" id="apiModel" list="apimodels" placeholder="deepseek-flash" spellcheck="false" aria-label="Custom server model"><datalist id="apimodels"></datalist></div>
     </div>
     <h3>Speed</h3>
     <div class="group">
@@ -344,8 +348,11 @@
     <p class="lede">What Atticus has cost, priced at Claude API list rates. On a Claude plan it comes out of your plan’s usage, not your wallet.</p>
     <div class="stats" id="stats"></div>
     <h3>History</h3>
+    <input type="search" id="askq" placeholder="Search asks and answers" aria-label="Search ask history" autocomplete="off">
+    <div class="group" id="asklist" role="list" aria-label="Recent asks"></div>
+    <h3>Diagnostics</h3>
     <div class="group">
-      <div class="row"><div class="t"><b>Ask log</b><span>Completed requests, answers and cost. Live commands are marked; instant actions cost $0.</span></div><button class="btn" data-do="openLog">Open</button></div>
+      <div class="row"><div class="t"><b>Raw ask log</b><span>Every request with its steps, timing and cost, as JSON lines.</span></div><button class="btn" data-do="openLog">Open Raw Log</button></div>
       <div class="row"><div class="t"><b>Forget this conversation</b><span>Follow-ups like “open the second one” start fresh.</span></div><button class="btn red" data-do="clearRecent">Forget</button></div>
     </div>
   </section>
@@ -458,13 +465,29 @@
     <p class="note">Only the text above goes into the issue draft. Nothing is submitted until you submit it on GitHub.</p>
   </section>
 </main>
+<div id="notice" role="status" aria-live="polite" hidden><span id="noticetext"></span><button class="btn" id="noticebtn" hidden></button></div>
 
 <script>
   const $ = id => document.getElementById(id);
+  const esc = t => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));   // for text put into innerHTML
   const post = m => window.webkit?.messageHandlers.st.postMessage(m);
   let P = {};
-  const shortcutHint = () => P.input === 'type' ? 'Press to type. Return sends.' : P.talkMode === 'toggle' ? 'Press to listen. Press again to send.' : 'Hold it, talk, let go. Hover the box to type.';
+  let hotkeyTaken = false;   // another app owns the saved shortcut, so it does nothing
+  const shortcutHint = () => hotkeyTaken ? 'Another app uses this shortcut. Change it to use Atticus.' : P.input === 'type' ? 'Press to type. Return sends.' : P.talkMode === 'toggle' ? 'Press to listen. Press again to send.' : 'Hold it, talk, let go. Hover the box to type.';
   const set = (k, v) => { P[k] = v; post({ do: 'set', k, v }); paint(); };
+  // One status line for the whole window, with an optional action. It fades on its own; a waiting deletion happens when it goes.
+  let noticeTimer, pending = null;   // pending: {msg, sel}, a deletion its Undo can still take back
+  function showNotice(text, action, run) {
+    flush(); clearTimeout(noticeTimer); $('notice').hidden = !text; $('noticetext').textContent = text || '';
+    $('noticebtn').hidden = !action; $('noticebtn').textContent = action || ''; $('noticebtn').onclick = () => { run(); showNotice(''); };
+    if (text) noticeTimer = setTimeout(() => showNotice(''), 6000);
+  }
+  const flush = (send = true) => { const m = pending?.msg; pending = null; if (m && send) post(m); return m || null; };
+  const hidePending = () => pending && document.querySelectorAll(pending.sel).forEach(b => b.closest('.row').hidden = true);
+  function undoable(msg, sel, text) {   // sel finds the row's × again after a repaint
+    showNotice(text, 'Undo', () => { pending = null; document.querySelectorAll(sel).forEach(b => b.closest('.row').hidden = false); });
+    pending = { msg, sel }; hidePending();
+  }
 
   $('agentsnav').onclick = () => post({ do: 'agents' });   // its own window, beside Settings
   document.querySelectorAll('nav button[data-s]').forEach(b => b.onclick = () => {
@@ -474,6 +497,7 @@
     if (b.dataset.s === 'meetings') { meetingBack(false); requestMeetings(); }
     if (b.dataset.s === 'feedback') { $('feedbackinclude').checked=false; feedbackPreview(); }
     if (b.dataset.s === 'apps') post({ do: 'apps' });   // fresh list and statuses each visit
+    if (b.dataset.s === 'brain') probe();
   });
   document.querySelectorAll('[data-do]').forEach(b => b.onclick = () => post({ do: b.dataset.do }));
   let connected = false;   // Enable All opens claude.ai's connectors page only when none is connected
@@ -513,7 +537,7 @@
     r.onchange = () => { set(r.dataset.k, +r.value); if (r.dataset.k === 'volume') post({ do: 'preview', sound: P.soundDone === 'None' ? 'Glass' : P.soundDone }); };
   });
 
-  const WHY = { haiku: 'Fastest, about 2 s an ask. Right for almost everything.', sonnet: 'Smarter for tricky asks. A few seconds slower; uses more of your plan.',
+  const WHY = { haiku: 'Fastest, about 2 s an ask. Right for almost everything.', sonnet: 'Smarter for tricky asks. A few seconds slower; uses more of your plan. To use it only when needed, pick Haiku and turn on Route harder tasks to Sonnet.',
                 opus: 'Most capable. Slowest; uses your plan fastest.' };
   function paint() {
     if (!recording) showCaps(P.hotkeyLabel);
@@ -540,7 +564,9 @@
     const devin = P.client === 'devin';
     $('brainlede').textContent = devin ? 'Atticus thinks with Devin, on your Devin plan.' : 'Atticus thinks with Claude, on your Claude plan.';
     $('clientwhy').textContent = devin ? 'Devin CLI. Tools wait for confirmed words; commands use Atticus’s safety check and appear as steps.' : 'Claude Code. Runs on your Claude plan; no API key.';
-    ['model', 'escalate', 'escalateAuto'].forEach(k => document.querySelector(`[data-k=${k}]`).closest('.row').hidden = devin);
+    document.querySelector('[data-k=model]').closest('.row').hidden = devin;
+    ['escalate', 'escalateAuto'].forEach(k => document.querySelector(`[data-k=${k}]`).closest('.row').hidden = devin || P.model !== 'haiku');   // routing starts from Haiku
+    document.querySelector('[data-k=escalateAuto]').disabled = !P.escalate;
     $('planname').textContent = devin ? 'Devin' : 'Claude';
     $('safenote').textContent = devin ? 'Safe mode makes every Devin command wait for approval. Direct file-edit, MCP and subagent tools stay off.' : 'AI commands use a scratch folder. Deletes, sends, purchases and commands requesting access outside it need your approval.';
     $('meetingDemo').disabled = $('meetingPrepOpen').disabled = !P.meeting;
@@ -581,13 +607,12 @@
       `<div class="stat"><small>${n}</small><b>${u.asks}</b><span>asks · ${u.unknown ? '≥' : ''}${money(u.usd)}${u.asks ? ' · ' + u.secs + ' s avg' : ''}</span></div>`).join('') +
       (s.all.asks ? `<div class="stat"><small>Avg response</small><b>${s.all.secs} s</b><span>per ask, all time</span></div>` +
         `<div class="stat"><small>Avg cost</small><b>${s.all.unknown ? '≥' : ''}${money(s.all.usd / s.all.asks)}</b><span>per ask, all time</span></div>` : '');
-    const esc = t => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const typed = $('newrule')?.value || '';
     $('rules').innerHTML = (s.rules.length ? s.rules.map((r, i) =>
       `<div class="row rule"><input class="field" data-rule="${i}" value="${esc(r)}" aria-label="Edit rule"><button class="x" data-i="${i}" aria-label="Forget this rule">×</button></div>`).join('')
       : '<div class="empty">No rules yet.</div>') +
       '<div class="add"><input id="newrule" placeholder="When I say focus mode, close Slack and open Notes" aria-label="New rule"><button class="btn blue" id="addrule">Add</button></div>';
-    document.querySelectorAll('.x').forEach(b => b.onclick = () => post({ do: 'forget', line: s.rules[+b.dataset.i] }));
+    $('rules').querySelectorAll('[data-i]').forEach(b => b.onclick = () => undoable({ do: 'forget', line: s.rules[+b.dataset.i] }, `#rules [data-i="${b.dataset.i}"]`, 'Rule forgotten.'));
     document.querySelectorAll('[data-rule]').forEach(input => input.onchange = () => {   // emptied = forgotten
       const v = input.value.trim(), old = s.rules[+input.dataset.rule]; post(v ? { do: 'rule', old, text: v } : { do: 'forget', line: old });
     });
@@ -596,12 +621,29 @@
     $('skills').innerHTML = (s.skills || []).length ? s.skills.map((k, i) =>
       `<div class="row rule"><div class="t"><b>“${esc(k.say)}”</b><span>${esc(k.reply)}</span></div><button class="x" data-u="${i}" aria-label="Forget this command or procedure">×</button></div>`).join('')
       : '<div class="empty">None yet. Ask Atticus to do something; if it works, it lands here.</div>';
-    document.querySelectorAll('[data-u]').forEach(b => b.onclick = () => post({ do: 'unlearn', say: s.skills[+b.dataset.u].say }));
-    paintProfile(s.me || { facts: [] }, esc);
+    document.querySelectorAll('[data-u]').forEach(b => b.onclick = () => undoable({ do: 'unlearn', say: s.skills[+b.dataset.u].say }, `[data-u="${b.dataset.u}"]`, 'Command forgotten.'));
+    paintProfile(s.me || { facts: [] }); hidePending();
     $('ptext').textContent = s.plan.text; $('pdot').classList.toggle('bad', !s.plan.ok);
     $('pbtn').style.display = s.plan.ok ? 'none' : '';
+    asks = s.asks || []; paintAsks();
     painted = true; reveal();
   }
+
+  // Usage → History: recent asks and answers, newest first, each with Copy
+  let asks = [];
+  function paintAsks() {
+    const q = $('askq').value.trim().toLowerCase(), shown = asks.filter(a => !q || (a.task + '\n' + a.reply).toLowerCase().includes(q));
+    $('asklist').replaceChildren(...shown.map(a => {
+      const row = document.createElement('div'); row.className = 'row'; row.setAttribute('role', 'listitem');
+      row.innerHTML = '<div class="t"><b></b><span></span></div><button class="btn">Copy</button>';
+      row.querySelector('b').textContent = a.task; row.querySelector('span').textContent = a.at.slice(5, 16) + ' · ' + a.reply;
+      row.querySelector('button').setAttribute('aria-label', 'Copy answer to ' + a.task);
+      row.querySelector('button').onclick = () => post({ do: 'copy', text: a.reply });
+      return row;
+    }));
+    if (!shown.length) $('asklist').innerHTML = `<div class="empty">${q ? 'No asks match.' : 'Your asks and answers will appear here.'}</div>`;
+  }
+  $('askq').oninput = paintAsks;
 
   // st.reveal({c, t}): a receipt in the box was clicked. Open its category, scroll to the item and let it glow (the category, if it was forgotten).
   let want = null, painted = false;
@@ -621,7 +663,7 @@
     ['school_work','School & work','school: …'],['links','Links & handles','website: …'],['preferences','Preferences','answers: concise'],
     ['people','People','dad: Sunil Ranka'],['notes','Notes','Anything else']];
   const openProfile = new Set();
-  function paintProfile(profile, esc) {
+  function paintProfile(profile) {
     document.querySelectorAll('.profile-category[open]').forEach(d => openProfile.add(d.dataset.category));
     const facts = profile.facts || [], sourceCounts = {};
     facts.forEach(f => sourceCounts[f.source] = (sourceCounts[f.source] || 0) + 1);
@@ -637,7 +679,7 @@
       input.onchange = () => { if (input.value.trim()) post({do:'me',action:'set',id:input.dataset.profileId,text:input.value.trim()}); };
       input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } };
     });
-    document.querySelectorAll('[data-profile-drop]').forEach(b => b.onclick = () => post({do:'me',action:'drop',id:b.dataset.profileDrop}));
+    document.querySelectorAll('[data-profile-drop]').forEach(b => b.onclick = () => undoable({do:'me',action:'drop',id:b.dataset.profileDrop}, `[data-profile-drop="${CSS.escape(b.dataset.profileDrop)}"]`, 'Detail deleted.'));
     document.querySelectorAll('[data-profile-add]').forEach(input => {
       const add = () => { if (input.value.trim()) post({do:'me',action:'add',category:input.dataset.profileAdd,text:input.value.trim()}); };
       input.nextElementSibling.onclick = add; input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
@@ -652,19 +694,22 @@
   }
   $('profileImport').onclick = () => { $('profileImport').disabled = true; $('profileStatus').textContent = 'Importing from Contacts and Mail…'; post({do:'profileImport'}); };
   const SERVER = ['apiBase', 'apiKey', 'apiModel', 'agentApiModel'];   // Intelligence → Custom server, saved like About you
-  SERVER.forEach(k => { const e = $(k); e.onchange = () => { set(k, e.value.trim()); if (['apiBase', 'apiKey'].includes(k) && P.apiBase) post({ do: 'models' }); };
+  const probe = () => {   // ask the saved server for its models; st.models says whether it answered
+    $('srvnote').textContent = P.apiBase ? 'Checking the server…' : 'Screen tasks need a model that can see images.';
+    if (P.apiBase) post({ do: 'models' });
+  };
+  SERVER.forEach(k => { const e = $(k); e.onchange = () => { set(k, e.value.trim()); if (['apiBase', 'apiKey'].includes(k)) probe(); };
     e.onkeydown = ev => { if (ev.key === 'Enter') e.blur(); }; });
   ['apiModel', 'agentApiModel'].forEach(k => $(k).onfocus = () => { if (P.apiBase) post({ do: 'models' }); });
 
   // Apps: every installed app; suggested ones start ticked. Atticus.swift asks macOS about the ticked ones in one go.
   let APPS = [], pick = null, asking = 0, total = 0, view = 'key';
-  const appEsc = t => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   function appRow(a) {
     const end = a.status === 'allowed' ? '<span class="pill ok">Allowed</span>'
       : a.status === 'blocked' ? '<span class="pill no" data-do="automation" title="macOS won’t ask again. Turn it on in System Settings.">Blocked · Fix</span>'
       : a.status === 'asking' ? '<span class="pill wait">Asking…</span>'
-      : `<input type="checkbox" class="ck" data-id="${a.id}" ${pick.has(a.id) ? 'checked' : ''} aria-label="Allow ${appEsc(a.name)}">`;
-    return `<label class="row app"><img src="${a.icon}" alt=""><div class="t"><b>${appEsc(a.name)}</b></div>${end}</label>`;
+      : `<input type="checkbox" class="ck" data-id="${a.id}" ${pick.has(a.id) ? 'checked' : ''} aria-label="Allow ${esc(a.name)}">`;
+    return `<label class="row app"><img src="${a.icon}" alt=""><div class="t"><b>${esc(a.name)}</b></div>${end}</label>`;
   }
   function paintApps() {
     // Key Apps: the usual ones, with Select all. All Apps and search: every app, ticked one by one (no 100-box surprise).
@@ -758,13 +803,24 @@
     feedback(result){if(result.revision!==feedbackRevision)return;if(result.error){$('feedbackbody').textContent=result.error;$('feedbackopen').disabled=true;return;}if(result.include!==$('feedbackinclude').checked)return;$('feedbackbody').textContent=result.body;$('feedbackopen').disabled=false;},
     profileImport(result) {
       $('profileImport').disabled = false;
-      const errors = result.errors || [], counts = result.counts || {};
-      $('profileStatus').textContent = errors.length === 2 ? 'Couldn’t access Contacts or Mail. Nothing changed.'
-        : `${counts.contacts || 0} from Contacts · ${counts.mail || 0} from Mail${errors.length ? ` · ${errors[0]} unavailable` : ''}`;
+      const errors = result.errors || [], counts = result.counts || {}, failed = errors.map(e => ({contacts: 'Contacts', mail: 'Mail'}[e] || e)).join(' and ');
+      $('profileStatus').textContent = errors.length === 2 ? 'Couldn’t read Contacts or Mail. Nothing changed. '
+        : `${counts.contacts || 0} from Contacts · ${counts.mail || 0} from Mail${errors.length ? ` · Couldn’t read ${failed}. ` : ''}`;
+      const denied = errors.filter(e => result.errorReasons?.[e] === 'automation');
+      if (errors.some(e => !denied.includes(e))) $('profileStatus').append(' Try importing again. ');
+      if (denied.length) {
+        const names = denied.map(e => ({contacts: 'Contacts', mail: 'Mail'}[e] || e)).join(' and ');
+        const fix = document.createElement('button'); fix.className = 'btn'; fix.textContent = `Allow ${names} in Automation`;
+        fix.onclick = () => post({ do: 'automation' }); $('profileStatus').append(fix);
+      }
     },
     motion(on){document.body.classList.toggle('reduce',on)},
-    models(list) {   // the custom server's models; an empty Model box takes the first
-      $('apimodels').innerHTML = list.map(m => `<option value="${m.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))}">`).join('');
+    models(result) {   // Ignore answers from a server or credential that has since changed.
+      if (result.base !== P.apiBase || result.key !== (P.apiKey || '')) return;
+      const list = result.list;
+      if (P.apiBase) $('srvnote').textContent = list.length ? `Found ${list.length} model${list.length > 1 ? 's' : ''}. Screen tasks need one that can see images.`
+        : 'No models found there. Is the server running? You can still type a model name.';
+      $('apimodels').innerHTML = list.map(m => `<option value="${esc(m)}">`).join('');
       if (list.length && !P.apiModel && document.activeElement !== $('apiModel')) set('apiModel', list[0]);
     },
     meetings(result){
@@ -779,6 +835,8 @@
   perms(p) {   // each row shows Allowed or its Allow button
       document.querySelectorAll('[data-g]').forEach(b => { b.hidden = !!p[b.dataset.g]; b.previousElementSibling.hidden = !p[b.dataset.g]; });
     },
+    notice(n) { showNotice(n.text); },
+    flush() { return flush(false); },   // the window is closing: Atticus.swift runs the waiting deletion
     tab(name) { document.querySelector(`nav button[data-s="${name}"]`).click(); },
     reveal(item) { want = item; reveal(); },
     apps(list) {
@@ -796,6 +854,7 @@
     load(d) {
       P = {talkMode: 'hold', microphone: 'automatic', quietAudio: false, quietLevel: 0.18, meetingSave: true, meetingSummary: true, client: 'claude', ...d.prefs}; recording = false;
       $('shortcut').classList.remove('rec'); $('change').textContent = 'Change Shortcut';
+      hotkeyTaken = !!d.hotkeyTaken; if ($('schint').className !== 'warn') $('schint').className = hotkeyTaken ? 'taken' : '';
       if (d.icon) $('icon').src = $('bigicon').src = d.icon;
       $('ver').textContent = $('aboutver').textContent = d.version ? 'Version ' + d.version : 'Atticus';
       if (d.update) $('upstatus').textContent = d.update;
@@ -809,7 +868,7 @@
     },
     rec(m) { if (recording) /^Add/.test(m) ? showCaps('', m) : showCaps(m, m ? '' : 'Press your shortcut'); },   // held modifiers, live
     taken() { $('schint').textContent = 'Another app already uses that shortcut. Kept your old one.'; $('schint').className = 'warn';
-              setTimeout(() => { $('schint').className = ''; $('schint').textContent = shortcutHint(); }, 4000); },
+              setTimeout(() => { $('schint').className = hotkeyTaken ? 'taken' : ''; $('schint').textContent = shortcutHint(); }, 4000); },
     state,
   };
 </script>

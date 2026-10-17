@@ -210,6 +210,7 @@ def run_scenario(scenario, repo, live=False):
         environment['ATTICUS_CLAUDE'] = fake_claude
     stack = contextlib.ExitStack()
     stack.enter_context(mock.patch.dict(os.environ, environment))
+    stack.enter_context(mock.patch.dict(sys.modules))  # put back the atticus module other tests patch
     for key in ('ATTICUS_ASK', 'ATTICUS_HANDS_STATE', 'ATTICUS_RELAY_OWNER', 'ATTICUS_LIVE'):
         os.environ.pop(key, None)
     if live:

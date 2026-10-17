@@ -56,7 +56,7 @@ final class AppStub{
  let web=WKWebView()
  let panel=KeyPanel(contentRect:NSRect(x:40,y:40,width:340,height:120),styleMask:[.nonactivatingPanel,.borderless],backing:.buffered,defer:false)
  let mini=MiniScreen(),engine=EngineStub();var busy=false,composing=false,pinned=false,gen=0,escRef:EventHotKeyRef?,agentCard=""
- var calls:[String]=[],defaultKeys:[EventHotKeyRef]=[]
+ var calls:[String]=[],defaultKeys:[EventHotKeyRef]=[],allowUntil=Date.distantPast,allowUserApp=false
  var defaultWanted=false,defaultObservers:[NSObjectProtocol]=[]
  func js(_ call:String,_ data:Any?=nil){calls.append(call)}
  func modelChoices()->[String:Any]{[:]}
@@ -75,7 +75,7 @@ enum Hands {
  static func checkStopped()throws{}
 ''' + lease + '''
 }
-''' + source[source.index('func applySharing('):source.index('func profileName(')] + panels + body
+''' + source[source.index('func applySharing('):source.index('func profileName(')] + source[source.index('func callJS('):source.index('func currentRequestScreen(')] + panels + body
     if real_mini:   # the real live-window stream, for screenshots that show it
         stub=harness[harness.index('final class MiniScreen {'):harness.index('\n}\n',harness.index('final class MiniScreen {'))+3]
         harness=harness.replace(stub,mini+'func axWindowNumber(_ e:AXUIElement)->NSNumber?{nil}\n').replace('import Cocoa\n','import Cocoa\nimport ScreenCaptureKit\nimport CoreMedia\n',1)
@@ -110,6 +110,29 @@ guard agentsUI.hasLive else{print("Restart guard lost blocked or queued work");e
 agentsUI.receive(["event":"list","agents":Array(rows.suffix(3))])
 guard agentsUI.count==0,!agentsUI.hasLive else{print("Terminal and idle agents stayed live");exit(1)}
 agentsUI.process?.terminate();print("working agent count checks ok")''','working agent count checks ok')
+
+    def test_pause_stops_every_live_agent_queued_first(self):
+        run_fixture(self,'''let agentsUI=AgentPanels();agentsUI.start()
+let now=Date().timeIntervalSince1970
+let statuses=["running","needs-you","waiting-screen","queued","done","failed","idle"]
+let rows=statuses.enumerated().map{index,status in ["id":String(repeating:String(index+1),count:32),"title":status,"status":status,"created":now] as [String:Any]}
+agentsUI.receive(["event":"list","agents":rows])
+let sent=Pipe();agentsUI.input=sent.fileHandleForWriting
+agentsUI.stopAll();try! sent.fileHandleForWriting.close()
+let lines=String(decoding:sent.fileHandleForReading.readDataToEndOfFile(),as:UTF8.self).split(separator:"\\n").map{try! JSONSerialization.jsonObject(with:Data($0.utf8)) as! [String:String]}
+guard lines.allSatisfy({$0["action"]=="stop"}),Set(lines.compactMap{$0["id"]})==Set(rows.prefix(4).map{$0["id"] as! String}),lines.count==4 else{print("Pause missed a live agent or stopped a finished one: \\(lines)");exit(1)}
+guard lines.first?["id"]==String(repeating:"4",count:32) else{print("A running stop could start queued work first");exit(1)}
+agentsUI.process?.terminate();print("pause stop-all ok")''','pause stop-all ok')
+
+    def test_crashed_supervisor_restarts_without_its_half_line(self):
+        run_fixture(self,'''let agentsUI=AgentPanels();agentsUI.start()
+guard let first=agentsUI.process else{print("Supervisor did not start");exit(1)}
+agentsUI.buffer=Data("{\\"event\\":".utf8);agentsUI.lastBox=NSDictionary(dictionary:["action":"box"])
+first.terminate()
+let deadline=Date().addingTimeInterval(8)
+while Date()<deadline,agentsUI.process==nil||agentsUI.process===first{RunLoop.main.run(until:Date().addingTimeInterval(0.05))}
+guard let second=agentsUI.process,second !== first,second.isRunning,agentsUI.buffer.isEmpty else{print("Crashed supervisor was not restarted cleanly");exit(1)}
+second.terminate();print("supervisor restart ok")''','supervisor restart ok')
 
     def test_card_flight_placement_and_reduced_motion(self):
         run_fixture(self,'''let nsapp=NSApplication.shared;nsapp.setActivationPolicy(.accessory)

@@ -6,6 +6,8 @@ import sys
 import tempfile
 import unittest
 
+from tests import run_swift
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -122,6 +124,13 @@ if CommandLine.arguments.contains("--benchmark") {
 
 @unittest.skipUnless(sys.platform == 'darwin', 'macOS Swift worker regression')
 class NativeTests(unittest.TestCase):
+    def test_page_calls_skip_values_json_cannot_hold(self):
+        source = (ROOT / 'Atticus.swift').read_text()
+        bridge = source[source.index('// Call a page function'):source.index('// Load ui/')]
+        out = run_swift(self, 'import Foundation\nclass WKWebView { func evaluateJavaScript(_ s: String) { print(s) } }\n' + bridge +
+                        'let w = WKWebView()\ncallJS(w, "ui.a", [])\ncallJS(w, "ui.b", ["x/y"])\ncallJS(w, "ui.c", [NSValue(range: NSRange(location: 0, length: 1))])\n')
+        self.assertEqual(out.splitlines(), ['ui.a(...[])', 'ui.b(...["x\\/y"])'])
+
     def test_voice_focus_becomes_the_background_guard_target(self):
         source = (ROOT / 'Atticus.swift').read_text()
         start = source.index('    static func focusGuardActive')
@@ -442,7 +451,7 @@ print("calendar/update safety ok")
         methods += source[source.index('    func stopOfferInput()'):source.index('    func dismiss()')]
         methods += source[source.index('    func escape()'):source.index('    func hush()')]
         at = source.index('    func stop()', source.index('final class App'))   # the App's stop, not the Mic class's
-        stop = source[at:source.index('        engine.stop(); feed?.finish()', at)]
+        stop = source[at:source.index('        let input = feed', at)]
         swift = """import Foundation
 struct Prefs { static var paused = false, toggle = false; static func bool(_ k: String) -> Bool { paused } }
 final class MeetingStub { var running = false, focuses = 0; func focus() { focuses += 1 } }
@@ -469,6 +478,7 @@ final class Harness {
     func cue(_ text: String) {}
     func js(_ f: String, _ text: Any? = nil) { if f == "agentEscape" { events.append(f) } }
     func hide(after: Double) {}
+    var pausedNotice = Date.distantPast; func show() {}
 """ + methods + stop + '        events.append("send"); engine.isRunning = false; busy = true; toggleTalk = false\n    }\n' + """}
 meeting.running = true
 let meetingShortcut = Harness(); meetingShortcut.shortcut(true); meetingShortcut.shortcut(false)

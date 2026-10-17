@@ -1,6 +1,6 @@
 """Design screenshots of the real agent shelf and Agent view, VM only (opt-in, not discovered: run this module by name).
 
-run.sh ~/Projects/atticus-agents tests.shoot_agents_design  → PNGs in the VM's ~/atticus/test-artifacts/design.
+run.sh ~/Projects/atticus tests.shoot_agents_design  → PNGs in the VM's ~/atticus/test-artifacts/design.
 """
 import json
 import time

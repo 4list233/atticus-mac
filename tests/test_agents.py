@@ -196,6 +196,26 @@ class AgentTests(unittest.TestCase):
         decision,_=self.gate('Bash',{'command':'echo no'})
         self.assertEqual(decision['permissionDecision'],'deny')
 
+    def test_handoffs_wait_for_confirmation_and_cancel_without_emitting(self):
+        for moved in (False, True):
+            for confirmed in (False, True):
+                with self.subTest(moved=moved, confirmed=confirmed):
+                    p=unittest.mock.Mock();p.stdin=io.StringIO();p.ask=self.root.name;p.returncode=0
+                    marker='[steer {"id":"fixture","text":"Correct the task"}]'
+                    p.stdout=[] if moved else [json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':marker}]}}),
+                                                              json.dumps({'type':'result','result':marker,'total_cost_usd':.001})]
+                    move=unittest.mock.Mock();move.moved=moved;move.handoff.return_value={'accepted':True}
+                    def confirm():
+                        self.assertNotIn('⤴ ', output.getvalue())
+                        return confirmed
+                    with patch.dict(os.environ,{'ATTICUS_UI':'1'}),patch.object(atticus,'MainMove',return_value=move), \
+                         patch.object(atticus,'wait_commit',side_effect=confirm) as gate,patch.object(atticus,'stop_claude'), \
+                         patch.object(atticus.threading,'Thread'),patch.object(atticus.threading,'Timer'),contextlib.redirect_stdout(io.StringIO()) as output:
+                        atticus.run('Request: Fixture',p)
+                    gate.assert_called_once()
+                    self.assertEqual('⤴ ' in output.getvalue(),confirmed)
+                    self.assertEqual(isinstance(atticus.run.handoff,dict),confirmed)
+
     def test_normal_flags_remain_strict_and_agent_persists(self):
         with patch.object(atticus.shutil,'which',return_value='/fixture/claude'),patch.object(atticus.subprocess,'Popen') as popen,patch.object(atticus.atexit,'register'):
             atticus.start_claude()

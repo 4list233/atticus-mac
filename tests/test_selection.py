@@ -1,25 +1,15 @@
 """Selection lifecycle with fake AX, focus, events and clipboard; no real apps."""
 from pathlib import Path
-import subprocess
 import sys
-import tempfile
 import unittest
+
+from tests import run_swift
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 @unittest.skipUnless(sys.platform == 'darwin', 'macOS Swift regression')
 class SelectionTests(unittest.TestCase):
-    def run_swift(self, source):
-        with tempfile.TemporaryDirectory() as root:
-            path = Path(root) / 'test.swift'; path.write_text(source)
-            binary = Path(root) / 'test'
-            result = subprocess.run(['swiftc', str(path), '-o', str(binary)], capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=10)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            return result.stdout
-
     def test_paste_rechecks_target_cancellation_and_clipboard_ownership(self):
         source = (ROOT / 'Atticus.swift').read_text()
         apply = source[source.index('    func apply(_ draft:'):source.index('    func replace(_ draft:')]
@@ -114,7 +104,7 @@ editable.apply("fallback", valid: { true }) { ok = $0 }; pump(0.6)
 precondition(ok && events == before + 2, "failed AX write did not fall back to paste")
 print("paste safety ok")
 '''
-        self.assertIn('paste safety ok', self.run_swift(swift))
+        self.assertIn('paste safety ok', run_swift(self, swift))
 
     def test_typing_capture_accepts_empty_fields_but_never_secure_fields(self):
         source = (ROOT / 'Atticus.swift').read_text()
@@ -157,7 +147,7 @@ precondition(TextSelection.capture() == nil, "AI selection budget exceeded")
 precondition(TextSelection.capture(enabled: true, allowEmpty: true)?.text.count == 6001, "typing truncated selected text")
 print("typing capture ok")
 '''
-        self.assertIn('typing capture ok', self.run_swift(swift))
+        self.assertIn('typing capture ok', run_swift(self, swift))
 
     def test_capture_is_async_and_cancelled_or_stale_results_are_ignored(self):
         source = (ROOT / 'Atticus.swift').read_text().split('final class App: NSObject, WKScriptMessageHandler {',1)[1]
@@ -199,4 +189,4 @@ let reply = Harness(); reply.offerText = "Original request"; reply.text = "retry
 precondition(reply.text == "Original request" && reply.offerText == nil && reply.messages == ["retry"] && reply.finished == 0, "card reply became a new task or lost its original request")
 print("capture safety ok")
 '''
-        self.assertIn('capture safety ok', self.run_swift(swift))
+        self.assertIn('capture safety ok', run_swift(self, swift))

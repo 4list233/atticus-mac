@@ -34,11 +34,14 @@ enum Prefs {
         "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "stats": true, "tips": true, "askMe": true, "escalate": true, "meetingSummary": true, "escalateAuto": false, "input": "voice", "talkMode": "hold", "speechModel": "speech", "improve": false, "improveAsked": false, "draftInsert": "ask", "boxW": 460, "boxH": 360]
     static var d: [String: Any] = defaults.merging(
         (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path)))) as? [String: Any] ?? [:]) { $1 }
-    static func set(_ k: String, _ v: Any) {
-        d[k] = v
-        try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-        if let j = try? JSONSerialization.data(withJSONObject: d, options: [.prettyPrinted, .sortedKeys]) { try? j.write(to: URL(fileURLWithPath: path), options: .atomic) }
+    @discardableResult static func set(_ k: String, _ v: Any) -> Bool {   // false: not on disk, so the old value stays too
+        let old = d[k]; d[k] = v
+        do {
+            try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            try JSONSerialization.data(withJSONObject: d, options: [.prettyPrinted, .sortedKeys]).write(to: URL(fileURLWithPath: path), options: .atomic)
+        } catch { d[k] = old; return false }
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
+        return true
     }
     static func bool(_ k: String) -> Bool { d[k] as? Bool ?? false }
     static func str(_ k: String) -> String { d[k] as? String ?? "" }
@@ -103,19 +106,41 @@ func listenMic() -> MicrophoneDevice? {
 final class Mic: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     private var session: AVCaptureSession?, onBuffer: ((AVAudioPCMBuffer) -> Void)?
     private let queue = DispatchQueue(label: "atticus.mic")
-    var isRunning: Bool { session != nil }
-    func start(_ device: AVCaptureDevice, sampleRate: Double, _ onBuffer: @escaping (AVAudioPCMBuffer) -> Void) throws {
+    private let sessionQueue = DispatchQueue(label: "atticus.mic.session")
+    private var generation = 0
+    private(set) var isRunning = false
+    func start(_ device: AVCaptureDevice, sampleRate: Double, _ onBuffer: @escaping (AVAudioPCMBuffer) -> Void, completion: @escaping (Result<Void, Error>) -> Void) {
         stop()
-        let s = AVCaptureSession(), input = try AVCaptureDeviceInput(device: device), out = AVCaptureAudioDataOutput()
-        guard s.canAddInput(input), s.canAddOutput(out) else { throw NSError(domain: "Mic", code: 1, userInfo: [NSLocalizedDescriptionKey: "\(device.localizedName) can't be opened"]) }
-        s.addInput(input); s.addOutput(out)
-        out.audioSettings = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: sampleRate, AVNumberOfChannelsKey: 1,
-                             AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true, AVLinearPCMIsNonInterleaved: true]
-        out.setSampleBufferDelegate(self, queue: queue)
-        self.onBuffer = onBuffer; session = s
-        s.startRunning()
+        isRunning = true; let g = generation
+        sessionQueue.async { [self] in
+            let result: Result<Void, Error>
+            do {
+                let s = AVCaptureSession(), input = try AVCaptureDeviceInput(device: device), out = AVCaptureAudioDataOutput()
+                guard s.canAddInput(input), s.canAddOutput(out) else { throw NSError(domain: "Mic", code: 1, userInfo: [NSLocalizedDescriptionKey: "\(device.localizedName) can't be opened"]) }
+                s.addInput(input); s.addOutput(out)
+                out.audioSettings = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: sampleRate, AVNumberOfChannelsKey: 1,
+                                     AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true, AVLinearPCMIsNonInterleaved: true]
+                out.setSampleBufferDelegate(self, queue: queue)
+                queue.sync { self.onBuffer = onBuffer }; session = s
+                s.startRunning()
+                guard s.isRunning else { throw NSError(domain: "Mic", code: 2, userInfo: [NSLocalizedDescriptionKey: "\(device.localizedName) could not start"]) }
+                result = .success(())
+            } catch { result = .failure(error) }
+            DispatchQueue.main.async { [self] in
+                guard generation == g else { return }
+                if case .failure = result { stop() }
+                completion(result)
+            }
+        }
     }
-    func stop() { session?.stopRunning(); session = nil; queue.sync { onBuffer = nil } }   // stopRunning lets the device go, so headphones return to music mode
+    func stop(completion: @escaping () -> Void = {}) {
+        generation += 1; isRunning = false
+        sessionQueue.async { [self] in
+            session?.stopRunning(); session = nil   // release the device so headphones return to music mode
+            queue.sync { onBuffer = nil }
+            DispatchQueue.main.async(execute: completion)
+        }
+    }
     func captureOutput(_ output: AVCaptureOutput, didOutput sample: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let onBuffer, let desc = sample.formatDescription, let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(desc),
               let format = AVAudioFormat(streamDescription: asbd),
@@ -293,6 +318,22 @@ func py(_ args: [String], _ extra: [String: String] = [:]) -> Process {
     return p
 }
 
+// Call a page function with JSON arguments: fn(...args). Skips values JSON can't hold (they would raise in JSONSerialization).
+func callJS(_ web: WKWebView?, _ fn: String, _ args: [Any]) {
+    guard JSONSerialization.isValidJSONObject(args), let d = try? JSONSerialization.data(withJSONObject: args), let j = String(data: d, encoding: .utf8) else { return }
+    web?.evaluateJavaScript("\(fn)(...\(j))")
+}
+
+// Load ui/<name> with orbs.js inlined at its /*ORBS*/ marker.
+func loadPage(_ web: WKWebView, _ name: String) {
+    let html = (try? String(contentsOfFile: dir + "/ui/" + name, encoding: .utf8)) ?? "missing " + name
+    let orbs = (try? String(contentsOfFile: dir + "/ui/orbs.js", encoding: .utf8)) ?? ""
+    web.loadHTMLString(html.replacingOccurrences(of: "/*ORBS*/", with: orbs), baseURL: nil)
+}
+
+// The screen under the mouse, else the main one.
+var mouseScreen: NSScreen { NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main! }
+
 // Freeze the user's display before live actions can move or focus another window.
 func currentRequestScreen() -> String {
     let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
@@ -449,10 +490,10 @@ final class MiniScreen: NSObject, SCStreamOutput, SCStreamDelegate {
         let p = Process(); p.executableURL = URL(fileURLWithPath:"/usr/bin/osascript")
         p.arguments = ["-e", "tell application \"System Events\" to set frontmost of (first application process whose unix id is \(pid)) to true"]
         p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
-        guard (try? p.run()) != nil else { return }
-        let deadline = Date().addingTimeInterval(2)   // runs on the main thread: a pending Automation prompt must not freeze the app
-        while p.isRunning && Date() < deadline { usleep(10_000) }
-        if p.isRunning { p.terminate() }
+        let timeout = DispatchWorkItem { if p.isRunning { p.terminate() } }
+        p.terminationHandler = { process in process.terminationHandler = nil; timeout.cancel() }
+        guard (try? p.run()) != nil else { p.terminationHandler = nil; return }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2, execute: timeout)
     }
     static var workInFront: Bool { Prefs.str("workIn") == "front" || ProcessInfo.processInfo.environment["ATTICUS_FOCUS_REQUESTED"] == "1" }
     static func work(_ app: NSRunningApplication) {
@@ -690,7 +731,7 @@ final class App: NSObject, WKScriptMessageHandler {
     var began = Date()   // when recording began, for the recording limit
     var fresh = false   // an untouched input session
     var composing = false, compH: CGFloat = 0, clickTalk = false, quiet: DispatchWorkItem?   // typing box focused / its height from the bottom; mic button = talk without keys
-    var toggleTalk = false, shortcutDown = false
+    var toggleTalk = false, shortcutDown = false, pausedNotice = Date.distantPast
     var askFile = ""   // safe mode: where the Allow / Don't Allow answer goes (atticus.py's gate waits on it)
     var askNeed: [String:Any] = [:]
     var agentMoveFile = ""
@@ -809,9 +850,7 @@ final class App: NSObject, WKScriptMessageHandler {
         panel.level = .statusBar; panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         applySharing(panel)
-        let html = (try? String(contentsOfFile: dir + "/ui/ui.html", encoding: .utf8)) ?? "missing ui.html"
-        let orbs = (try? String(contentsOfFile: dir + "/ui/orbs.js", encoding: .utf8)) ?? ""
-        web.loadHTMLString(html.replacingOccurrences(of: "/*ORBS*/", with: orbs), baseURL: nil)
+        loadPage(web, "ui.html")
         // Click anywhere else closes the box once the answer is up; on the box: ✕ closes, elsewhere copies the answer.
         NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             guard let self, panel.isVisible, !busy, !engine.isRunning, !stuck else { return }
@@ -920,6 +959,12 @@ final class App: NSObject, WKScriptMessageHandler {
             if let id = b["agentLater"] as? String { agentsUI.dismissPing(id) }
             if let id = b["agentConnect"] as? String { NSWorkspace.shared.open(URL(string:"https://claude.ai/settings/connectors")!); agentsUI.dismissPing(id) }
             if b["agents"] != nil { agentsUI.openView() }
+            if b["setup"] != nil { onboarding.open() }
+            if b["workerRetry"] != nil, !busy { pinned = false; typed(text, keep: true) }
+            if b["resume"] != nil {
+                Atticus.settings.apply("paused", false); Atticus.settings.push()
+                if !Prefs.bool("paused") { js("paused", false); hide(after: 1.5) }
+            }
             if b["kofi"] != nil { NSWorkspace.shared.open(kofi) }
             if b["replace"] != nil, !busy { applyReplacement() }
             if b["retry"] != nil, !busy, !engine.isRunning { typed(text, keep: true) }
@@ -932,11 +977,12 @@ final class App: NSObject, WKScriptMessageHandler {
                 Prefs.set(Prefs.str("apiBase").isEmpty ? "model" : "apiModel", m); unwarm(); js("models", modelChoices()); Atticus.settings.push()
             }
             if b["models"] != nil, !Prefs.str("apiBase").isEmpty {   // a custom server's list can change: ask it again
+                let base = Prefs.str("apiBase"), key = Prefs.str("apiKey")
                 DispatchQueue.global().async { [weak self] in
-                    let p = py(["--models"]), out = Pipe(); p.standardOutput = out
+                    let p = py(["--models"], ["ATTICUS_PROBE_BASE":base, "ATTICUS_PROBE_KEY":key]), out = Pipe(); p.standardOutput = out
                     try? p.run(); let d = out.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
                     let list = (try? JSONSerialization.jsonObject(with: d)) as? [String] ?? []
-                    DispatchQueue.main.async { if !list.isEmpty { self?.serverModels = list; self?.js("models", self?.modelChoices() ?? [:]) } }
+                    DispatchQueue.main.async { if base == Prefs.str("apiBase"), key == Prefs.str("apiKey"), !list.isEmpty { self?.serverModels = list; self?.js("models", self?.modelChoices() ?? [:]) } }
                 }
             }
             if let i = b["pick"] as? String, !askFile.isEmpty {
@@ -959,13 +1005,7 @@ final class App: NSObject, WKScriptMessageHandler {
         frame(f)
     }
 
-    func js(_ call: String, _ arg: Any? = nil) {
-        var a = ""
-        if let arg, let d = try? JSONSerialization.data(withJSONObject: [arg]), let s = String(data: d, encoding: .utf8) {
-            a = "..." + s
-        }
-        web.evaluateJavaScript("ui.\(call)(\(a))")
-    }
+    func js(_ call: String, _ arg: Any? = nil) { callJS(web, "ui." + call, arg.map { [$0] } ?? []) }
 
     var serverModels: [String] = []
     func modelChoices() -> [String: Any] {
@@ -1115,7 +1155,10 @@ final class App: NSObject, WKScriptMessageHandler {
         }
         guard !shortcutDown else { return }   // one action per physical press, including key repeat
         shortcutDown = true
-        guard !Prefs.bool("paused") else { return }
+        guard !Prefs.bool("paused") else {
+            if Date().timeIntervalSince(pausedNotice) > 4 { pausedNotice = Date(); js("paused"); show(); hide(after: 4) }
+            return
+        }
         if shush() { return }
         if engine.isRunning { return toggleTalk ? stop() : dismiss() }
         if busy && !retryOffer { return cancel() }
@@ -1228,14 +1271,17 @@ final class App: NSObject, WKScriptMessageHandler {
             let v = Double(min(1, sqrt(sum / Float(buf.frameLength)) * 14))
             DispatchQueue.main.async { if self?.listenID == listeningID { self?.js("level", v) } }
         }
-        do { try engine.start(device, sampleRate: want.sampleRate, onBuffer) } catch { if replying { stopOfferInput() } else { hush() }; js("msg", "Mic error: \(error.localizedDescription)"); hide(after: 3); return }
-        began = Date()   // measure the limit from when the mic is ready
-        Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] t in
-            guard let self, engine.isRunning else { return t.invalidate() }
-            let f = hotkey().flags, held = Date().timeIntervalSince(began)
-            if clickTalk && text.isEmpty && held > 8 { t.invalidate(); if offerText != nil { stopOfferInput(); return }; hush(); js("stopped", ""); return hide(after: 3) }   // nothing said: stop the mic quietly
-            if held > 60 { t.invalidate(); recordingLimit(); return }
-            if !toggleTalk && !clickTalk && !f.isEmpty && !NSEvent.modifierFlags.isSuperset(of: f) { t.invalidate(); stop() }
+        engine.start(device, sampleRate: want.sampleRate, onBuffer) { [weak self] result in
+            guard let self, listenID == listeningID else { return }
+            if case .failure(let error) = result { if replying { stopOfferInput() } else { hush() }; js("msg", "Mic error: \(error.localizedDescription)"); hide(after: 3); return }
+            began = Date()   // measure the limit from when the mic is ready
+            Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] t in
+                guard let self, listenID == listeningID, engine.isRunning else { return t.invalidate() }
+                let f = hotkey().flags, held = Date().timeIntervalSince(began)
+                if clickTalk && text.isEmpty && held > 8 { t.invalidate(); if offerText != nil { stopOfferInput(); return }; hush(); js("stopped", ""); return hide(after: 3) }   // nothing said: stop the mic quietly
+                if held > 60 { t.invalidate(); recordingLimit(); return }
+                if !toggleTalk && !clickTalk && !f.isEmpty && !NSEvent.modifierFlags.isSuperset(of: f) { t.invalidate(); stop() }
+            }
         }
     }
 
@@ -1320,7 +1366,8 @@ final class App: NSObject, WKScriptMessageHandler {
 
     func stop() {
         guard engine.isRunning, !clickTalk || text.isEmpty == false else { return }
-        engine.stop(); feed?.finish()
+        let input = feed
+        engine.stop { input?.finish() }
         quietAudio.end()
         clickTalk = false; toggleTalk = false; quiet?.cancel()
         busy = true
@@ -1437,9 +1484,9 @@ final class App: NSObject, WKScriptMessageHandler {
                     if line.hasPrefix("? ") {   // safe mode: "? <question>\t<command>\t<answer file>"
                         let p = line.dropFirst(2).components(separatedBy: "\t")
                         guard (3...6).contains(p.count) else { continue }
-                        self.askNeed = p.count == 6 ? (try? JSONSerialization.jsonObject(with:Data(p[5].utf8))) as? [String:Any] ?? [:] : [:]
-                        self.retryOffer = p.count == 5 && p[4] == "retry"
-                        self.askFile = p[2]; self.show(); self.js("ask", [p[0], p[1], p.count >= 4 ? p[3] : "", self.retryOffer ? "retry" : ""]); continue
+                        self.retryOffer = p.count >= 5 && p[4] == "retry"
+                        self.askNeed = p.count == 6 && !self.retryOffer ? (try? JSONSerialization.jsonObject(with:Data(p[5].utf8))) as? [String:Any] ?? [:] : [:]
+                        self.askFile = p[2]; self.show(); self.js("ask", [p[0], p[1], p.count >= 4 ? p[3] : "", self.retryOffer ? "retry" : "", self.retryOffer && p.count == 6 ? p[5] : ""]); continue
                     }
                     if line.hasPrefix("⚙ ") {   // "⚙ <key> <true|false>": the AI flips one of Atticus's switches; never pause, and Safe mode only on
                         let p = line.split(separator: " ").map(String.init)
@@ -1500,7 +1547,11 @@ final class App: NSObject, WKScriptMessageHandler {
         if !speculative { js("think") }
         if let w = warm, !w.p.isRunning { try? w.input.close(); warm = nil }
         if warm != nil && warmSel != selKey { unwarm() }   // spawned before the selection changed
-        guard let w = warm ?? spawn() else { busy = false; js("msg", "Could not start atticus.py"); return hide(after: 3) }
+        guard let w = warm ?? spawn() else {
+            busy = false
+            if speculative { ahead = ""; return }
+            pinned = true; js("workerFailed"); show(); return
+        }
         warm = nil; proc = w.p; commit = w.commit
         if !speculative {
             do { try "go".write(toFile: commit, atomically: true, encoding: .utf8) }
@@ -1537,13 +1588,13 @@ final class PointerView: NSView {
 }
 
 final class AgentPanels: NSObject, WKScriptMessageHandler {
-    var process: Process?, input: FileHandle?, output: Pipe?, buffer = Data()
+    var process: Process?, input: FileHandle?, output: Pipe?, buffer = Data(), restarts = 0
     var shelf: ShelfPanel?, shelfWeb: WKWebView?, view: KeyPanel?, viewWeb: WKWebView?
     var startingLabel: NSTextField?, startingStep: NSTextField?
     let mini = MiniScreen()
     var rows: [String:[String:Any]] = [:], offers: [String:[String:Any]] = [:], ready = Set<String>()
     var pending: [String] = [], ping: String?, lastKey = Date.distantPast, nearSince: Date?
-    var lastBox: NSDictionary?, fullscreenValue = false, fullscreenAt = Date.distantPast, checkingFullscreen = false
+    var lastBox: NSDictionary?
     var hovered = "", miniSurface = "", selected = "", drag: (mouse:NSPoint, frame:NSRect)?
     var dismissed = Set<String>()   // chips the user ×'d off the screen; their agents keep working in the badge and Agent view
     var monitor: Any?, keyMonitor: Any?, localKeys: Any?, timer: Timer?
@@ -1572,14 +1623,13 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
     }
     func js(_ surface:String, _ call:String, _ value:Any = [:]) {
         let web = surface == "view" ? viewWeb : shelfWeb
-        guard ready.contains(surface), let data = try? JSONSerialization.data(withJSONObject:[value]), let json = String(data:data,encoding:.utf8) else { return }
-        web?.evaluateJavaScript("agents.\(call)(...\(json))")
+        if ready.contains(surface) { callJS(web, "agents." + call, [value]) }
     }
     func send(_ data:[String:Any]) {
         start()
         guard let json = try? JSONSerialization.data(withJSONObject:data) else { return }
         do { try input?.write(contentsOf:json + Data([10])) }
-        catch { process?.terminate(); process = nil; input = nil }
+        catch { process?.terminate() }
     }
     func start() {
         guard process == nil else { return }
@@ -1598,7 +1648,12 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         }
         p.terminationHandler = { [weak self] _ in
             out.fileHandleForReading.readabilityHandler = nil
-            DispatchQueue.main.async { guard self?.process === p else { return }; self?.process = nil; self?.input = nil }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, process === p else { return }
+                // A crash drops its half-read line and box state; a fresh supervisor relists its saved rows.
+                process = nil; input = nil; buffer = Data(); lastBox = nil; restarts += 1
+                DispatchQueue.main.asyncAfter(deadline:.now() + min(60, pow(2, Double(restarts)))) { [weak self] in self?.start() }
+            }
         }
         do { try p.run() }
         catch { process = nil; input = nil; return }
@@ -1615,7 +1670,10 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
     var sorted: [[String:Any]] { rows.values.sorted { ($0["created"] as? Double ?? 0) > ($1["created"] as? Double ?? 0) } }
     var badge: [String:Any] { ["count":count,"attention":rows.values.contains { $0["status"] as? String == "needs-you" }] }   // the box pill turns amber when one needs you
     var count: Int { rows.values.filter { $0["status"] as? String == "running" }.count }
-    var hasLive: Bool { rows.values.contains { ["running","needs-you","waiting-screen","queued"].contains($0["status"] as? String ?? "") } }
+    static let live: Set = ["running","needs-you","waiting-screen","queued"]
+    var hasLive: Bool { rows.values.contains { Self.live.contains($0["status"] as? String ?? "") } }
+    // Pause: queued rows stop first, so stopping a running one cannot start them.
+    func stopAll() { rows.filter { Self.live.contains($0.value["status"] as? String ?? "") }.sorted { ($0.value["status"] as? String == "queued") && ($1.value["status"] as? String != "queued") }.forEach { send(["action":"stop","id":$0.key]) } }
     // Allow on an agent's setup card: Atticus does what it can, opens the exact place for the rest, and tells the agent once it is on.
     func allow(_ id:String, _ q:[String:Any]) {
         let need = q["need"] as? String ?? "", app = q["app"] as? String ?? "", ask = q["_a"] as? String ?? ""
@@ -1632,6 +1690,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
     func receive(_ event:[String:Any]) {
         let kind = event["event"] as? String ?? ""
         if kind == "list", let list = event["agents"] as? [[String:Any]] {
+            restarts = 0
             rows = Dictionary(uniqueKeysWithValues:list.compactMap { row in (row["id"] as? String).map { ($0,row) } })
             if !hovered.isEmpty, rows[hovered] == nil { endPreview() }
             pending.removeAll { rows[$0] == nil }
@@ -1663,6 +1722,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         app.js("agentCount",badge); tick()
     }
     func accept(_ id:String, from:[Double]? = nil) {
+        guard !Prefs.bool("paused") else { return }
         guard var row = rows[id] else { return }
         row["status"] = count >= 3 ? "queued" : "running"; row["step"] = count >= 3 ? "Queued" : "Starting…"; rows[id] = row
         ensureShelf(); placeShelf(app.panel.isVisible ? app.panel.screen : NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) })
@@ -1745,9 +1805,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         panel.contentView = bg; panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = surface == "view";   // chips cast their own shadows; a window shadow would box them
         panel.hidesOnDeactivate = false
         applySharing(panel); panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.ignoresCycle]; panel.acceptsMouseMovedEvents = true
-        let html = (try? String(contentsOfFile:dir + "/ui/agents.html",encoding:.utf8)) ?? ""
-        let orbs = (try? String(contentsOfFile:dir + "/ui/orbs.js",encoding:.utf8)) ?? ""
-        web.loadHTMLString(html.replacingOccurrences(of:"/*ORBS*/",with:orbs),baseURL:nil)
+        loadPage(web, "agents.html")
         return web
     }
     var pointerBusy = false, pointerNext: [Double]?
@@ -1758,7 +1816,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
     }
     func ensureShelf(preload:Bool = false) {
         guard shelf == nil, preload || hasLive else { return }
-        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main!
+        let screen = mouseScreen
         let bounds = screen.visibleFrame, saved = (Prefs.d["agentFrames"] as? [String:[Double]])?[MeetingFrame.key(screen)]
         let f = Self.shelfFrame(NSRect(x:0,y:0,width:260,height:52),bounds,saved)
         let panel = ShelfPanel(contentRect:f,styleMask:[.nonactivatingPanel,.borderless],backing:.buffered,defer:false)
@@ -1785,7 +1843,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
     func openView(_ id:String = "") {
         start()
         if view == nil {
-            let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main!
+            let screen = mouseScreen
             let f = MeetingFrame.clamp(NSRect(x:screen.visibleFrame.midX-380,y:screen.visibleFrame.midY-290,width:760,height:580),screen.visibleFrame)
             let panel = KeyPanel(contentRect:f,styleMask:[.titled,.closable,.resizable,.nonactivatingPanel,.fullSizeContentView],backing:.buffered,defer:false)
             panel.title = "Agents"; panel.titleVisibility = .hidden; panel.titlebarAppearsTransparent = true
@@ -1816,16 +1874,6 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
     }
     var sharing: Bool { Prefs.bool("agentsHidden") }   // macOS has no public global capture signal; this also covers silent screen-only presentations
     var quiet: Bool { meeting.running || sharing }
-    func checkFullscreen() {
-        guard !checkingFullscreen, Date().timeIntervalSince(fullscreenAt) >= 0.5, let front = NSWorkspace.shared.frontmostApplication else { return }
-        fullscreenAt = Date(); checkingFullscreen = true; let pid = front.processIdentifier
-        DispatchQueue.global(qos:.utility).async { [weak self] in
-            let root = AXUIElementCreateApplication(pid); AXUIElementSetMessagingTimeout(root,0.1)
-            var result = false
-            if let window = axAttribute(root,kAXFocusedWindowAttribute), CFGetTypeID(window) == AXUIElementGetTypeID() { result = axAttribute(window as! AXUIElement,"AXFullScreen") as? Bool ?? false }
-            DispatchQueue.main.async { self?.fullscreenValue = result; self?.checkingFullscreen = false }
-        }
-    }
     func endPreview() {
         hovered = ""; mini.reset()
         if app.busy, let target = app.mini.target { app.mini.receive(target) }
@@ -1936,10 +1984,12 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
 // Shows until finished once; to see it again: defaults delete com.atticus.app onboarded, then restart the app.
 final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
     var win: NSWindow?, web: WKWebView?, timer: Timer?
+    var screenInitiallyGranted = false, screenGrantedDuringSetup = false
     let pane = "x-apple.systempreferences:com.apple.preference.security?Privacy_"
 
     func open() {
         guard win == nil else { win?.makeKeyAndOrderFront(nil); return }
+        screenInitiallyGranted = CGPreflightScreenCaptureAccess(); screenGrantedDuringSetup = false
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 640),
                          styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
         applySharing(w)
@@ -1951,9 +2001,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
         cfg.userContentController.add(self, name: "ob")
         let v = WKWebView(frame: NSRect(x: 0, y: 0, width: 640, height: 612), configuration: cfg)   // top 28 pt stays draggable
         v.setValue(false, forKey: "drawsBackground")
-        let html = (try? String(contentsOfFile: dir + "/ui/onboarding.html", encoding: .utf8)) ?? "missing onboarding.html"
-        let orbs = (try? String(contentsOfFile: dir + "/ui/orbs.js", encoding: .utf8)) ?? ""
-        v.loadHTMLString(html.replacingOccurrences(of: "/*ORBS*/", with: orbs), baseURL: nil)
+        loadPage(v, "onboarding.html")
         bg.addSubview(v); w.contentView = bg
         win = w; web = v
         w.center(); NSApp.activate(ignoringOtherApps: true); w.makeKeyAndOrderFront(nil)
@@ -1973,8 +2021,8 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
         DispatchQueue.global().async { [weak self] in
             let s = Onboarding.perms()
             DispatchQueue.main.async {
-                guard let d = try? JSONSerialization.data(withJSONObject: s), let j = String(data: d, encoding: .utf8) else { return }
-                self?.web?.evaluateJavaScript("ob.set(\(j))")
+                if self?.screenInitiallyGranted == false, s["screen"] == true { self?.screenGrantedDuringSetup = true }
+                self?.call("ob.set", s)
                 self?.web?.evaluateJavaScript("ob.mode(\(Prefs.str("talkMode") == "toggle"))")
                 self?.web?.evaluateJavaScript("ob.prefs({meeting: \(Prefs.bool("meeting")), pointer: \(Prefs.bool("pointer"))})")
                 self?.call("ob.server", ["apiBase": Prefs.str("apiBase"), "apiModel": Prefs.str("apiModel")])
@@ -2001,8 +2049,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
 
     func checkPlan() {
         Onboarding.plan { [weak self] c in
-            guard let d = try? JSONSerialization.data(withJSONObject: c), let j = String(data: d, encoding: .utf8) else { return }
-            self?.web?.evaluateJavaScript("ob.plan(\(j))")
+            self?.call("ob.plan", c)
         }
     }
 
@@ -2098,10 +2145,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
         default: grant(id)
         }
     }
-    func call(_ f: String, _ v: Any) {
-        guard let d = try? JSONSerialization.data(withJSONObject: [v]), let j = String(data: d, encoding: .utf8) else { return }
-        web?.evaluateJavaScript("\(f)(...\(j))")
-    }
+    func call(_ f: String, _ v: Any) { callJS(web, f, [v]) }
 
     // The user's claude.ai connectors (atticus.py --connectors): {connected: [names], signin: [names]}. Slow (it checks each one), so once per open.
     static func connectors(_ done: @escaping ([String: Any]) -> Void) {
@@ -2173,7 +2217,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
             // First click: only macOS's own prompt (its button lands on the right list). Opening Settings at the
             // same time put people in the wrong section; later clicks, when macOS won't prompt again, open Settings.
             if UserDefaults.standard.bool(forKey: "askedScreen") { if !CGPreflightScreenCaptureAccess() { settings("ScreenCapture") } }
-            else { UserDefaults.standard.set(true, forKey: "askedScreen"); _ = CGRequestScreenCaptureAccess() }
+            else { UserDefaults.standard.set(true, forKey: "askedScreen"); if CGRequestScreenCaptureAccess() { screenGrantedDuringSetup = true } }
         case "auto":
             Atticus.settings.open(tab: "apps")
         case "chrome":   // clicks Chrome's View > Developer > Allow JavaScript from Apple Events; Atticus keeps it on after this OK
@@ -2188,13 +2232,15 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
     // Screen Recording only takes effect after a relaunch; launchd (KeepAlive) starts us again right away.
     func finish() {
         UserDefaults.standard.set(true, forKey: "onboarded")
-        let relaunch = !CGPreflightScreenCaptureAccess()
+        let relaunch = screenGrantedDuringSetup
         win?.close()
         if relaunch { relaunchSoon() }
     }
 
     func windowWillClose(_ n: Notification) {
         timer?.invalidate(); timer = nil
+        walkTimer?.invalidate(); walkTimer = nil   // closing setup cancels Enable All: no more Settings panes open later
+        if !walk.isEmpty { walk = []; Atticus.settings.send("walk", "") }
         web?.configuration.userContentController.removeScriptMessageHandler(forName: "ob")
         web = nil; win = nil
     }
@@ -2271,7 +2317,6 @@ func pointAt(_ line: String) {
     DispatchQueue.main.asyncAfter(deadline: .now() + 6) { if ring === w { w.orderOut(nil); ring = nil } }
 }
 
-func jsonString(_ s: String) -> String { String(data: try! JSONSerialization.data(withJSONObject: [s]), encoding: .utf8)!.dropFirst().dropLast().description }
 
 // Restart Atticus (Screen Recording only takes effect in a new process); works under launchd or when opened by hand.
 func relaunchSoon() {
@@ -2334,7 +2379,11 @@ enum Updater {
 
 // Opening Atticus again (Spotlight, Finder, Dock) while it runs: setup the first time, Settings after (Agents is the first item there).
 final class Delegate: NSObject, NSApplicationDelegate {
-    func applicationWillTerminate(_ n: Notification) { meeting.discard(); app.hush(); app.quietAudio.end(immediate: true); app.shush() }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        meeting.discard(); app.hush(); app.quietAudio.end(immediate: true); app.shush()
+        MeetingArchive.writes.notify(queue: .main) { sender.reply(toApplicationShouldTerminate: true) }
+        return .terminateLater
+    }
     func applicationShouldHandleReopen(_ s: NSApplication, hasVisibleWindows: Bool) -> Bool {
         UserDefaults.standard.bool(forKey: "onboarded") ? settings.open() : onboarding.open()
         return false
@@ -2361,7 +2410,7 @@ final class MenuBar: NSObject, NSMenuDelegate {
         m.addItem(.separator())
         add(m, "Ask Atticus", #selector(ask), "")
         add(m, agentsUI.count > 0 ? "Agents · \(agentsUI.count) running…" : "Agents…", #selector(openAgents), "")
-        add(m, Prefs.bool("agentsHidden") ? "Show Agent Shelf" : "Hide Agent Shelf", #selector(hideAgents), "")
+        if agentsUI.hasLive { add(m, Prefs.bool("agentsHidden") ? "Show Agent Shelf" : "Hide Agent Shelf", #selector(hideAgents), "") }
         if Prefs.bool("meeting") { add(m, meeting.running ? "Stop Meeting Copilot" : "Meeting Copilot…", #selector(toggleMeeting), "") }
         add(m, Prefs.bool("paused") ? "Resume Atticus" : "Pause Atticus", #selector(pause), "")
         m.addItem(.separator())
@@ -2385,7 +2434,7 @@ final class MenuBar: NSObject, NSMenuDelegate {
     }
     @objc func toggleMeeting() { meeting.running ? meeting.stop() : meeting.open() }
     @objc func ask() { if meeting.running { return meeting.focus() }; app.clickTalk = true; app.start(); if !app.engine.isRunning { app.clickTalk = false } }   // the same box as the shortcut, like its mic button
-    @objc func pause() { Prefs.set("paused", !Prefs.bool("paused")); if Prefs.bool("paused") { meeting.stop(paused: true); app.close(clear: false) }; paint(); settings.push() }
+    @objc func pause() { Prefs.set("paused", !Prefs.bool("paused")); if Prefs.bool("paused") { meeting.stop(paused: true); app.close(clear: false); agentsUI.stopAll() }; paint(); settings.push() }
     @objc func openSettings() { settings.open() }
     @objc func openAgents() { agentsUI.openView() }
     @objc func hideAgents() { Prefs.set("agentsHidden",!Prefs.bool("agentsHidden")) }
@@ -2427,11 +2476,20 @@ enum Apps {
     }
     // "allowed" | "blocked" | "new" per app, asked all at once: a busy or frozen app can stall macOS's answer forever,
     // so whatever isn't back in 1.5 s keeps what was saved before.
+    static let probeLock = NSLock()
+    static var pendingProbes = Set<String>()
     @discardableResult static func statuses(_ ids: [String]) -> [String: String] {
         var codes = [String: OSStatus](); let lock = NSLock(), g = DispatchGroup()
         for id in ids {
+            probeLock.lock(); let fresh = pendingProbes.insert(id).inserted; probeLock.unlock()
+            guard fresh else { continue }
             g.enter()
-            DispatchQueue.global().async { let r = check(id, ask: false); lock.lock(); codes[id] = r; lock.unlock(); g.leave() }
+            DispatchQueue.global().async {
+                let r = check(id, ask: false)
+                lock.lock(); codes[id] = r; lock.unlock()
+                probeLock.lock(); pendingProbes.remove(id); probeLock.unlock()
+                g.leave()
+            }
         }
         _ = g.wait(timeout: .now() + 1.5)
         lock.lock(); let got = codes; lock.unlock()
@@ -2521,7 +2579,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         cfg.userContentController.add(self, name: "st")
         let v = WKWebView(frame: bg.bounds, configuration: cfg)
         v.autoresizingMask = [.width, .height]; v.setValue(false, forKey: "drawsBackground"); v.navigationDelegate = self
-        v.loadHTMLString((try? String(contentsOfFile: dir + "/ui/settings.html", encoding: .utf8)) ?? "missing settings.html", baseURL: nil)
+        loadPage(v, "settings.html")
         bg.addSubview(v); w.contentView = bg
         win = w; web = v
         w.center(); w.makeKeyAndOrderFront(nil)
@@ -2535,19 +2593,17 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
     func webView(_ v: WKWebView, didFinish n: WKNavigation!) { push(); refresh(); DispatchQueue.global().async { [weak self] in self?.send("perms", Onboarding.perms()) }; if !tab.isEmpty { js("st.tab('\(tab)')"); tab = "" }; if let r = revealing { send("reveal", r); revealing = nil } }
 
     func send(_ call: String, _ v: Any) {
-        guard JSONSerialization.isValidJSONObject(v), let d = try? JSONSerialization.data(withJSONObject: v), let j = String(data: d, encoding: .utf8) else { return }
-        DispatchQueue.main.async { [weak self] in self?.js("st.\(call)(\(j))") }
+        DispatchQueue.main.async { [weak self] in callJS(self?.web, "st." + call, [v]) }
     }
 
     func push() {   // the settings, and the app icon for the sidebar
         send("agents", ["count": agentsUI.count])
         js("st.motion(\(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion))")
-        var d: [String: Any] = ["prefs": Prefs.d, "mics": microphoneChoices(), "version": Updater.version, "update": Updater.status]
+        var d: [String: Any] = ["prefs": Prefs.d, "mics": microphoneChoices(), "version": Updater.version, "update": Updater.status, "hotkeyTaken": ref == nil]
         if let t = NSApp.applicationIconImage?.tiffRepresentation, let png = NSBitmapImageRep(data: t)?.representation(using: .png, properties: [:]) {
             d["icon"] = "data:image/png;base64," + png.base64EncodedString()
         }
-        guard let j = try? JSONSerialization.data(withJSONObject: d), let s = String(data: j, encoding: .utf8) else { return }
-        web?.evaluateJavaScript("st.load(\(s))")
+        callJS(web, "st.load", [d])
     }
 
     func refresh() {   // usage, saved rules, Claude plan: atticus.py --state (it runs Claude Code, so off the main thread)
@@ -2587,10 +2643,10 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
             guard let self else { return e }
             let f = e.modifierFlags.intersection([.command, .shift, .option, .control])
             let mods = (f.contains(.control) ? "⌃" : "") + (f.contains(.option) ? "⌥" : "") + (f.contains(.shift) ? "⇧" : "") + (f.contains(.command) ? "⌘" : "")
-            if e.type == .flagsChanged { js("st.rec(\(jsonString(mods)))"); return nil }
+            if e.type == .flagsChanged { js("st.rec(\(Hands.quote(mods)))"); return nil }
             if e.keyCode == 53 && f.isEmpty { done(nil); return nil }   // Esc
             let fn = fkeys.firstIndex(of: Int(e.keyCode))
-            guard !f.isEmpty || fn != nil else { js("st.rec(\(jsonString("Add ⌃, ⌥, ⇧ or ⌘")))"); return nil }
+            guard !f.isEmpty || fn != nil else { js("st.rec(\(Hands.quote("Add ⌃, ⌥, ⇧ or ⌘")))"); return nil }
             let names: [UInt16: String] = [49: "Space", 36: "Return", 48: "Tab", 51: "Delete", 123: "←", 124: "→", 125: "↓", 126: "↑"]
             let key = fn.map { "F\($0 + 1)" } ?? names[e.keyCode] ?? (e.charactersIgnoringModifiers ?? "?").uppercased()
             var c = 0
@@ -2663,12 +2719,13 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
 
     func apply(_ k: String, _ v: Any) {   // one setting changed, from this window or by voice (atticus.py --set)
         if k == "meetingSave", v as? Bool == false, Prefs.bool("meetingSave") {
-            meeting.savingChanged(false); Prefs.set(k, false); push()
+            guard Prefs.set(k, false) else { push(); send("notice", ["text": "Couldn’t save that change, so the old setting is back."]); return }
+            meeting.savingChanged(false); push()
             let alert = NSAlert(); alert.messageText = "Keep your saved meetings?"; alert.informativeText = "New transcripts will no longer be saved. You can keep or delete the meetings already on this Mac."; alert.addButton(withTitle: "Keep Meetings"); alert.addButton(withTitle: "Delete All Meetings")
             if alert.runModal() == .alertSecondButtonReturn { meetings(["action": "clear"]) }
             return
         }
-        Prefs.set(k, v)
+        guard Prefs.set(k, v) else { push(); send("notice", ["text": "Couldn’t save that change, so the old setting is back."]); return }
         if k == "meetingSave" { meeting.savingChanged(v as? Bool == true) }
         if k == "meeting", v as? Bool == false { meeting.stop() }
         if k == "meetingNudge", v as? Bool == true, EKEventStore.authorizationStatus(for: .event) != .fullAccess {
@@ -2679,7 +2736,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         if k == "speak" { if v as? Bool == true { siriVoice() } else { app.shush() } }
         if k == "hideWhenSharing" { NSApp.windows.forEach(applySharing) }
         if k == "menuIcon" { bar.item.isVisible = v as? Bool == true }
-        if k == "paused" { if v as? Bool == true { meeting.stop(paused: true); app.close(clear: false) }; bar.paint() }
+        if k == "paused" { if v as? Bool == true { meeting.stop(paused: true); app.close(clear: false); agentsUI.stopAll() }; bar.paint() }
         if k == "safe" { app.js("mode", v as? Bool == true) }
         if k == "login" {   // the LaunchAgent build.sh installed: enabled = starts at login
             if ProcessInfo.processInfo.environment["ATTICUS_DIR"] != nil { Prefs.set("login",false); push(); return }
@@ -2688,8 +2745,15 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         }
     }
 
-    func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
-        guard let b = m.body as? [String: Any], let what = b["do"] as? String else { return }
+    func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) { if let b = m.body as? [String: Any] { handle(b) } }
+
+    func confirm(_ title: String, _ detail: String, _ button: String) -> Bool {
+        let alert = NSAlert(); alert.messageText = title; alert.informativeText = detail; alert.addButton(withTitle: button); alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    func handle(_ b: [String: Any]) {
+        guard let what = b["do"] as? String else { return }
         switch what {
         case "feedbackInvalidate": feedbackJob += 1; feedbackURL = nil
         case "feedbackPreview": feedbackPreview(b["include"] as? Bool ?? false, b["text"] as? String ?? "", b["revision"] as? Int ?? 0)
@@ -2715,19 +2779,22 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         case "github": NSWorkspace.shared.open(URL(string: "https://github.com/SaarthurR/atticus-mac")!)
         case "kofi": NSWorkspace.shared.open(kofi)
         case "resetHotkey":
-            Prefs.set("hotkeyCode", 49); Prefs.set("hotkeyMods", controlKey | optionKey); Prefs.set("hotkeyLabel", "⌃⌥Space")
-            registerHotkey(); push()
+            done((49, controlKey | optionKey, "⌃⌥Space"))   // same rollback and warning as a recorded shortcut
         case "preview":
             if let n = b["sound"] as? String { app.sound(n, Float(Prefs.num("volume"))) }
         case "setup": onboarding.open()
-        case "models":   // Custom server: the models it offers, for the Model box
+        case "models":   // Bind the response to the saved server that was actually probed.
+            let base = Prefs.str("apiBase"), key = Prefs.str("apiKey")
             DispatchQueue.global().async { [weak self] in
-                let p = py(["--models"]), out = Pipe(); p.standardOutput = out
+                let p = py(["--models"], ["ATTICUS_PROBE_BASE":base, "ATTICUS_PROBE_KEY":key]), out = Pipe(); p.standardOutput = out
                 try? p.run(); let d = out.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
-                self?.send("models", (try? JSONSerialization.jsonObject(with: d)) as? [String] ?? [])
+                self?.send("models", ["base":base, "key":key, "list":(try? JSONSerialization.jsonObject(with: d)) as? [String] ?? []])
             }
+        case "copy": if let text = b["text"] as? String { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string); send("notice", ["text": "Copied."]) }
         case "openLog": NSWorkspace.shared.open(URL(fileURLWithPath:(Prefs.path as NSString).deletingLastPathComponent + "/log.jsonl"))
-        case "clearRecent": try? FileManager.default.removeItem(atPath: app.recent); app.lastDone = .distantPast
+        case "clearRecent":
+            guard confirm("Forget this conversation?", "Follow-ups like “open the second one” will start fresh.", "Forget") else { return }
+            try? FileManager.default.removeItem(atPath: app.recent); app.lastDone = .distantPast; send("notice", ["text": "Conversation forgotten."])
         case "profileImport": importProfile()   // the button is the only path that requests Contacts/Mail access
         case "me":
             guard let action = b["action"] as? String else { return }
@@ -2740,7 +2807,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
             case "drop":
                 guard let id = b["id"] as? String else { return }; args.append(id)
             case "forget-source":
-                guard let source = b["source"] as? String else { return }; args.append(source)
+                guard let source = b["source"] as? String, confirm("Forget everything from \(source)?", "These details are removed from About you. This can’t be undone.", "Forget") else { return }; args.append(source)
             default: return
             }
             DispatchQueue.global().async { [weak self] in self?.helper(args); DispatchQueue.main.async { self?.refresh() } }
@@ -2773,6 +2840,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
 
     func windowWillClose(_ n: Notification) {
         feedbackJob += 1; feedbackURL = nil
+        if let v = web { v.evaluateJavaScript("st.flush()") { [weak self] r, _ in _ = v; if let b = r as? [String: Any] { self?.handle(b) } } }   // a deletion still showing Undo
         if monitor != nil { done(nil) }   // closed mid-recording: keep the old shortcut
         timer?.invalidate(); timer = nil
         web?.configuration.userContentController.removeScriptMessageHandler(forName: "st")
@@ -2784,6 +2852,8 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
 final class MeetingArchive {
     let id: String, folder: String
     let handle: FileHandle
+    private let queue = DispatchQueue(label: "atticus.meeting.archive")
+    static let writes = DispatchGroup()
     init(title: String, app: String, started: Date) throws {
         id = UUID().uuidString
         let root = (Prefs.path as NSString).deletingLastPathComponent + "/meetings"
@@ -2798,11 +2868,16 @@ final class MeetingArchive {
         guard fm.createFile(atPath: folder + "/metadata.json", contents: data, attributes: [.posixPermissions: 0o600]), fm.createFile(atPath: folder + "/events.jsonl", contents: nil, attributes: [.posixPermissions: 0o600]) else { throw CocoaError(.fileWriteUnknown) }
         let fd = Darwin.open(folder + "/events.jsonl", O_WRONLY | O_APPEND | O_NOFOLLOW)
         guard fd >= 0 else { throw CocoaError(.fileWriteUnknown) }; handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-        try handle.synchronize()
     }
-    func append(_ event: [String: Any]) throws {
-        var data = try JSONSerialization.data(withJSONObject: event, options: [.sortedKeys]); data.append(10)
-        try handle.write(contentsOf: data); try handle.synchronize()
+    func append(_ events: [[String: Any]], completion: @escaping (Error?) -> Void) {
+        queue.async(group: Self.writes) { [self] in
+            do {
+                var data = Data()
+                for event in events { data.append(try JSONSerialization.data(withJSONObject: event, options: [.sortedKeys])); data.append(10) }
+                try handle.write(contentsOf: data); try handle.synchronize()
+                DispatchQueue.main.async { completion(nil) }
+            } catch { DispatchQueue.main.async { completion(error) } }
+        }
     }
     static func export(_ text: String, to url: URL) throws {
         let temp = url.deletingLastPathComponent().appendingPathComponent(".atticus-" + UUID().uuidString)
@@ -2944,8 +3019,8 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
     var voice = false, voiceText = "", voicePartial = "", voiceTail = Date.distantPast   // talking to Atticus: your mic goes to the ask box, not the transcript
     var running = false, generation = 0, brief = "", name = "", began = Date(), transcript: [[String: Any]] = []
     var process: Process?, demoProcess: Process?, finishing: Process?, queue: [[String: Any]] = [], timer: Timer?, pending = "", partial = "", settle: DispatchWorkItem?
-    var answerProcess: Process?, answerInput: Pipe?, answerOutput: Pipe?, answerBuffer = Data(), answerTimes: [Int: [String: Double]] = [:], answerQuestion = ""
-    var demo = false, loaded = false, briefEdited = false, gathering = false, serial = 0, answering: Int?, nudge: [String: Any]?
+    var answerProcess: Process?, answerInput: Pipe?, answerOutput: Pipe?, answerTimes: [Int: [String: Double]] = [:], answerQuestion = ""
+    var demo = false, loaded = false, briefEdited = false, gathering = false, prepWaiting = false, serial = 0, answering: Int?, nudge: [String: Any]?
     var calendarContext = meetingCalendarContext
     var expanded = NSSize(width: 340, height: 650), minimized = false, resizing = false
     var pendingBrief: String?
@@ -2960,8 +3035,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
     }
     var measured: [Int: Double] = [:], demoEnds: [Double] = []
     func js(_ call: String, _ value: Any = [:]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: [value]), let json = String(data: data, encoding: .utf8) else { return }
-        web?.evaluateJavaScript("meeting.\(call)(...\(json))")
+        callJS(web, "meeting." + call, [value])
     }
     func open(demo: Bool = false, nudge: [String: Any]? = nil) {
         guard Prefs.bool("meeting"), !Prefs.bool("paused") else { return }
@@ -2975,7 +3049,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
         let config = (Prefs.path as NSString).deletingLastPathComponent
         name = profileName(config + "/me.json")
         let frames = Prefs.d["meetingFrames"] as? [String: [Double]] ?? [:]
-        let screen = NSScreen.screens.first { MeetingFrame.key($0) == Prefs.str("meetingDisplay") } ?? NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main!
+        let screen = NSScreen.screens.first { MeetingFrame.key($0) == Prefs.str("meetingDisplay") } ?? mouseScreen
         let frame = MeetingFrame.initial(frames[MeetingFrame.key(screen)], screen.visibleFrame)
         let p = KeyPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         if let saved = (Prefs.d["meetingSizes"] as? [String: [Double]])?[MeetingFrame.key(screen)], saved.count == 2, saved.allSatisfy({ $0.isFinite && $0 > 0 }) { expanded = NSSize(width: max(280, saved[0]), height: max(380, saved[1])) }
@@ -3014,9 +3088,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
             panel.setFrame(MeetingFrame.clamp(panel.frame, screen.visibleFrame), display: true)
         }
         if nudge != nil { p.setFrame(NSRect(x: p.frame.minX, y: p.frame.maxY - 52, width: 52, height: 52), display: false); bg.layer?.cornerRadius = 26 }   // a blob in the corner; size() grows it into the card
-        let html = (try? String(contentsOfFile: dir + "/ui/meeting.html", encoding: .utf8)) ?? ""
-        let orbs = (try? String(contentsOfFile: dir + "/ui/orbs.js", encoding: .utf8)) ?? ""
-        v.loadHTMLString(html.replacingOccurrences(of: "/*ORBS*/", with: orbs), baseURL: nil)
+        loadPage(v, "meeting.html")
         p.orderFrontRegardless()
     }
     func ready() {
@@ -3091,9 +3163,14 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
     }
     func focus() { panel?.makeKey(); panel?.makeFirstResponder(web); js("focus") }
     func saveEvent(_ event: [String: Any]) {
+        saveEvents([event])
+    }
+    func saveEvents(_ events: [[String: Any]]) {
         guard Prefs.bool("meetingSave"), let archive else { return }
-        do { try archive.append(event) }
-        catch { self.archive = nil; js("saving", false); js("error", "Transcript could not save. Check available disk space.") }
+        archive.append(events) { [weak self] error in
+            guard let self, error != nil, self.archive === archive else { return }
+            self.archive = nil; js("saving", false); js("error", "Transcript could not save. Check available disk space.")
+        }
     }
     func beginArchive() {
         guard Prefs.bool("meetingSave"), archive == nil else { js("saving", archive != nil); return }
@@ -3105,21 +3182,24 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
     }
     func finishArchive(summarize: Bool = true) {
         guard let archive, !archiveEnded else { return }
-        do { try archive.append(["kind": "ended", "at": Date().timeIntervalSince1970, "duration": elapsed]); archiveEnded = true }
-        catch { self.archive = nil; js("saving", false); js("error", "Transcript could not save. Check available disk space."); return }
-        guard summarize else { return }
-        let id = archive.id
-        let p = py(["--meetings"]), input = Pipe(), output = Pipe(); p.standardInput = input; p.standardOutput = output
-        fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
-        do { try p.run() } catch { return }; finishing = p
-        DispatchQueue.global().async { [weak self] in
-            do { try input.fileHandleForWriting.write(contentsOf: JSONSerialization.data(withJSONObject: ["action": "finish", "id": id])); try input.fileHandleForWriting.close() } catch { p.terminate(); return }
-            let data = output.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
-            let result = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-            DispatchQueue.main.async { [weak self] in
-                guard let self, finishing === p else { return }; finishing = nil
-                guard archive.id == self.archive?.id, !running else { return }
-                if let m = result["meeting"] as? [String: Any] { js("recap", m) }
+        archiveEnded = true
+        archive.append([["kind": "ended", "at": Date().timeIntervalSince1970, "duration": elapsed]]) { [weak self] error in
+            guard let self, self.archive === archive else { return }
+            if error != nil { self.archive = nil; archiveEnded = false; js("saving", false); js("error", "Transcript could not save. Check available disk space."); return }
+            guard summarize, archiveEnded, !running else { return }
+            let id = archive.id
+            let p = py(["--meetings"]), input = Pipe(), output = Pipe(); p.standardInput = input; p.standardOutput = output
+            fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+            do { try p.run() } catch { return }; finishing = p
+            DispatchQueue.global().async { [weak self] in
+                do { try input.fileHandleForWriting.write(contentsOf: JSONSerialization.data(withJSONObject: ["action": "finish", "id": id])); try input.fileHandleForWriting.close() } catch { p.terminate(); return }
+                let data = output.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+                let result = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, finishing === p else { return }; finishing = nil
+                    guard archive.id == self.archive?.id, !running else { return }
+                    if let m = result["meeting"] as? [String: Any] { js("recap", m) }
+                }
             }
         }
     }
@@ -3197,8 +3277,8 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self else { return }; let seconds = Int(Date().timeIntervalSince(began)); js("clock", seconds)
             if seconds % 2 == 0 {
-                saveEvent(["kind": "partial", "seconds": seconds, "at": Date().timeIntervalSince1970, "them": pending + " " + partial, "you": micPending + " " + micPartial])
-                saveEvent(["kind": "checkpoint", "duration": seconds])
+                saveEvents([["kind": "partial", "seconds": seconds, "at": Date().timeIntervalSince1970, "them": pending + " " + partial, "you": micPending + " " + micPartial],
+                            ["kind": "checkpoint", "duration": seconds]])
             }
         }
     }
@@ -3277,10 +3357,12 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
     func showAgentPrep(_ row:[String:Any]) {
         agentPrep = row
         guard loaded, !running else { return }
+        guard process == nil, !gathering else { prepWaiting = true; return }   // one meeting helper at a time: this runs when the current one ends
+        prepWaiting = false; gathering = true   // Cancel and Stop treat it like Fill in for me
         let text = row["preparedBrief"] as? String ?? row["summary"] as? String ?? ""
         let event = row["meetingEvent"] as? [String:Any] ?? [:]
         meetingTitle = event["title"] as? String ?? ""
-        worker("--meeting-gather",["event":event,"prepared":text]) { [weak self] result in self?.js("gathered",result) }
+        worker("--meeting-gather",["event":event,"prepared":text]) { [weak self] result in self?.gathering = false; self?.js("gathered",result) }
     }
     func gather(_ context: String) {
         guard loaded, !running, !gathering else { return }
@@ -3332,8 +3414,9 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
         let p = py(["--meeting-live"]), input = Pipe(), output = Pipe()
         p.standardInput = input; p.standardOutput = output
         fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
-        answerProcess = p; answerInput = input; answerOutput = output; answerBuffer = Data()
+        answerProcess = p; answerInput = input; answerOutput = output
         let g = generation
+        var buffer = Data()   // per process and only touched by its serial read callbacks, so a stale helper never feeds the next one
         output.fileHandleForReading.readabilityHandler = { [weak self, weak p] handle in
             guard let self, let p else { return }
             let data = handle.availableData
@@ -3342,13 +3425,13 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
                 DispatchQueue.main.async { [weak self, weak p] in
                     guard let self, let p, answerProcess === p else { return }
                     if answering != nil { finishAnswer(["error": "Could not finish"], process: p) }
-                    else { answerProcess = nil; answerInput = nil; answerOutput = nil; answerBuffer = Data() }
+                    else { answerProcess = nil; answerInput = nil; answerOutput = nil }
                 }
                 return
             }
-            answerBuffer.append(data)
-            while let end = answerBuffer.firstIndex(of: 10) {
-                let line = answerBuffer.prefix(upTo: end); answerBuffer.removeSubrange(...end)
+            buffer.append(data)
+            while let end = buffer.firstIndex(of: 10) {
+                let line = buffer.prefix(upTo: end); buffer.removeSubrange(...end)
                 guard let event = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else { continue }
                 DispatchQueue.main.async { [weak self, weak p] in
                     guard let self, let p, generation == g, answerProcess === p, running, let id = answering else { return }
@@ -3381,7 +3464,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
         if let p, answerProcess !== p { return }
         guard let id = answering else { return }
         answerOutput?.fileHandleForReading.readabilityHandler = nil
-        answerProcess = nil; answerInput = nil; answerOutput = nil; answerBuffer = Data(); answering = nil
+        answerProcess = nil; answerInput = nil; answerOutput = nil; answering = nil
         var reply = result; reply["id"] = id
         if result["kind"] as? String == "answer" {
             saveEvent(["kind": "answer", "question": answerQuestion, "lines": result["lines"] ?? [], "at": Date().timeIntervalSince1970])
@@ -3393,7 +3476,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
     func worker(_ command: String, _ data: [String: Any], _ done: @escaping ([String: Any]) -> Void) {
         let p = py([command]), input = Pipe(), output = Pipe(); p.standardInput = input; p.standardOutput = output
         fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
-        process = p; let g = generation
+        process?.terminate(); process = p; let g = generation   // the one tracked helper; never orphan an older one
         do { try p.run() } catch { process = nil; done(["error": "Could not start"]); return }
         DispatchQueue.global().async { [weak self] in
             if let body = try? JSONSerialization.data(withJSONObject: data) { try? input.fileHandleForWriting.write(contentsOf: body) }
@@ -3402,6 +3485,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
             let result = (try? JSONSerialization.jsonObject(with: out)) as? [String: Any] ?? ["error": "Could not finish"]
             DispatchQueue.main.async { [weak self] in
                 guard let self, generation == g, process === p else { return }; process = nil; done(result)
+                if prepWaiting, process == nil, let agentPrep { showAgentPrep(agentPrep) }
             }
         }
     }
@@ -3427,8 +3511,8 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
     func cancelWork() {
         process?.terminate(); process = nil; finishing?.terminate(); finishing = nil
         answerOutput?.fileHandleForReading.readabilityHandler = nil; answerProcess?.terminate()
-        answerProcess = nil; answerInput = nil; answerOutput = nil; answerBuffer = Data(); answerTimes = [:]; answerQuestion = ""
-        queue = []; pendingBrief = nil; answering = nil; partialQuestion = nil; micPartialQuestion = nil; gathering = false
+        answerProcess = nil; answerInput = nil; answerOutput = nil; answerTimes = [:]; answerQuestion = ""
+        queue = []; pendingBrief = nil; answering = nil; partialQuestion = nil; micPartialQuestion = nil; gathering = false; prepWaiting = false
         demoProcess?.terminate(); demoProcess = nil
     }
     func stop(paused: Bool = false) {
@@ -3533,14 +3617,12 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
         case "chooseFiles":
             let chooser = NSOpenPanel(); chooser.allowedContentTypes = ["pdf", "doc", "docx", "txt", "md"].compactMap { UTType(filenameExtension: $0) }; chooser.allowsMultipleSelection = true; chooser.canChooseDirectories = false
             chooser.begin { [weak self] response in if response == .OK { self?.material(chooser.urls.map(\.path)) } }
-        case "files":
-            guard let paths = b["paths"] as? [String] else { return }; material(paths)
-        case "ask", "answer", "explain":
+        case "ask", "answer":
             guard running else { return }
             let id = b["id"] as? Int ?? { serial += 1; return serial }()
             let question = b["text"] as? String ?? ""
-            if action != "answer" { js("question", ["id": id, "text": action == "explain" ? "Explain: " + question : question, "seconds": Int(Date().timeIntervalSince(began)), "auto": true]) }
-            enqueue(id, action == "explain" ? "Explain: " + question : question, best: true)
+            if action != "answer" { js("question", ["id": id, "text": question, "seconds": Int(Date().timeIntervalSince(began)), "auto": true]) }
+            enqueue(id, question, best: true)
         case "screen":
             guard running else { return }; let g = generation
             Task { @MainActor [weak self] in
@@ -4332,11 +4414,15 @@ enum Hands {
         if AXUIElementSetAttributeValue(e,kAXValueAttribute as CFString,draft as CFString) == .success {
             guard attribute(e,kAXValueAttribute) as? String == draft else { throw Failure("Text did not land in the field.") }; return
         }
+        // Cmd-Right only reaches the end of the caret's line, so place and verify the caret at the value's end.
+        var end = CFRange(location:(old as NSString).length,length:0)
+        if append { guard let value = AXValueCreate(.cfRange,&end), AXUIElementSetAttributeValue(e,kAXSelectedTextRangeAttribute as CFString,value) == .success,
+                          selectedRange(e).map({ $0.location == end.location && $0.length == 0 }) == true else { throw Failure("Could not verify the caret at the end of that field.") } }
         // PID-directed paste keeps focus in the user’s app; verify the same field before reporting success.
         let pb = NSPasteboard.general, saved = pb.pasteboardItems?.map { i in i.types.compactMap { t in i.data(forType:t).map { (t,$0) } } } ?? []
         pb.clearContents(); guard pb.setString(text,forType:.string) else { throw Failure("Could not prepare paste.") }; let changed = pb.changeCount
         defer { if pb.changeCount == changed { pb.clearContents(); pb.writeObjects(saved.map { pairs in let i = NSPasteboardItem(); pairs.forEach { i.setData($1,forType:$0) }; return i }) } }
-        try sendKeys(append ? "cmd+right" : "cmd+a",pid:a.processIdentifier)
+        if !append { try sendKeys("cmd+a",pid:a.processIdentifier) }
         try sendKeys("cmd+v",pid:a.processIdentifier); usleep(150_000)
         if !n.secret, attribute(e,kAXValueAttribute) as? String != draft { throw Failure("Could not verify the pasted text.") }
     }
@@ -4665,12 +4751,13 @@ var ref: EventHotKeyRef?
     let h = hotkey()
     return RegisterEventHotKey(UInt32(h.code), UInt32(h.mods), EventHotKeyID(signature: 0x41545443, id: 1), GetApplicationEventTarget(), 0, &ref) == noErr
 }
-registerHotkey()
+let hotkeyFree = registerHotkey()
 if Prefs.bool("speak") { siriVoice() }
 let settings = SettingsWindow()
 let bar = MenuBar()
 let delegate = Delegate()
 NSApplication.shared.delegate = delegate
+if !hotkeyFree { DispatchQueue.main.async { settings.open() } }   // another app owns the saved shortcut: show the warning, not a silent dead key
 Updater.schedule()
 
 // Test hook: `defaults write com.atticus.app demo -string "<request>"` then restart runs it once without the mic.

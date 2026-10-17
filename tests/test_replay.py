@@ -3,21 +3,21 @@ import json
 import os
 from pathlib import Path
 import sys
-import tempfile
 import time
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import atticus
+from tests import scratch_dir
 
 
 class ReplayTests(unittest.TestCase):
     def setUp(self):
-        root=tempfile.TemporaryDirectory();self.addCleanup(root.cleanup);self.root=Path(root.name)
-        for p in [patch.object(atticus,'DIR',root.name),patch.object(atticus,'SKILLS',str(self.root/'skills.json')),
-                  patch.object(atticus,'WORKED',str(self.root/'worked.json')),patch.object(atticus,'ME_FILE',str(self.root/'me.json')),patch.object(atticus,'pref',side_effect=lambda k,d:d),
-                  patch.dict(os.environ,{'ATTICUS_ASK':root.name,'ATTICUS_FRONT':'Other Fixture','ATTICUS_FOCUS_GUARD':'1'},clear=True)]:
+        self.root=scratch_dir(self)
+        for p in [patch.object(atticus,'SKILLS',str(self.root/'skills.json')),
+                  patch.object(atticus,'WORKED',str(self.root/'worked.json')),patch.object(atticus,'ME_FILE',str(self.root/'me.json')),
+                  patch.dict(os.environ,{'ATTICUS_ASK':str(self.root),'ATTICUS_FRONT':'Other Fixture','ATTICUS_FOCUS_GUARD':'1'},clear=True)]:
             p.start();self.addCleanup(p.stop)
         self.commands=['open -a Fixture','peekaboo menu click --app "com.atticus.fixture" --path "Fixture > Start meeting" --no-remote',
                        'osascript -e \'tell application "System Events" to get name of every window of process "Fixture"\'']

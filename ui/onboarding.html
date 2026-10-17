@@ -49,6 +49,7 @@
   .btn:hover { filter: brightness(1.08); } .btn:active { transform: scale(.97); }
   .btn:focus-visible, .allow:focus-visible { outline: 3px solid rgba(10,132,255,.45); outline-offset: 2px; }
   .btn.quiet { background: var(--card); color: var(--fg); box-shadow: inset 0 0 0 .5px var(--line); }
+  #back { position: absolute; z-index: 10; top: 18px; left: 22px; margin: 0; padding: 0 10px; height: 30px; color: var(--fg2); background: transparent; box-shadow: none; }
 
   /* permissions list, grouped like System Settings */
   #list, .list { width: 100%; max-width: 480px; margin-top: 22px; border-radius: 12px; background: var(--card); text-align: left;
@@ -249,6 +250,7 @@
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 1ms !important; animation-duration: 1ms !important; } }
 </style></head>
 <body>
+<button class="btn quiet" id="back" hidden>Back</button>
 <section class="page" id="welcome">
   <div id="orbwrap" class="r"><canvas id="orb"></canvas></div>
   <h1 class="r">Meet Atticus</h1>
@@ -380,9 +382,9 @@
 
 <section class="page" id="done">
   <svg id="done-check" class="r" viewBox="0 0 22 22"><circle cx="11" cy="11" r="11"/><path d="M6.5 11.3l3 3 6-6.3"/></svg>
-  <h2 class="r">You’re all set</h2>
-  <p class="sub r">Hold the keys anytime and just ask. Everything else lives in Settings, in the menu bar.</p>
-  <div class="tips r"><div><kbd>esc</kbd> stops an answer</div><div>Click away to close</div><div>Hover the box to type</div></div>
+  <h2 class="r" id="done-title">You’re all set</h2>
+  <p class="sub r" id="done-sub">Hold the keys anytime and just ask. Everything else lives in Settings, in the menu bar.</p>
+  <div class="tips r"><div><kbd>esc</kbd> stops an answer</div><div>Click an answer to copy</div><div>Click away to close</div><div>Hover the box to type</div></div>
   <p class="done-note r" id="feedback-note">Something off? Report feedback from the menu bar.</p>
   <button class="btn r" id="finish">Start Using Atticus</button>
 </section>
@@ -420,8 +422,10 @@
     cur = id; $(id).classList.add('on');
     for (const page of pages) { $(page).inert = page !== id; $(page).setAttribute('aria-hidden', String(page !== id)); }
     [...$('dots').children].forEach((d, i) => d.classList.toggle('on', pages[i] === id));
+    $('back').hidden = pages.indexOf(id) < 1;
   };
   document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => go(b.dataset.go));
+  $('back').onclick=()=>go(pages[pages.indexOf(cur)-1]);
   $('finish').onclick = () => post({ do: 'done' });
   $('kofi').onclick = () => post({ do: 'kofi' });
   document.querySelectorAll('[data-improve]').forEach(b => b.onclick = () => { post({ do: 'set', k: 'improve', v: b.dataset.improve }); go('tip'); });
@@ -527,6 +531,12 @@
   });
 
   let planOK = false, last = null;
+  const paintDone=s=>{
+    const core=[['claude','AI provider'],['mic','Microphone'],['speech','Speech Recognition'],['ax','Accessibility']],missing=core.filter(([id])=>!s[id]).map(([,name])=>name),voice=['claude','mic','speech'].every(id=>s[id]);
+    $('done-title').textContent=!missing.length?'You’re all set':voice?'Voice is ready':'Setup isn’t finished yet';
+    $('done-sub').textContent=!missing.length?'Hold the keys anytime and just ask. Everything else lives in Settings, in the menu bar.':(voice?'Still needed for full Mac control: ':'Still needed: ')+missing.join(', ')+'. You can allow '+(missing.length===1?'it':'them')+' later in Setup & Permissions.';
+    $('finish').textContent=voice?'Start Using Atticus':'Finish Setup Later';
+  };
   window.ob = {
     mode(toggle) {
       $('welcome-talk').textContent = (toggle ? 'Press the shortcut, speak, press again to send.' : 'Hold the shortcut, speak, release to send.') + ' Your Mac does the rest.';
@@ -568,7 +578,7 @@
         : s ? `${s} need sign-in in Claude` : 'Gmail, Drive and more, from your Claude account.';
     },
     models(list) {   // the custom server's models, from Change provider's probe
-      $('srv-models').innerHTML = list.map(m => `<option value="${m.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))}">`).join('');
+      $('srv-models').replaceChildren(...list.map(m => Object.assign(document.createElement('option'), { value: m })));
       if (list.length && !$('srv-model').value.trim()) $('srv-model').value = list[0];
       $('srv-note').classList.toggle('bad', !list.length);
       $('srv-note').textContent = list.length ? `Found ${list.length} model${list.length > 1 ? 's' : ''}. Screen tasks need one that can see images.` : 'No models found there. Is the server running? You can still type a model name.';
@@ -591,6 +601,7 @@
       $('count').classList.toggle('all', n === P.length);
       $('next').textContent = n === P.length ? 'Continue' : 'Skip for Now';
       $('next').classList.toggle('quiet', n !== P.length);
+      paintDone(s);
     },
   };
 

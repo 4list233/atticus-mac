@@ -4,23 +4,19 @@ import json
 import os
 from pathlib import Path
 import sys
-import tempfile
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import atticus
+from tests import scratch_dir
 
 
 class WorkflowTests(unittest.TestCase):
     def setUp(self):
-        root = tempfile.TemporaryDirectory()
-        self.addCleanup(root.cleanup)
-        for p in (patch.object(atticus, 'DIR', root.name),
-                  patch.object(atticus, 'SKILLS', str(Path(root.name) / 'skills.json')),
-                  patch.object(atticus, 'pref', side_effect=lambda k, d: d)):
-            p.start()
-            self.addCleanup(p.stop)
+        p = patch.object(atticus, 'SKILLS', str(scratch_dir(self) / 'skills.json'))
+        p.start()
+        self.addCleanup(p.stop)
 
     def test_automatically_saves_and_retrieves_verified_browser_procedure(self):
         p = unittest.mock.Mock()

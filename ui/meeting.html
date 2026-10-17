@@ -258,6 +258,7 @@ function begin(){const context=prepContext();$('brief').value=context.slice(0,60
 function gather(){if(gathering){post({do:'cancelGather'});return}if(!calendarOn){post({do:'allowCalendar',context:prepContext()});return}gathering=true;$('gather').textContent='Cancel';$('start').disabled=true;prepNote('Reading your calendar…');post({do:'gather',context:prepContext()})}
 function ask(text){if(!running||!text.trim())return;post({do:'ask',text:selectionContext?`Context: ${selectionContext}\nQuestion: ${text}`:text});selectionContext='';$('ask').value='';syncSend();$('ask').placeholder='Ask about the call…'}
 function syncSend(){const has=!!$('ask').value.trim();$('send').classList.toggle('blue',has);$('send').title=has?'Send':'Ask by voice';$('send').setAttribute('aria-label',$('send').title)}
+const retryAnswer=d=>{d.querySelector('.response.streaming')?.remove();let b=d.querySelector('.answer');if(!b){b=document.createElement('button');b.className='answer';d.querySelector('.body').append(b)}b.disabled=false;b.classList.remove('thinking');b.textContent='Try again';b.onclick=()=>{touched.add(d.dataset.id);post({do:'answer',id:d.dataset.id,text:d.dataset.question})};return b};
 // Voice ask: the box becomes waves and a bubble of what you say. Send asks it; clicking the waves goes back to typing with those words; Esc cancels.
 function voice(on,then){
   if(on){if(!running||voicing)return;voicing=true;$('heard').textContent='Listening…';$('heard').classList.add('waiting');show('askform',false);show('voicebar',true);show('micpartial',false);post({do:'voice',on:true});return}
@@ -312,7 +313,7 @@ $('selected').onclick=()=>{selectionContext=selection;$('ask').value='';$('ask')
 $('prep').ondragover=e=>{e.preventDefault();$('prep').classList.add('over')};
 $('prep').ondragleave=()=>$('prep').classList.remove('over');
 $('prep').ondrop=e=>{e.preventDefault();$('prep').classList.remove('over')};
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();if(voicing){voice(false);return}if(document.activeElement===$('brief')){tab('answers');return}post({do:running?'stop':'delete'})}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();if(voicing){voice(false);return}if(document.activeElement===$('brief')){tab('answers');return}if(!running&&!$('prep').hidden){$('close').click();return}post({do:running?'stop':'delete'})}});
 
 function card(row){
   if(cards.has(row.id)){const d=cards.get(row.id),text=d.querySelector('.body>p');d.dataset.question=row.text;if(text)text.textContent=`“${row.text.length>180?row.text.slice(0,179)+'…':row.text}”`;return}
@@ -380,10 +381,8 @@ window.meeting={
     if(!d.dataset.measured){d.dataset.measured='1';requestAnimationFrame(()=>requestAnimationFrame(()=>post({do:'measured',id:r.id,shownAt:Date.now()/1000,timing:r.timing||{}})))}
   },
   answer(r){
-    const d=cards.get(r.id);if(!d||!running)return;const b=d.querySelector('.answer');
-    const reset=()=>{
-      if(b){b.disabled=false;b.classList.remove('thinking');b.textContent='Try again';b.onclick=()=>post({do:'answer',id:r.id,text:d.dataset.question})}
-    };
+    const d=cards.get(r.id);if(!d||!running)return;let b=d.querySelector('.answer');
+    const reset=()=>b=retryAnswer(d);
     const shown=!d.hidden;
     if(r.kind==='SKIP'&&!shown){d.remove();cards.delete(r.id);$('lines').querySelector(`[data-id="${r.id}"]`)?.classList.remove('asked');return}
     d.hidden=false;show('empty',false);if($('scroll').hidden&&r.kind!=='SKIP')$('tabs').children[0].classList.add('new');
@@ -400,7 +399,7 @@ window.meeting={
   },
   heard(text){if(!voicing)return;$('heard').textContent=text||'Listening…';$('heard').classList.toggle('waiting',!text)},
   voiceEnd(){if(voicing){voicing=false;show('voicebar',false);show('askform',true)}},
-  stopped(paused=false){this.voiceEnd();running=false;capturing=false;minimized=false;document.body.classList.remove('compact');show('partial',false);show('micpartial',false);for(const b of document.querySelectorAll('.answer.thinking')){b.disabled=false;b.classList.remove('thinking');b.textContent='Answer'};$('h1').textContent=paused?'Call paused':'Call ended';show('resume',paused);$('endtitle').textContent=paused||!saving?'Your meeting':'Keep this meeting?';$('delete').textContent=paused?'Delete meeting':'Don’t save';status(lineCount?`${lineCount} line${lineCount>1?'s':''} heard`:'Nothing heard');this.saving(saving);$('save').textContent=saving?(paused?'Done':'Save'):'Close without saving';$('save').classList.toggle('blue',saving&&!paused);$('save').disabled=false;show('notice',false);view('ended');$('resume').disabled=false;(paused?$('resume'):$('save')).focus()},
+  stopped(paused=false){this.voiceEnd();running=false;capturing=false;minimized=false;document.body.classList.remove('compact');show('partial',false);show('micpartial',false);for(const d of cards.values())if(d.querySelector('.answer.thinking,.response.streaming'))retryAnswer(d);$('h1').textContent=paused?'Call paused':'Call ended';show('resume',paused);$('endtitle').textContent=paused||!saving?'Your meeting':'Keep this meeting?';$('delete').textContent=paused?'Delete meeting':'Don’t save';status(lineCount?`${lineCount} line${lineCount>1?'s':''} heard`:'Nothing heard');this.saving(saving);$('save').textContent=saving?(paused?'Done':'Save'):'Close without saving';$('save').classList.toggle('blue',saving&&!paused);$('save').disabled=false;show('notice',false);view('ended');$('resume').disabled=false;(paused?$('resume'):$('save')).focus()},
   error(text){toast(text);$('save').disabled=false;$('resume').disabled=false}
 };
 post({do:'ready'});
