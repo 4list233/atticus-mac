@@ -40,7 +40,7 @@ GUMROAD_PRODUCT = ''   # Gumroad product ID (4o1C13Q132kPu-TW7b-sAA== when sales
 BUY = 'https://3370759087892.gumroad.com/l/atticus'
 KEY_FILE = os.path.join(DIR, 'license')
 # Daily-user count: once a day, a random ID (no name, no asks) goes to PostHog. Off in Settings → Safety. Empty key = off.
-POSTHOG_KEY = os.environ.get('ATTICUS_POSTHOG_KEY', 'phc_mGpLLzJtYTToBF8uSkqkUxMMG9ANmQWKDBnpsRDmzy6P')   # public capture token; empty override disables
+POSTHOG_KEY = os.environ.get('ATTICUS_POSTHOG_KEY', '')   # fork: telemetry off by default   # public capture token; empty override disables
 
 
 # About the user. Only a short name/answer-style line is always sent; category facts are attached when their
@@ -4662,7 +4662,7 @@ def feedback(data):
         rows = [r for r in read_rows(os.path.join(DIR, 'log.jsonl')) if r.get('status') != 'not_handled' and isinstance(r.get('task'), str) and plain(r['task']) not in ('report feedback', 'report a bug')]
         body += '\n## My last ask\n' + (rows[-1]['task'] if rows else '(No previous ask)') + '\n'
     return {'body': body, 'include': data.get('include') is True,
-            'url': 'https://github.com/SaarthurR/atticus-mac/issues/new?' + urllib.parse.urlencode({'title': 'Atticus feedback', 'body': body})}
+            'url': 'https://github.com/4list233/atticus-mac/issues/new?' + urllib.parse.urlencode({'title': 'Atticus feedback', 'body': body})}
 
 
 def main():

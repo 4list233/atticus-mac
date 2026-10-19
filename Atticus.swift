@@ -2628,7 +2628,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
             var result = (try? JSONSerialization.jsonObject(with:data)) as? [String:Any]; result?["revision"] = revision
             DispatchQueue.main.async { [weak self] in
                 guard let self, feedbackJob == job, web != nil else { return }
-                guard let result, let text = result["url"] as? String, let url = URL(string:text), url.host == "github.com", url.path == "/SaarthurR/atticus-mac/issues/new" else { send("feedback", ["error":"Could not prepare feedback. Try again.","revision":revision]); return }
+                guard let result, let text = result["url"] as? String, let url = URL(string:text), url.host == "github.com", url.path == "/4list233/atticus-mac/issues/new" else { send("feedback", ["error":"Could not prepare feedback. Try again.","revision":revision]); return }
                 feedbackURL = url; send("feedback", result)
             }
         }
@@ -2777,7 +2777,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
             DispatchQueue.global().async { [weak self] in self?.helper(["--unlearn", say]); DispatchQueue.main.async { self?.refresh() } }
         case "checkUpdate": Updater.check { [weak self] in self?.push() }
         case "agents": agentsUI.openView()
-        case "github": NSWorkspace.shared.open(URL(string: "https://github.com/SaarthurR/atticus-mac")!)
+        case "github": NSWorkspace.shared.open(URL(string: "https://github.com/4list233/atticus-mac")!)
         case "kofi": NSWorkspace.shared.open(kofi)
         case "resetHotkey":
             done((49, controlKey | optionKey, "⌃⌥Space"))   // same rollback and warning as a recorded shortcut

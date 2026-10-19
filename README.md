@@ -108,7 +108,7 @@ You need:
 Paste this in Terminal:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/SaarthurR/atticus-mac/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/4list233/atticus-mac/main/install.sh | bash
 ```
 
 It checks your Mac, downloads Atticus to `~/.atticus`, builds `~/Applications/Atticus.app`, and opens it. Atticus starts at login and updates itself from there (turn that off in Settings → About & Updates).
@@ -118,10 +118,10 @@ It checks your Mac, downloads Atticus to `~/.atticus`, builds `~/Applications/At
 On macOS with Nix flakes enabled:
 
 ```bash
-nix run github:SaarthurR/atticus-mac
+nix run github:4list233/atticus-mac
 ```
 
-The flake runs the standard installer, which keeps the writable clone Atticus uses for updates, so macOS 26+ and Apple's command line tools are still required. `nix profile add github:SaarthurR/atticus-mac` installs an `atticus` launcher; run it to install or update the app.
+The flake runs the standard installer, which keeps the writable clone Atticus uses for updates, so macOS 26+ and Apple's command line tools are still required. `nix profile add github:4list233/atticus-mac` installs an `atticus` launcher; run it to install or update the app.
 
 Working on the code instead? Clone the repo anywhere and run `./build.sh` after each change. A Devbox environment is included for Python regression tests; run `devbox shell`, then `devbox run test`.
 
